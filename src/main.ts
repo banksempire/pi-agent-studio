@@ -1,0 +1,25 @@
+import { createApp } from 'vue';
+import '@sf/styles/main.css';
+import './styles/app.css';
+
+import { registerPanelComponent, registerTabContent } from '@sf/registry';
+
+import StudioShell from './shell/StudioShell.vue';
+import ChatWindow from './components/ChatWindow.vue';
+import WelcomeContent from './components/WelcomeContent.vue';
+import ChatHistory from './components/ChatHistory.vue';
+import ChatSessions from './components/ChatSessions.vue';
+import SessionStats from './components/SessionStats.vue';
+
+// ── Register content renderers referenced by the layout JSON ──────────────
+
+// Workspace tab content
+registerTabContent('welcome', WelcomeContent);
+registerTabContent('chat-window', ChatWindow);
+
+// Custom panel components
+registerPanelComponent('chat-history', ChatHistory);
+registerPanelComponent('chat-sessions', ChatSessions);
+registerPanelComponent('session-stats', SessionStats);
+
+createApp(StudioShell).mount('#app');

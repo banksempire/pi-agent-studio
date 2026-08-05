@@ -12,8 +12,8 @@
  */
 import { createServer } from 'node:http';
 import { execSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { existsSync, readFileSync, readdirSync, readlinkSync } from 'node:fs';
+import { readFile, readdir, stat, mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -23,6 +23,11 @@ const PORT = Number(process.env.PI_STUDIO_PORT ?? 7493);
 const NEW_CHAT_CWD = process.env.PI_STUDIO_CWD ?? '/workspace/sf';
 /** Session file of a pi TUI session that is live right now (never prompt it). */
 const LIVE_TUI_FILE = process.env.PI_SESSION_FILE ?? null;
+/** Pin the TUI process to this PID (test/CI); default: scan for `pi`. */
+const TUI_PID = Number(process.env.PI_TUI_PID || 0) || null;
+
+/** Mutable: released automatically when the TUI process exits. */
+let tuiLockFile = LIVE_TUI_FILE;
 
 const SESSIONS_ROOT = path.join(os.homedir(), '.pi', 'agent', 'sessions');
 
@@ -44,6 +49,8 @@ if (!sdkDir) {
   process.exit(1);
 }
 const sdk = await import(pathToFileURL(path.join(sdkDir, 'dist', 'index.js')).href);
+const slashCommandsModule = await import(pathToFileURL(path.join(sdkDir, 'dist', 'core', 'slash-commands.js')).href);
+const { BUILTIN_SLASH_COMMANDS } = slashCommandsModule;
 
 // ── Live agent sessions (one per session file, in-process) ────────────────
 
@@ -202,13 +209,19 @@ async function analyzeSession(file, opts = {}) {
       }
     }
   }
-  const merged = messages.filter((m) => m.role !== 'toolResult' || !m.merged);
+  let merged = messages.filter((m) => m.role !== 'toolResult' || !m.merged);
 
   // Pagination: by default (or with `before`) only the newest slice is
   // converted/returned; `oldestId` + `hasMore` let the client page upward.
+  // With `after`, return the unbounded tail newer than that entry (used by
+  // clients to sync live appends without re-reading what they have).
   let oldestId = null;
   let hasMore = false;
-  if (opts.limit || opts.before) {
+  if (opts.after) {
+    const idx = merged.findIndex((m) => m.id === opts.after);
+    if (idx >= 0) merged.splice(0, idx + 1);
+    // unknown cursor → return everything; the client dedupes by id
+  } else if (opts.limit || opts.before) {
     let end = merged.length;
     if (opts.before) {
       const idx = merged.findIndex((m) => m.id === opts.before);
@@ -217,8 +230,8 @@ async function analyzeSession(file, opts = {}) {
     const start = Math.max(0, end - (opts.limit ?? merged.length));
     oldestId = start < merged.length ? merged[start].id : null;
     hasMore = start > 0;
-    merged.splice(0, start); // keep only [start, end)…
-    merged.splice(end - start); // …then trim the tail above `end`
+    // Keep only [start, end) — the requested slice.
+    merged = merged.slice(start, end);
   }
 
   const st = await stat(file).catch(() => null);
@@ -240,7 +253,7 @@ async function analyzeSession(file, opts = {}) {
     tokens: { input: tokensIn, output: tokensOut, total: tokensIn + tokensOut },
     cost,
     running,
-    tuiActive: file === LIVE_TUI_FILE,
+    tuiActive: file === tuiLockFile,
   };
   if (opts.withMessages) {
     info.messages = merged;
@@ -333,6 +346,279 @@ function attachSession(file, live) {
   });
 }
 
+// ── Slash commands (the pi TUI command set, web-adapted) ───────────────────
+
+/** Builtin commands that only make sense in the pi TUI — answered with a reason. */
+const NA_COMMANDS = {
+  settings: 'Settings are configured in the pi TUI (/settings there).',
+  login: 'Provider authentication requires the pi TUI (opens OAuth in the terminal).',
+  logout: 'Provider logout requires the pi TUI.',
+  trust: 'Project trust decisions are made in the pi TUI.',
+  share: 'Gist sharing requires GitHub auth in the pi TUI.',
+  quit: 'Nothing to quit in a browser tab — close the tab instead.',
+};
+
+function slashSession(file) {
+  return ensureSession(file);
+}
+
+function serializeModel(m) {
+  if (!m) return null;
+  return {
+    id: m.id,
+    provider: m.provider,
+    name: m.name,
+    reasoning: !!m.reasoning,
+    contextWindow: m.contextWindow ?? 0,
+  };
+}
+
+function treeToJson(nodes) {
+  return (nodes ?? []).map((n) => ({
+    id: n.entry?.id,
+    type: n.entry?.type,
+    label: n.label ?? n.entry?.id,
+    children: treeToJson(n.children),
+  }));
+}
+
+/**
+ * Execute one slash command against a session (or globally). Returns
+ * { ok, notice?, error?, data? } — the frontend renders the outcome.
+ */
+async function handleSlashCommand({ file, command, args, extra }) {
+  const name = String(command ?? '').replace(/^\/+/, '').trim();
+  if (!name) return { ok: false, error: 'empty slash command' };
+  if (NA_COMMANDS[name]) return { ok: true, notice: NA_COMMANDS[name] };
+
+  switch (name) {
+    case 'new': {
+      // Same as the ➕ New Chat button: fresh session + window (frontend opens it).
+      const cwd = args?.trim() || NEW_CHAT_CWD;
+      const sessionManager = sdk.SessionManager.create(cwd);
+      const { session } = await sdk.createAgentSession({ sessionManager });
+      const f = session.sessionFile;
+      const live = { session, status: 'idle' };
+      liveSessions.set(f, live);
+      attachSession(f, live);
+      return { ok: true, data: { file: f } };
+    }
+
+    case 'session': {
+      const live = await slashSession(file);
+      const stats = live.session.getSessionStats();
+      const sm = live.session.sessionManager;
+      const t = stats.tokens;
+      const lines = [
+        'Session Info',
+        ...(sm.getSessionName() ? [`Name: ${sm.getSessionName()}`] : []),
+        `File: ${stats.sessionFile ?? 'In-memory'}`,
+        `ID: ${stats.sessionId}`,
+        '',
+        'Messages',
+        `Total: ${stats.totalMessages}`,
+        `User: ${stats.userMessages}`,
+        `Assistant: ${stats.assistantMessages}`,
+        `Tools: ${stats.toolCalls} calls, ${stats.toolResults} results`,
+        '',
+        'Tokens',
+        `Input: ${(t.input + t.cacheRead + t.cacheWrite).toLocaleString()}`,
+        `Output: ${t.output.toLocaleString()}`,
+        `Cache: ${t.cacheRead.toLocaleString()} read, ${t.cacheWrite.toLocaleString()} written`,
+        `Total: ${t.total.toLocaleString()}`,
+        `Cost: $${(stats.cost ?? 0).toFixed(4)}`,
+      ];
+      const model = live.session.model;
+      if (model) lines.push('', `Model: ${model.provider}/${model.id}`);
+      lines.push('', 'The right panel shows live session stats at all times.');
+      return { ok: true, data: { text: lines.join('\n') } };
+    }
+
+    case 'name': {
+      const live = await slashSession(file);
+      const requested = args?.trim() ?? '';
+      if (!requested) {
+        const current = live.session.sessionManager.getSessionName();
+        return { ok: true, notice: current ? `Session name: ${current}` : 'Usage: /name <name>' };
+      }
+      live.session.setSessionName(requested);
+      const normalized = live.session.sessionManager.getSessionName();
+      emit({ type: 'refresh', file });
+      return { ok: true, notice: normalized ? `Session name set: ${normalized}` : `Session name set: ${requested}` };
+    }
+
+    case 'compact': {
+      const live = await slashSession(file);
+      if (live.status === 'running') {
+        return { ok: false, error: 'Wait for the current response to finish before compacting.' };
+      }
+      await live.session.compact(args?.trim() || undefined);
+      return { ok: true, notice: 'Compaction started — the conversation is being summarized.' };
+    }
+
+    case 'copy': {
+      const live = await slashSession(file);
+      const text = live.session.getLastAssistantText();
+      if (!text) return { ok: true, notice: 'No agent messages to copy yet.' };
+      return { ok: true, data: { text } };
+    }
+
+    case 'model': {
+      const live = await slashSession(file);
+      const rt = live.session.modelRuntime;
+      const current = live.session.model;
+      const requested = args?.trim() ?? '';
+      if (requested) {
+        const models = await rt.getAvailable().catch(() => []);
+        const term = requested.toLowerCase();
+        const hit = models.find((m) =>
+          m.id.toLowerCase() === term || `${m.provider}/${m.id}`.toLowerCase() === term || m.name.toLowerCase() === term,
+        );
+        if (!hit) return { ok: false, error: `No model matches "${requested}"` };
+        await live.session.setModel(hit);
+        emit({ type: 'refresh', file });
+        return { ok: true, notice: `Model: ${hit.provider}/${hit.id}` };
+      }
+      const models = await rt.getAvailable().catch(() => []);
+      return { ok: true, data: { models: models.map(serializeModel), current: serializeModel(current) } };
+    }
+
+    case 'scoped-models': {
+      const live = await slashSession(file);
+      const rt = live.session.modelRuntime;
+      const models = await rt.getAvailable().catch(() => []);
+      const scoped = live.session.scopedModels;
+      if (extra?.modelIds) {
+        const ids = new Set(extra.modelIds);
+        const picked = models.filter((m) => ids.has(`${m.provider}/${m.id}`));
+        live.session.setScopedModels(picked.map((m) => ({ model: m })));
+        return { ok: true, notice: picked.length > 0
+          ? `Scoped models: ${picked.map((m) => m.id).join(', ')}`
+          : 'Scoped models cleared (all models available)' };
+      }
+      return {
+        ok: true,
+        data: {
+          models: models.map(serializeModel),
+          scoped: scoped.map((s) => `${s.model.provider}/${s.model.id}`),
+        },
+      };
+    }
+
+    case 'tree': {
+      const live = await slashSession(file);
+      const sm = live.session.sessionManager;
+      if (extra?.entryId) {
+        const target = sm.getEntry(extra.entryId);
+        if (!target) return { ok: false, error: 'Entry not found in this session.' };
+        await live.session.navigateTree(extra.entryId);
+        emit({ type: 'refresh', file });
+        return { ok: true, notice: `Switched to ${target.type === 'message' ? target.message?.role ?? 'entry' : target.type} at ${extra.entryId.slice(0, 8)}…` };
+      }
+      return {
+        ok: true,
+        data: {
+          tree: treeToJson(sm.getTree()),
+          leafId: sm.getLeafId(),
+          currentLabel: sm.getLeafEntry()?.id,
+        },
+      };
+    }
+
+    case 'fork': {
+      const live = await slashSession(file);
+      if (extra?.entryId) {
+        const entry = live.session.sessionManager.getEntry(extra.entryId);
+        if (!entry || entry.type !== 'message' || entry.message?.role !== 'user') {
+          return { ok: false, error: 'Pick a user message to fork from.' };
+        }
+        if (!entry.parentId) return { ok: false, error: 'Cannot fork from the first message.' };
+        const forked = await forkSession(live, entry.parentId);
+        return { ok: true, data: { file: forked } };
+      }
+      return { ok: true, data: { userMessages: live.session.getUserMessagesForForking() } };
+    }
+
+    case 'clone': {
+      const live = await slashSession(file);
+      const leafId = live.session.sessionManager.getLeafId();
+      if (!leafId) return { ok: false, error: 'Nothing to clone yet.' };
+      const forked = await forkSession(live, leafId);
+      return { ok: true, data: { file: forked } };
+    }
+
+    case 'export': {
+      const live = await slashSession(file);
+      const outPath = args?.trim() || undefined;
+      let filePath, mime, filename;
+      if (outPath?.endsWith('.jsonl')) {
+        filePath = live.session.exportToJsonl(outPath);
+        mime = 'application/x-ndjson';
+      } else {
+        filePath = await live.session.exportToHtml(outPath);
+        mime = 'text/html';
+      }
+      filename = path.basename(filePath);
+      const content = await readFile(filePath, 'utf8');
+      return { ok: true, data: { content, filename, mime, path: filePath } };
+    }
+
+    case 'import': {
+      const inputPath = args?.trim();
+      if (!inputPath) return { ok: false, error: 'Usage: /import <path.jsonl>' };
+      const abs = path.resolve(inputPath);
+      const raw = await readFile(abs, 'utf8').catch(() => null);
+      if (raw === null) return { ok: false, error: `Cannot read ${abs}` };
+      const entries = sdk.parseSessionEntries(raw);
+      if (!entries.some((e) => e.type === 'session')) {
+        return { ok: false, error: `${abs} is not a valid pi session file` };
+      }
+      const header = entries.find((e) => e.type === 'session');
+      const cwd = header?.cwd || NEW_CHAT_CWD;
+      const dir = path.join(SESSIONS_ROOT, '--' + cwd.replace(/^\//, '').replaceAll('/', '-') + '--');
+      const id = header?.id ?? `imported-${Date.now().toString(36)}`;
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      const dest = path.join(dir, `${ts}_${id}.jsonl`);
+      await mkdir(dir, { recursive: true });
+      await writeFile(dest, raw, 'utf8');
+      emit({ type: 'refresh', file: dest });
+      return { ok: true, data: { file: dest } };
+    }
+
+    case 'reload': {
+      const live = await slashSession(file);
+      await live.session.reload().catch(() => {});
+      emit({ type: 'refresh', file });
+      return { ok: true, notice: 'Reloaded resources (skills, prompts, context files).' };
+    }
+
+    case 'changelog': {
+      const changelogPath = path.join(sdkDir, 'CHANGELOG.md');
+      const text = await readFile(changelogPath, 'utf8').catch(() => 'No CHANGELOG.md found.');
+      return { ok: true, data: { text: text.slice(0, 12000) } };
+    }
+
+    default:
+      return { ok: false, error: `Unknown slash command /${name}` };
+  }
+}
+
+/** Create a new session file branched from `targetLeafId` and register it live. */
+async function forkSession(live, targetLeafId) {
+  const sm = live.session.sessionManager;
+  const file = live.session.sessionFile;
+  if (!file || !existsSync(file)) {
+    throw new Error('This session has not been saved yet — send a message first.');
+  }
+  const forkedPath = sm.createBranchedSession(targetLeafId);
+  if (!forkedPath) throw new Error('Failed to create forked session');
+  const { session } = await sdk.createAgentSession({ sessionManager: sdk.SessionManager.open(forkedPath) });
+  const forkedLive = { session, status: 'idle' };
+  liveSessions.set(forkedPath, forkedLive);
+  attachSession(forkedPath, forkedLive);
+  return forkedPath;
+}
+
 // ── HTTP handlers ──────────────────────────────────────────────────────────
 
 function sendJson(res, code, obj) {
@@ -396,13 +682,14 @@ const server = createServer(async (req, res) => {
       if (!file) return sendJson(res, 400, { error: 'missing file' });
       const limit = Number(url.searchParams.get('limit')) || undefined;
       const before = url.searchParams.get('before') || undefined;
+      const after = url.searchParams.get('after') || undefined;
       // Brand-new sessions (created via /api/new-chat) have no file until
       // their first message is appended — serve them as empty.
       if (!existsSync(file) && liveSessions.has(file)) {
         sendJson(res, 200, { file, name: null, cwd: NEW_CHAT_CWD, created: Date.now(), modified: Date.now(), messageCount: 0, userMessages: 0, firstMessage: '', preview: '', model: null, tokens: { input: 0, output: 0, total: 0 }, cost: 0, running: false, tuiActive: false, messages: [], oldestId: null, hasMore: false });
         return;
       }
-      const info = await analyzeSession(file, { withMessages: true, limit, before });
+      const info = await analyzeSession(file, { withMessages: true, limit, before, after });
       if (!info) return sendJson(res, 404, { error: 'session file not found' });
       sendJson(res, 200, info);
       return;
@@ -414,7 +701,7 @@ const server = createServer(async (req, res) => {
       if (!file || typeof message !== 'string' || !message.trim()) {
         return sendJson(res, 400, { error: 'file and message required' });
       }
-      if (file === LIVE_TUI_FILE) {
+      if (file === tuiLockFile) {
         return sendJson(res, 409, { error: 'This session is live in the pi TUI — open another chat.' });
       }
       // Files we created/opened ourselves may not exist on disk yet
@@ -435,6 +722,41 @@ const server = createServer(async (req, res) => {
       });
       await live.session.prompt(message);
       sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    // ── Slash command catalog (builtins + skills for autocomplete) ──
+    if (p === '/api/slash-commands' && req.method === 'GET') {
+      const commands = BUILTIN_SLASH_COMMANDS.map((c) => ({
+        name: c.name,
+        description: c.description,
+        argumentHint: c.argumentHint,
+        available: !NA_COMMANDS[c.name],
+        naReason: NA_COMMANDS[c.name],
+      }));
+      let skills = [];
+      try {
+        const result = sdk.loadSkills({
+          cwd: NEW_CHAT_CWD,
+          agentDir: sdk.getAgentDir(),
+          skillPaths: [],
+          includeDefaults: true,
+        });
+        skills = (result.skills ?? []).map((s) => ({ name: s.name, description: s.description ?? '' }));
+      } catch { /* skills unavailable — autocomplete just omits them */ }
+      sendJson(res, 200, { commands, skills });
+      return;
+    }
+
+    // ── Execute a slash command ──
+    if (p === '/api/slash' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const result = await handleSlashCommand(body);
+        sendJson(res, result.ok ? 200 : 400, result);
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: String(e?.message ?? e) });
+      }
       return;
     }
 
@@ -479,6 +801,177 @@ const heartbeat = setInterval(() => {
     try { res.write(': ping\n\n'); } catch { /* ignore */ }
   }
 }, 15000);
+
+// ── External session file watcher ─────────────────────────────────────────
+// Sessions written by OTHER processes (e.g. the pi TUI) produce no agent
+// events here — poll file mtimes and emit refresh so open chat windows
+// auto-update as entries land on disk.
+
+const fileMtimes = new Map();
+
+async function watchSessionFiles() {
+  let dirs = [];
+  try { dirs = await readdir(SESSIONS_ROOT, { withFileTypes: true }); } catch { return; }
+  for (const dirEntry of dirs) {
+    if (!dirEntry.isDirectory()) continue;
+    const dir = path.join(SESSIONS_ROOT, dirEntry.name);
+    let files = [];
+    try { files = await readdir(dir); } catch { continue; } // one bad dir must not abort the pass
+    for (const f of files) {
+      if (!f.endsWith('.jsonl')) continue;
+      const file = path.join(dir, f);
+      const st = await stat(file).catch(() => null);
+      if (!st) continue;
+      const m = st.mtimeMs;
+      if (fileMtimes.get(file) !== m) {
+        const known = fileMtimes.has(file);
+        fileMtimes.set(file, m);
+        emit({ type: 'refresh', file });
+        // A TUI is present and nothing is locked: the writer of this file
+        // is almost certainly the TUI (our own sessions are in
+        // liveSessions) — engage the lock on it. Covers a TUI that
+        // resumed an existing session (first write identifies the file).
+        // Old files seen for the first time (e.g. after a partial prime)
+        // must NOT be locked — only rewritten files or brand-new ones.
+        if (!tuiLockFile && !liveSessions.has(file) && findPiProcesses().length > 0) {
+          if (known || Date.now() - m < 60_000) relock(file);
+        }
+      }
+    }
+  }
+}
+
+// First pass primes the map; afterwards every mtime change emits refresh.
+void watchSessionFiles().then(() => {
+  setInterval(watchSessionFiles, 2000);
+});
+
+// ── TUI liveness + auto lock/unlock ───────────────────────────────────────
+// The read-only lock follows the pi TUI lifecycle:
+//   - TUI running → its session file is locked (read-only in the web UI)
+//   - TUI exits   → lock released automatically
+//   - a (new) TUI starts → the lock re-engages on that TUI's session
+// Detection: a pinned PID (PI_TUI_PID) or a scan for a live process whose
+// command is the `pi` binary.
+
+let tuiSeen = false; // a TUI process was present at the last poll
+
+function isAlive(pid) {
+  let s = '';
+  try { s = readFileSync(`/proc/${pid}/stat`, 'utf8'); } catch { return false; }
+  const close = s.lastIndexOf(')');
+  if (close < 0) return false;
+  // field 3 after the comm in parens: skip zombies
+  return s[close + 2] !== 'Z';
+}
+
+function findPiProcesses() {
+  if (TUI_PID !== null) return isAlive(TUI_PID) ? [TUI_PID] : [];
+  const out = [];
+  try {
+    for (const p of readdirSync('/proc')) {
+      if (!/^\d+$/.test(p)) continue;
+      const pid = Number(p);
+      if (pid === process.pid || !isAlive(pid)) continue;
+      let cmd = '';
+      try { cmd = readFileSync(`/proc/${pid}/cmdline`, 'utf8'); } catch { continue; }
+      const first = cmd.split('\0')[0] ?? '';
+      if (first.split('/').pop() === 'pi') out.push(pid);
+    }
+  } catch { /* on error return what we have */ }
+  return out;
+}
+
+function piProcessAlive() {
+  return findPiProcesses().length > 0;
+}
+
+async function newestFileIn(dir) {
+  try {
+    let newest = null;
+    let newestM = -1;
+    for (const f of await readdir(dir)) {
+      if (!f.endsWith('.jsonl')) continue;
+      const st = await stat(path.join(dir, f)).catch(() => null);
+      if (st && st.mtimeMs > newestM) { newestM = st.mtimeMs; newest = path.join(dir, f); }
+    }
+    return newest;
+  } catch { return null; }
+}
+
+async function newestSessionFileOverall() {
+  let newest = null;
+  let newestM = -1;
+  for (const dirEntry of await readdir(SESSIONS_ROOT, { withFileTypes: true })) {
+    if (!dirEntry.isDirectory()) continue;
+    const f = await newestFileIn(path.join(SESSIONS_ROOT, dirEntry.name));
+    if (f) {
+      const st = await stat(f).catch(() => null);
+      if (st && st.mtimeMs > newestM) { newestM = st.mtimeMs; newest = f; }
+    }
+  }
+  return newest;
+}
+
+/** Guess which session file a fresh TUI process is using. */
+async function detectTuiSessionFile(pids) {
+  // 1) the TUI's cwd encodes its sessions directory (--<cwd>--); the newest
+  //    file there is its session (freshly created, or the one it resumed)
+  for (const pid of pids) {
+    try {
+      const cwd = readlinkSync(`/proc/${pid}/cwd`);
+      // pi encodes the cwd as --<path>-- with '/' → '-', dropping the root
+      // slash: /workspace/sf → --workspace-sf--
+      const dir = path.join(SESSIONS_ROOT, '--' + cwd.replace(/^\//, '').replaceAll('/', '-') + '--');
+      const newest = await newestFileIn(dir);
+      if (newest) return newest;
+    } catch { /* try the next pid */ }
+  }
+  // 2) fallback: a session file created just now (a fresh TUI writes its
+  //    header + settings entries at startup)
+  const newest = await newestSessionFileOverall();
+  if (newest) {
+    const st = await stat(newest).catch(() => null);
+    if (st && Date.now() - st.mtimeMs < 60_000) return newest;
+  }
+  return null;
+}
+
+function relock(file) {
+  if (!file || tuiLockFile === file) return;
+  tuiLockFile = file;
+  console.log(`pi TUI detected — locking session ${file}`);
+  emit({ type: 'refresh', file });
+  emit({ type: 'refresh' });
+}
+
+function checkTuiLock() {
+  const pids = findPiProcesses();
+  if (pids.length === 0) {
+    tuiSeen = false;
+    if (tuiLockFile) {
+      console.log(`pi TUI process gone — auto-unlocking session ${tuiLockFile}`);
+      tuiLockFile = null;
+      emit({ type: 'refresh', file: LIVE_TUI_FILE });
+      emit({ type: 'refresh' });
+    }
+    return;
+  }
+  if (!tuiSeen) {
+    tuiSeen = true;
+    if (!tuiLockFile) {
+      // A TUI process appeared (or we started while one was running) and
+      // nothing is locked yet — engage the lock on its session.
+      if (TUI_PID !== null) {
+        relock(LIVE_TUI_FILE);
+      } else {
+        void detectTuiSessionFile(pids).then((file) => relock(file));
+      }
+    }
+  }
+}
+
+setInterval(checkTuiLock, 3000);
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`pi-agent-studio backend on 0.0.0.0:${PORT} (sdk: ${sdkDir})`);

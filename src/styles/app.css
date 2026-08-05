@@ -2,6 +2,15 @@
    pi-agent-studio — app-level styles (on top of StudioFramework's theme)
    ═══════════════════════════════════════════════════════════════════════════ */
 
+/* ── Mount element ────────────────────────────────────────────────────────
+   The framework styles html/body; each host app must give its own mount id
+   full height for .sf-root's height:100% chain to work. */
+#app {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
 /* ── Text selection ──────────────────────────────────────────────────────── */
 
 /* The framework shell is user-select: none (IDE-style); chat content must

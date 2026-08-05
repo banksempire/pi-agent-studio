@@ -375,6 +375,11 @@ export function bindWorkspace(api: WorkspaceApi) {
     { immediate: true },
   );
 
+  // Tile-strip "+" = start a new chat. The framework's default "+" creates
+  // an editor-style "Untitled" tab; a chat product has no use for that, so
+  // the app decides what a new workspace item means here.
+  api.setNewTabHandler(() => { void newChat(); }, 'New Chat');
+
   connectEvents();
   void fetchList().then(() => {
     if (firstBind) {

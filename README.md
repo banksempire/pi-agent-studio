@@ -19,8 +19,8 @@ APP: Chat
   compaction summaries).
 - **Real agent** — sending a message runs the pi agent in-process (pi SDK),
   the reply streams into the window live; tool executions show up as they
-  run. The current TUI-live session appears with a 🔒 read-only banner
-  (never prompted from two places at once).
+  run. The TUI-live session appears with a 🔒 read-only banner (never
+  prompted from two places at once). The lock **follows the TUI lifecycle**:
 - **Closing a tab closes only the view** — a running chat keeps generating
   in the backend; the Sessions list shows `running · bg`.
 - **Right panel** — live session stats of the activated chat window (like
@@ -38,7 +38,14 @@ npm run dev      # frontend: vite → 0.0.0.0:7492 (proxies /api → 7493)
 Open http://localhost:7492. Backend config via env:
 `PI_STUDIO_PORT` (7493), `PI_STUDIO_CWD` (new-chat working dir, default
 `/workspace/sf`), `PI_SDK_DIR` (default: global pi install), `PI_SESSION_FILE`
-(session to mark read-only — auto-set when run under pi).
+(session to mark read-only — auto-set when run under pi), `PI_TUI_PID`
+(optional: pin the TUI process; default: scan for a live `pi` process).
+
+TUI lock lifecycle (polled every 3s): TUI running → its session is locked;
+TUI exits → lock released; a (new) TUI starts → lock re-engages on that
+TUI's session (found via the TUI's cwd-encoded sessions dir, falling back
+to the freshest session file; a TUI resuming an existing session is caught
+when it first writes to it).
 
 ## Architecture
 

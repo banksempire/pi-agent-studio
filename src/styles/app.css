@@ -2,6 +2,19 @@
    pi-agent-studio — app-level styles (on top of StudioFramework's theme)
    ═══════════════════════════════════════════════════════════════════════════ */
 
+/* ── Text selection ──────────────────────────────────────────────────────── */
+
+/* The framework shell is user-select: none (IDE-style); chat content must
+   stay copyable. */
+.chat-window {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.chat-window .chat-banner {
+  user-select: none;
+}
+
 /* ── Shared: status dot ─────────────────────────────────────────────────── */
 
 .chat-status-dot {
@@ -427,7 +440,17 @@
   cursor: pointer;
 }
 
+.chat-banner--tui {
+  cursor: pointer;
+}
+
+.chat-banner--tui:hover {
+  background: rgba(215, 186, 125, 0.2);
+  border-color: rgba(215, 186, 125, 0.5);
+}
+
 .chat-composer {
+  position: relative;
   display: flex;
   align-items: flex-end;
   gap: 8px;
@@ -475,6 +498,163 @@
 .chat-send-btn:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+/* ── System messages (slash command output) ────────────────────────────── */
+
+.chat-system {
+  align-self: center;
+  max-width: 96%;
+  margin: 2px 0;
+  padding: 6px 10px;
+  background: rgba(0, 122, 204, 0.07);
+  border: 1px solid rgba(0, 122, 204, 0.25);
+  border-radius: 6px;
+  color: var(--sf-text);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--sf-mono);
+}
+
+.chat-msg--system.chat-msg--error .chat-system {
+  border-color: rgba(244, 135, 113, 0.4);
+  background: rgba(244, 135, 113, 0.08);
+  color: #f48771;
+}
+
+/* ── Slash command autocomplete ────────────────────────────────────────── */
+
+.chat-completions {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: calc(100% - 4px);
+  max-height: 40vh;
+  overflow-y: auto;
+  background: var(--sf-bg-lighter);
+  border: 1px solid var(--sf-border);
+  border-radius: 6px;
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.35);
+  z-index: 30;
+  padding: 4px 0;
+}
+
+.chat-completion {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+  font-size: 12.5px;
+}
+
+.chat-completion--selected {
+  background: var(--sf-accent);
+  color: var(--sf-text-on-accent);
+}
+
+.chat-completion-name {
+  font-family: var(--sf-mono);
+  flex-shrink: 0;
+}
+
+.chat-completion-hint {
+  font-size: 11px;
+  opacity: 0.8;
+  flex-shrink: 0;
+}
+
+.chat-completion-desc {
+  font-size: 11px;
+  opacity: 0.75;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Picker dialog (model / tree / fork / resume) ──────────────────────── */
+
+.chat-picker-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 40;
+}
+
+.chat-picker {
+  width: min(560px, 88%);
+  max-height: 75%;
+  display: flex;
+  flex-direction: column;
+  background: var(--sf-bg-lighter);
+  border: 1px solid var(--sf-border);
+  border-radius: 8px;
+  box-shadow: var(--sf-shadow);
+  overflow: hidden;
+}
+
+.chat-picker-title {
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--sf-text-bright);
+  border-bottom: 1px solid var(--sf-border);
+  flex-shrink: 0;
+}
+
+.chat-picker-list {
+  overflow-y: auto;
+  flex: 1;
+  padding: 4px 0;
+}
+
+.chat-picker-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.chat-picker-item--selected {
+  background: var(--sf-accent);
+  color: var(--sf-text-on-accent);
+}
+
+.chat-picker-label {
+  font-family: var(--sf-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-picker-detail {
+  font-size: 11px;
+  opacity: 0.75;
+  flex-shrink: 0;
+}
+
+.chat-picker-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--sf-text-muted);
+  font-size: 12px;
+}
+
+.chat-picker-footer {
+  padding: 6px 14px;
+  font-size: 10.5px;
+  color: var(--sf-text-muted);
+  border-top: 1px solid var(--sf-border);
+  flex-shrink: 0;
 }
 
 /* ── Chat list (panel: Chat History / Sessions) ─────────────────────────── */

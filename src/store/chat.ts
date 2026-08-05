@@ -24,7 +24,7 @@ export interface ToolCallView {
 
 export interface DisplayMessage {
   id: string;
-  role: 'user' | 'assistant' | 'summary' | 'bash' | 'custom' | 'toolResult';
+  role: 'user' | 'assistant' | 'summary' | 'bash' | 'custom' | 'toolResult' | 'system';
   text: string;
   thinking?: string;
   toolCalls?: ToolCallView[];
@@ -70,6 +70,13 @@ export interface ChatSession {
   /** entry id of the oldest loaded message (cursor for loading older) */
   oldestId: string | null;
   loadingOlder: boolean;
+  /**
+   * False while the session exists only in frontend state (created via
+   * /api/new-chat; the session file is written by the SDK only once the
+   * first assistant message lands). Such sessions must survive list
+   * refreshes until they appear on disk.
+   */
+  onDisk: boolean;
 }
 
 export type BackendStatus = 'connecting' | 'online' | 'offline';
@@ -162,6 +169,7 @@ function toSession(raw: SessionInfo): ChatSession {
     hasMoreOlder: false,
     oldestId: null,
     loadingOlder: false,
+    onDisk: true,
   };
 }
 
@@ -171,24 +179,38 @@ async function fetchList() {
   try {
     const { sessions } = await api<{ sessions: SessionInfo[] }>('/api/sessions');
     const prev = new Map(state.sessions.map((s) => [s.file, s]));
-    state.sessions = sessions.map((raw) => {
-      const old = prev.get(raw.file);
-      const s = toSession(raw);
-      if (old) {
-        s.messages = old.messages;
-        s.messagesLoaded = old.messagesLoaded;
-        s.hasMoreOlder = old.hasMoreOlder;
-        s.oldestId = old.oldestId;
-        s.loadingOlder = old.loadingOlder;
-      }
-      return s;
-    });
+    const onDisk = new Set(sessions.map((s) => s.file));
+    // Sessions that never hit disk yet (fresh UI chats before the first
+    // assistant message) are absent from the backend list — keep them so
+    // open windows don't lose their session mid-flight.
+    const memoryOnly = state.sessions.filter((s) => !onDisk.has(s.file) && !s.onDisk);
+    state.sessions = [
+      ...memoryOnly,
+      ...sessions.map((raw) => {
+        const old = prev.get(raw.file);
+        const s = toSession(raw);
+        s.onDisk = true;
+        if (old) {
+          s.messages = old.messages;
+          s.messagesLoaded = old.messagesLoaded;
+          s.hasMoreOlder = old.hasMoreOlder;
+          s.oldestId = old.oldestId;
+          s.loadingOlder = old.loadingOlder;
+        }
+        return s;
+      }),
+    ];
     state.backend = 'online';
     state.backendError = '';
   } catch (e) {
     state.backend = 'offline';
     state.backendError = e instanceof Error ? e.message : String(e);
   }
+}
+
+/** Public refresh — re-read the session list from the backend (slash results use it). */
+export function refreshList(): Promise<void> {
+  return fetchList();
 }
 
 // ── SSE live events ────────────────────────────────────────────────────────
@@ -267,9 +289,14 @@ function handleEvent(ev: any) {
       if (s) mergeToolResult(s, ev.toolCallId, ev.text ?? '', !!ev.isError);
       break;
     }
-    case 'refresh':
+    case 'refresh': {
+      // Anything new on disk (our own appends OR external writers like the
+      // pi TUI) — refresh the list and pull new messages into loaded views.
+      const s = byFile(ev.file);
+      if (s && s.messagesLoaded) void syncTail(s.id);
       void fetchList();
       break;
+    }
   }
 }
 
@@ -278,11 +305,22 @@ let es: EventSource | null = null;
 function connectEvents() {
   if (es) return;
   es = new EventSource('/api/events');
-  es.onopen = () => { state.backend = 'online'; };
+  es.onopen = () => {
+    state.backend = 'online';
+    // Reconnect (or first connect): heal any events missed while offline.
+    syncAllTails();
+  };
   es.onerror = () => { state.backend = 'offline'; }; // EventSource auto-reconnects
   es.onmessage = (e) => {
     try { handleEvent(JSON.parse(e.data)); } catch { /* ignore malformed */ }
   };
+}
+
+/** Pull messages newer than the last loaded one into every loaded session. */
+function syncAllTails() {
+  for (const s of state.sessions) {
+    if (s.messagesLoaded) void syncTail(s.id);
+  }
 }
 
 // ── Workspace binding ──────────────────────────────────────────────────────
@@ -395,6 +433,7 @@ export async function newChat(): Promise<void> {
         },
         messages: [], messagesLoaded: true,
         hasMoreOlder: false, oldestId: null, loadingOlder: false,
+        onDisk: false,
       });
     }
     openChat(id);
@@ -410,9 +449,14 @@ export function openChat(sessionId: string) {
   if (!s || !ws) return;
   const tabId = chatTabId(sessionId);
 
-  const existing = ws.findTileGlobal(tabId);
+  // Already open somewhere → just activate it (dedupe by tab id).
+  const existing = ws.findTabGlobal(tabId);
   if (existing) {
     ws.ops.activateTab(existing.id, tabId);
+    // Re-sync on every activation: the session may have advanced while
+    // its view was closed or while events were missed.
+    if (!s.messagesLoaded) void fetchMessages(sessionId);
+    else void syncTail(sessionId);
     return;
   }
 
@@ -426,6 +470,7 @@ export function openChat(sessionId: string) {
     props: { sessionId },
   });
   if (!s.messagesLoaded) void fetchMessages(sessionId);
+  else void syncTail(sessionId);
 }
 
 /** Send a user message; the real pi agent replies (streaming via SSE). */
@@ -469,12 +514,24 @@ export async function stopSession(sessionId: string) {
   } catch { /* session not running — fine */ }
 }
 
+/** Append a local-only system message (slash command output) to a session. */
+export function appendLocalMessage(sessionId: string, msg: Partial<DisplayMessage> & { text: string }) {
+  const s = findSession(sessionId);
+  if (!s) return;
+  s.messages.push({
+    id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    role: 'system',
+    ts: Date.now(),
+    ...msg,
+  } as DisplayMessage);
+}
+
 /** Close the workspace *view* of a session. The session itself is untouched. */
 export function closeChatView(sessionId: string) {
   const s = findSession(sessionId);
   if (!s || !ws) return;
-  const tile = ws.findTileGlobal(chatTabId(sessionId));
-  if (tile) ws.ops.closeTab(chatTabId(sessionId));
+  const tabId = chatTabId(sessionId);
+  if (ws.findTabGlobal(tabId)) ws.ops.closeTab(tabId);
 }
 
 /** Number of messages fetched per page (newest window). */
@@ -523,6 +580,47 @@ export async function loadOlder(sessionId: string) {
   await fetchMessages(sessionId, { older: true });
 }
 
+/**
+ * Pull only the messages newer than the last loaded one and append them
+ * (used for live sync: SSE refresh events, reconnect, window activation).
+ * Dedupes by id and by (role, timestamp) — streamed messages carry live
+ * ids that differ from their persisted entry ids.
+ */
+export async function syncTail(sessionId: string) {
+  const s = findSession(sessionId);
+  if (!s || !s.messagesLoaded) return;
+  // Cursor: the last message that has a stable file entry id.
+  let lastEntryId: string | null = null;
+  for (let i = s.messages.length - 1; i >= 0; i--) {
+    const id = s.messages[i].id;
+    if (id && !id.startsWith('pending-') && !id.startsWith('asst-') && !id.startsWith('toolresult-') && !id.startsWith('msg-')) {
+      lastEntryId = id;
+      break;
+    }
+  }
+  if (!lastEntryId) return;
+  try {
+    const data = await api<any>(`/api/sessions/messages?file=${encodeURIComponent(s.file)}&after=${encodeURIComponent(lastEntryId)}`);
+    const incoming = (data.messages ?? []) as DisplayMessage[];
+    if (incoming.length > 0) {
+      const known = new Set(s.messages.map((m) => m.id));
+      const fresh = incoming.filter((m) => {
+        if (known.has(m.id)) return false;
+        // Same content already shown under a live id (streamed → persisted)?
+        return !s.messages.some((x) => x.role === m.role && x.ts === m.ts);
+      });
+      if (fresh.length > 0) s.messages = [...s.messages, ...fresh];
+    }
+    // Full-session info rides along — keep stats fresh too.
+    if (data.model) s.stats.model = data.model;
+    s.stats.tokensIn = data.tokens?.input ?? s.stats.tokensIn;
+    s.stats.tokensOut = data.tokens?.output ?? s.stats.tokensOut;
+    s.stats.costUsd = data.cost ?? s.stats.costUsd;
+    s.stats.messageCount = data.messageCount ?? s.stats.messageCount;
+    s.status = data.running ? 'running' : s.status;
+  } catch { /* transient — next refresh/connect will retry */ }
+}
+
 // ── Public API ─────────────────────────────────────────────────────────────
 
 export const store = {
@@ -543,7 +641,10 @@ export const store = {
   closeChatView,
   fetchMessages,
   loadOlder,
+  syncTail,
   bindWorkspace,
+  refreshList,
+  appendLocalMessage,
 };
 
 export function useChatStore() {

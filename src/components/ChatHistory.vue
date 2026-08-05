@@ -21,7 +21,7 @@ function preview(s: ChatSession): string {
       <div v-if="store.backendError" class="chat-list-error">{{ store.backendError }}</div>
     </div>
     <div v-else-if="sessions.length === 0" class="chat-list-empty">
-      No chats yet — press ➕ or Ctrl+N to start one.
+      No chats yet — press Ctrl+N or click New Chat above to start one.
     </div>
     <div
       v-for="s in sessions"

@@ -77,6 +77,8 @@ export interface ChatSession {
    * refreshes until they appear on disk.
    */
   onDisk: boolean;
+  /** Per-window preference: render chat text as markdown (localStorage-backed). */
+  renderMarkdown: boolean;
 }
 
 export type BackendStatus = 'connecting' | 'online' | 'offline';
@@ -105,6 +107,16 @@ const state = reactive<ChatState>({
 /** Tab id scheme: one tab per session, stable across open/close. */
 const TAB_PREFIX = 'chat-';
 const chatTabId = (sessionId: string) => TAB_PREFIX + sessionId;
+
+// ── Per-window markdown preference (localStorage, keyed by session id) ────
+
+const MD_KEY = 'sf-chat:md:';  // value '1' = render markdown, '0' = raw text
+function loadMdPref(id: string): boolean {
+  try { return localStorage.getItem(MD_KEY + id) !== '0'; } catch { return true; }
+}
+function saveMdPref(id: string, on: boolean) {
+  try { localStorage.setItem(MD_KEY + id, on ? '1' : '0'); } catch { /* storage unavailable */ }
+}
 
 // ── Backend client ─────────────────────────────────────────────────────────
 
@@ -170,6 +182,7 @@ function toSession(raw: SessionInfo): ChatSession {
     oldestId: null,
     loadingOlder: false,
     onDisk: true,
+    renderMarkdown: loadMdPref(id),
   };
 }
 
@@ -439,6 +452,7 @@ export async function newChat(): Promise<void> {
         messages: [], messagesLoaded: true,
         hasMoreOlder: false, oldestId: null, loadingOlder: false,
         onDisk: false,
+        renderMarkdown: loadMdPref(id),
       });
     }
     openChat(id);
@@ -537,6 +551,14 @@ export function closeChatView(sessionId: string) {
   if (!s || !ws) return;
   const tabId = chatTabId(sessionId);
   if (ws.findTabGlobal(tabId)) ws.ops.closeTab(tabId);
+}
+
+/** Per-window preference: render markdown in this session's chat window. */
+export function setRenderMarkdown(sessionId: string, on: boolean) {
+  const s = findSession(sessionId);
+  if (!s) return;
+  s.renderMarkdown = on;
+  saveMdPref(sessionId, on);
 }
 
 /** Number of messages fetched per page (newest window). */
@@ -644,6 +666,7 @@ export const store = {
   sendMessage,
   stopSession,
   closeChatView,
+  setRenderMarkdown,
   fetchMessages,
   loadOlder,
   syncTail,

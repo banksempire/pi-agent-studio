@@ -915,3 +915,101 @@
 .welcome-status--offline {
   color: #f48771;
 }
+
+/* ── Per-window markdown toggle (right panel) ───────────────────────────── */
+
+.md-switch {
+  width: 30px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--sf-border);
+  border-radius: 8px;
+  background: var(--sf-bg);
+  position: relative;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.md-switch-knob {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--sf-text-muted);
+  transition: left 0.15s, background 0.15s;
+}
+
+.md-switch--on {
+  background: var(--sf-accent);
+  border-color: var(--sf-accent);
+}
+
+.md-switch--on .md-switch-knob {
+  left: 15px;
+  background: var(--sf-text-on-accent);
+}
+
+.md-switch:hover {
+  border-color: var(--sf-text-muted);
+}
+
+/* ── Markdown rendering in chat messages (per-window) ──────────────────── */
+
+.chat-msg-md {
+  white-space: normal;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.chat-msg-md > :first-child { margin-top: 0; }
+.chat-msg-md > :last-child { margin-bottom: 0; }
+.chat-msg-md p { margin: 0.4em 0; }
+.chat-msg-md h1, .chat-msg-md h2, .chat-msg-md h3, .chat-msg-md h4 {
+  margin: 0.7em 0 0.3em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.chat-msg-md h1 { font-size: 1.25em; }
+.chat-msg-md h2 { font-size: 1.15em; }
+.chat-msg-md h3 { font-size: 1.05em; }
+.chat-msg-md h4 { font-size: 1em; }
+.chat-msg-md ul, .chat-msg-md ol { margin: 0.4em 0; padding-left: 1.4em; }
+.chat-msg-md li { margin: 0.15em 0; }
+.chat-msg-md code {
+  font-family: var(--sf-mono);
+  font-size: 0.92em;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+}
+.chat-msg-md pre {
+  background: var(--sf-bg-dark);
+  border: 1px solid var(--sf-border);
+  border-radius: 5px;
+  padding: 8px 10px;
+  margin: 0.5em 0;
+  overflow-x: auto;
+}
+.chat-msg-md pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+}
+.chat-msg-md blockquote {
+  margin: 0.4em 0;
+  padding-left: 10px;
+  border-left: 3px solid var(--sf-border);
+  color: var(--sf-text-muted);
+}
+.chat-msg-md a { color: #4fc1ff; }
+.chat-msg-md table { border-collapse: collapse; margin: 0.5em 0; font-size: 0.95em; }
+.chat-msg-md th, .chat-msg-md td {
+  border: 1px solid var(--sf-border);
+  padding: 3px 8px;
+}
+.chat-msg-md th { background: var(--sf-bg-hover); }
+.chat-msg-md hr { border: none; border-top: 1px solid var(--sf-border); margin: 0.6em 0; }
+.chat-msg-md img { max-width: 100%; border-radius: 4px; }

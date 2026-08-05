@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch, type Ref } from 'vue';
+import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 import {
   useChatStore, fmtTime, type ChatSession, type DisplayMessage,
 } from '../store/chat';
@@ -12,6 +14,14 @@ const props = defineProps<{ sessionId: string }>();
 const store = useChatStore();
 
 const session = computed<ChatSession | undefined>(() => store.findSession(props.sessionId));
+/** Per-window toggle (right panel): render message text as markdown. */
+const renderMd = computed(() => session.value?.renderMarkdown ?? true);
+
+/** Markdown → sanitized HTML (agent output may echo untrusted content). */
+function md(text: string): string {
+  if (!text) return '';
+  return DOMPurify.sanitize(marked.parse(text) as string);
+}
 const input = ref('');
 const listEl = ref<HTMLElement | null>(null);
 const inputEl = ref<HTMLTextAreaElement | null>(null);
@@ -332,7 +342,9 @@ onMounted(() => {
 
           <!-- Text -->
           <div v-if="m.text && m.role !== 'system'" class="chat-msg-text" :class="{ 'chat-msg-text--streaming': isStreaming() && m.id === lastMessage?.id }">
-            {{ m.text }}<span v-if="isStreaming() && m.id === lastMessage?.id" class="chat-cursor">▌</span>
+            <div v-if="renderMd" class="chat-msg-md" v-html="md(m.text)" />
+            <template v-else>{{ m.text }}</template>
+            <span v-if="isStreaming() && m.id === lastMessage?.id" class="chat-cursor">▌</span>
           </div>
 
           <!-- Tool calls -->

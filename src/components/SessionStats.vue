@@ -58,6 +58,18 @@ const rows = computed<StatRow[]>(() => {
       </div>
       <div class="session-stats-file" :title="session.file">{{ shortFile(session.file) }}</div>
       <div class="session-stats-rows">
+        <!-- Per-window view switch: renders markdown in THIS chat window only -->
+        <div class="session-stats-row">
+          <span class="session-stats-key">Markdown</span>
+          <button
+            class="md-switch"
+            :class="{ 'md-switch--on': session.renderMarkdown }"
+            role="switch"
+            :aria-checked="session.renderMarkdown"
+            :title="session.renderMarkdown ? 'Markdown rendered — click to show raw text' : 'Raw text — click to render markdown'"
+            @click="store.setRenderMarkdown(session.id, !session.renderMarkdown)"
+          ><span class="md-switch-knob" /></button>
+        </div>
         <div v-for="r in rows" :key="r.key" class="session-stats-row">
           <span class="session-stats-key">{{ r.key }}</span>
           <span

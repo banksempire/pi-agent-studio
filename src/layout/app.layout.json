@@ -51,7 +51,6 @@
                   { "id": "new-chat", "icon": "➕", "tooltip": "New Chat (Ctrl+N)" }
                 ],
                 "components": [
-                  { "type": "button", "label": "New Chat", "icon": "➕", "action": "new-chat" },
                   { "type": "component", "key": "chat-history" }
                 ]
               },

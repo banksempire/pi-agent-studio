@@ -113,6 +113,28 @@
   font-size: 13px;
 }
 
+.chat-load-older {
+  align-self: center;
+  font-size: 11px;
+  color: var(--sf-text-muted);
+  cursor: pointer;
+  padding: 2px 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  user-select: none;
+}
+
+.chat-load-older:hover {
+  color: var(--sf-text-bright);
+  border-color: var(--sf-border);
+}
+
+.chat-load-older--loading {
+  cursor: default;
+  font-style: italic;
+  animation: chat-blink 1.2s steps(1) infinite;
+}
+
 .chat-msg {
   max-width: 78%;
   padding: 8px 12px;
@@ -144,6 +166,10 @@
   color: var(--sf-text-muted);
   font-size: 12px;
   font-style: italic;
+}
+
+.chat-msg--error {
+  border-color: rgba(244, 135, 113, 0.5);
 }
 
 .chat-msg-role {
@@ -182,6 +208,223 @@
   font-size: 11px;
   color: var(--sf-text-muted);
   font-style: italic;
+}
+
+/* ── Real message blocks (thinking / tools / summaries) ─────────────────── */
+
+.chat-thinking {
+  margin: 4px 0;
+  font-size: 12px;
+  color: var(--sf-text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.chat-thinking-toggle {
+  display: inline-block;
+  width: 14px;
+  font-size: 10px;
+}
+
+.chat-thinking-label {
+  font-style: italic;
+  opacity: 0.9;
+}
+
+.chat-thinking-body {
+  margin: 4px 0 4px 14px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 4px;
+  font-family: var(--sf-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow-y: auto;
+  color: var(--sf-text-muted);
+}
+
+.chat-tools {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chat-tool {
+  border: 1px solid var(--sf-border);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.03);
+  overflow: hidden;
+}
+
+.chat-tool-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 12px;
+  user-select: none;
+}
+
+.chat-tool-head:hover {
+  background: var(--sf-bg-hover);
+}
+
+.chat-tool-icon {
+  font-size: 11px;
+}
+
+.chat-tool-name {
+  font-family: var(--sf-mono);
+  color: var(--sf-text-bright);
+}
+
+.chat-tool-toggle {
+  font-size: 10px;
+  color: var(--sf-text-muted);
+}
+
+.chat-tool-done {
+  margin-left: auto;
+  font-size: 11px;
+  color: #4ec9b0;
+}
+
+.chat-tool-done--error {
+  color: #f48771;
+}
+
+.chat-tool-done--pending {
+  color: var(--sf-text-muted);
+  animation: chat-blink 1s steps(1) infinite;
+}
+
+.chat-tool-args {
+  margin: 0 8px 6px 8px;
+  padding: 6px 8px;
+  background: var(--sf-bg);
+  border-radius: 4px;
+  font-family: var(--sf-mono);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow-y: auto;
+  color: var(--sf-text);
+}
+
+.chat-tool-result {
+  border-top: 1px solid var(--sf-border);
+}
+
+.chat-tool-result--error {
+  background: rgba(244, 135, 113, 0.06);
+}
+
+.chat-tool-result-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--sf-text-muted);
+  user-select: none;
+}
+
+.chat-tool-result-head:hover {
+  background: var(--sf-bg-hover);
+}
+
+.chat-tool-result-body {
+  margin: 0 8px 6px 8px;
+  padding: 6px 8px;
+  background: var(--sf-bg);
+  border-radius: 4px;
+  font-family: var(--sf-mono);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 260px;
+  overflow-y: auto;
+  color: var(--sf-text);
+}
+
+.chat-bash {
+  align-self: stretch;
+  padding: 8px 10px;
+  background: var(--sf-bg-dark);
+  border: 1px solid var(--sf-border);
+  border-radius: 5px;
+  font-family: var(--sf-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 300px;
+  overflow-y: auto;
+  color: var(--sf-text);
+}
+
+.chat-summary {
+  align-self: center;
+  max-width: 90%;
+  padding: 6px 12px;
+  background: rgba(215, 186, 125, 0.08);
+  border: 1px solid rgba(215, 186, 125, 0.25);
+  border-radius: 6px;
+  color: #d7ba7d;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.chat-aborted {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--sf-text-muted);
+  font-style: italic;
+}
+
+.chat-aborted--error {
+  color: #f48771;
+  white-space: pre-wrap;
+}
+
+.chat-lock {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #d7ba7d;
+  border: 1px solid rgba(215, 186, 125, 0.4);
+  border-radius: 3px;
+  padding: 1px 6px;
+}
+
+.chat-banner {
+  padding: 4px 10px;
+  background: rgba(215, 186, 125, 0.1);
+  border: 1px solid rgba(215, 186, 125, 0.3);
+  border-radius: 4px;
+  color: #d7ba7d;
+  font-size: 11px;
+  margin-bottom: 6px;
+  flex-basis: 100%;
+}
+
+.chat-banner--error {
+  background: rgba(244, 135, 113, 0.08);
+  border-color: rgba(244, 135, 113, 0.35);
+  color: #f48771;
+  cursor: pointer;
 }
 
 .chat-composer {
@@ -328,6 +571,18 @@
   color: var(--sf-accent-dim);
 }
 
+.chat-list-badge--tui {
+  background: rgba(215, 186, 125, 0.15);
+  color: #d7ba7d;
+}
+
+.chat-list-error {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #f48771;
+  word-break: break-word;
+}
+
 /* ── Session stats (right panel) ────────────────────────────────────────── */
 
 .session-stats {
@@ -399,7 +654,7 @@
   color: var(--sf-text-muted);
 }
 
-.session-stats-pill--stopped {
+.session-stats-pill--tui {
   background: rgba(215, 186, 125, 0.15);
   color: #d7ba7d;
 }
@@ -421,6 +676,16 @@
   padding: 8px;
 }
 
+.session-stats-file {
+  padding: 0 8px 4px 8px;
+  font-size: 10px;
+  color: var(--sf-text-muted);
+  font-family: var(--sf-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Welcome tab ────────────────────────────────────────────────────────── */
 
 .welcome-btn {
@@ -433,9 +698,31 @@
   font-size: 14px;
   padding: 9px 20px;
   cursor: pointer;
-  margin-bottom: 28px;
+  margin-bottom: 14px;
 }
 
-.welcome-btn:hover {
+.welcome-btn:hover:not(:disabled) {
   background: var(--sf-accent-hover);
+}
+
+.welcome-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.welcome-status {
+  font-size: 12px;
+  margin-bottom: 24px;
+}
+
+.welcome-status--online {
+  color: #4ec9b0;
+}
+
+.welcome-status--connecting {
+  color: var(--sf-text-muted);
+}
+
+.welcome-status--offline {
+  color: #f48771;
 }

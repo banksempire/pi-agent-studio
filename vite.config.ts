@@ -14,5 +14,12 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 7492,
     allowedHosts: ['mbp', 'localhost', '.local'],
+    proxy: {
+      // pi-agent-studio backend (server/index.mjs) — real pi agent sessions
+      '/api': {
+        target: 'http://127.0.0.1:7493',
+        changeOrigin: true,
+      },
+    },
   },
 });

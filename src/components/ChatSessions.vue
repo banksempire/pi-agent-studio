@@ -1,26 +1,29 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { useChatStore, timeAgo, type ChatSession } from '../store/chat';
+import { useChatStore, type ChatSession } from '../store/chat';
 
 const store = useChatStore();
 
 const active = computed(() => store.activeSessions());
 
 function badge(s: ChatSession): string {
+  if (s.tuiActive) return 'TUI';
   if (s.status === 'running') return store.isViewOpen(s.id) ? 'running' : 'running · bg';
   return store.isViewOpen(s.id) ? 'open' : 'idle';
 }
 
 function badgeClass(s: ChatSession): string {
-  return s.status === 'running' ? 'running' : 'open';
+  if (s.tuiActive) return 'tui';
+  if (s.status === 'running') return 'running';
+  return 'open';
 }
 </script>
 
 <template>
   <div class="chat-list">
     <div v-if="active.length === 0" class="chat-list-empty">
-      No active sessions. Sessions with an open window or a running
-      background chat appear here.
+      No active sessions. Sessions with an open window or a chat generating
+      in the background appear here.
     </div>
     <div
       v-for="s in active"
@@ -32,11 +35,11 @@ function badgeClass(s: ChatSession): string {
     >
       <div class="chat-list-row1">
         <span class="chat-list-title">{{ s.title }}</span>
-        <span class="chat-list-time">{{ timeAgo(s.stats.lastActivity) }}</span>
+        <span class="chat-list-time">{{ s.stats.messageCount }} msgs</span>
       </div>
       <div class="chat-list-row2">
         <span class="chat-list-badge" :class="'chat-list-badge--' + badgeClass(s)">{{ badge(s) }}</span>
-        <span class="chat-list-preview">{{ s.messages.length }} messages</span>
+        <span class="chat-list-preview">{{ s.tuiActive ? 'live in the pi TUI' : (s.preview || s.title) }}</span>
       </div>
     </div>
   </div>

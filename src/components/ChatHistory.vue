@@ -5,20 +5,22 @@ import { useChatStore, timeAgo, type ChatSession } from '../store/chat';
 const store = useChatStore();
 
 const sessions = computed(() =>
-  [...store.sessions].sort((a, b) => b.createdAt - a.createdAt),
+  [...store.sessions].sort((a, b) => b.lastActivity - a.lastActivity),
 );
 
 function preview(s: ChatSession): string {
-  const last = s.messages[s.messages.length - 1];
-  if (!last) return 'No messages yet';
-  const text = last.text.replace(/\s+/g, ' ').trim();
-  return text.length > 56 ? text.slice(0, 56) + '…' : text;
+  const t = (s.preview || s.title).replace(/\s+/g, ' ').trim();
+  return t.length > 56 ? t.slice(0, 56) + '…' : t;
 }
 </script>
 
 <template>
   <div class="chat-list">
-    <div v-if="sessions.length === 0" class="chat-list-empty">
+    <div v-if="store.backend === 'offline'" class="chat-list-empty">
+      ⚠ Backend offline — start it with <code>npm run server</code> in pi-agent-studio.
+      <div v-if="store.backendError" class="chat-list-error">{{ store.backendError }}</div>
+    </div>
+    <div v-else-if="sessions.length === 0" class="chat-list-empty">
       No chats yet — press ➕ or Ctrl+N to start one.
     </div>
     <div
@@ -31,11 +33,11 @@ function preview(s: ChatSession): string {
     >
       <div class="chat-list-row1">
         <span class="chat-list-title">{{ s.title }}</span>
-        <span class="chat-list-time">{{ timeAgo(s.stats.lastActivity) }}</span>
+        <span class="chat-list-time">{{ timeAgo(s.lastActivity) }}</span>
       </div>
       <div class="chat-list-row2">
         <span class="chat-list-status" :class="'chat-list-status--' + s.status">
-          {{ s.status === 'running' ? '⏳' : s.status === 'stopped' ? '⏸' : '' }}
+          {{ s.status === 'running' ? '⏳' : s.tuiActive ? '🔒' : '' }}
         </span>
         <span class="chat-list-preview">{{ preview(s) }}</span>
       </div>

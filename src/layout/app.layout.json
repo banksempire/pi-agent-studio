@@ -99,11 +99,11 @@
   "status": {
     "left": [
       { "id": "brand", "label": "pi-agent-studio" },
-      { "id": "version", "label": "v0.1.0" }
+      { "id": "version", "label": "v0.2.0" }
     ],
     "right": [
-      { "id": "backend", "label": "⚡ mock backend" },
-      { "id": "model", "label": "pi-1 · mock" }
+      { "id": "backend", "label": "⚡ pi agent · live" },
+      { "id": "cwd", "label": "/workspace/sf" }
     ]
   }
 }

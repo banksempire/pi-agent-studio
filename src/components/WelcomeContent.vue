@@ -8,14 +8,20 @@ const store = useChatStore();
   <div class="sf-welcome">
     <div class="sf-welcome-content">
       <h1>pi-agent-studio</h1>
-      <p>Your pi agent, in the StudioFramework shell.</p>
+      <p>Your pi agent, in the StudioFramework shell — real sessions, real agent.</p>
 
-      <button class="welcome-btn" @click="store.newChat()">💬 Start a new chat</button>
+      <button class="welcome-btn" :disabled="store.backend === 'offline'" @click="store.newChat()">
+        💬 Start a new chat
+      </button>
+
+      <div class="welcome-status" :class="'welcome-status--' + store.backend">
+        {{ store.backend === 'online' ? '● connected to the pi agent' : store.backend === 'connecting' ? '◌ connecting…' : '○ backend offline' }}
+      </div>
 
       <div class="sf-welcome-shortcuts">
         <div class="sf-shortcut"><kbd>Ctrl+N</kbd> New Chat</div>
-        <div class="sf-shortcut"><kbd>Click</kbd> Chat History entry opens its window</div>
-        <div class="sf-shortcut"><kbd>✕</kbd> on a tab closes the view — the session keeps running</div>
+        <div class="sf-shortcut"><kbd>Click</kbd> a Chat History entry opens its window</div>
+        <div class="sf-shortcut"><kbd>✕</kbd> on a tab closes the view — a running chat keeps going</div>
         <div class="sf-shortcut"><kbd>Right panel</kbd> shows live stats of the activated chat window</div>
       </div>
     </div>

@@ -1,12 +1,12 @@
 /**
- * Chat store — the app-side state for the Chat app.
+ * Chat store — the app-side state for the Chat app, backed by the REAL pi
+ * agent through the backend server (server/index.mjs).
  *
- * Sessions live here regardless of whether their view (workspace tab) is
- * open: closing a chat window only closes the *view*; a running session
- * keeps streaming in the background (timers are module-scoped).
- *
- * Currently backed by a mock engine; the API surface (sessions, messages,
- * status, stats) is shaped so a real pi backend can replace it later.
+ * - Session list + messages come from real ~/.pi/agent/sessions files
+ * - Sending a message runs the real agent (createAgentSession in the
+ *   backend); replies stream live over Server-Sent Events
+ * - Closing a chat window only closes the *view* — a running session
+ *   keeps generating in the backend and the sessions list reflects it
  */
 import { reactive, watch } from 'vue';
 import { collectAllTabs, firstTile } from '@sf/workspace/tree';
@@ -14,40 +14,65 @@ import type { WorkspaceApi } from '@sf/composables/useWorkspace';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-export type ChatRole = 'user' | 'assistant' | 'system';
-export type SessionStatus = 'idle' | 'running' | 'stopped';
-
-export interface ChatMessage {
+export interface ToolCallView {
   id: string;
-  role: ChatRole;
-  text: string;
-  ts: number;
+  name: string;
+  args: string;
+  result?: string;
+  isError?: boolean;
 }
 
-export interface SessionStats {
-  model: string;
+export interface DisplayMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'summary' | 'bash' | 'custom' | 'toolResult';
+  text: string;
+  thinking?: string;
+  toolCalls?: ToolCallView[];
+  model?: string | null;
+  stopReason?: string | null;
+  error?: string | null;
+  ts: number;
+  command?: string;
+  exitCode?: number;
+  isError?: boolean;
+  toolCallId?: string;
+  toolName?: string;
+}
+
+export interface SessionStatsView {
+  model: string | null;
   tokensIn: number;
   tokensOut: number;
+  costUsd: number;
   startedAt: number;
   lastActivity: number;
+  messageCount: number;
+  userMessages: number;
 }
 
 export interface ChatSession {
+  /** UI id (encoded file path) — also the key for the workspace tab */
   id: string;
+  file: string;
   title: string;
+  cwd: string;
   createdAt: number;
-  status: SessionStatus;
-  messages: ChatMessage[];
-  stats: SessionStats;
+  lastActivity: number;
+  status: 'idle' | 'running';
+  /** session is live in the pi TUI right now (read-only here) */
+  tuiActive: boolean;
+  preview: string;
+  stats: SessionStatsView;
+  messages: DisplayMessage[];
+  messagesLoaded: boolean;
+  /** pagination: are there older messages not loaded yet? */
+  hasMoreOlder: boolean;
+  /** entry id of the oldest loaded message (cursor for loading older) */
+  oldestId: string | null;
+  loadingOlder: boolean;
 }
 
-// ── Mock pricing / model ───────────────────────────────────────────────────
-
-const MODEL = 'pi-1 (mock)';
-const PRICE_IN = 3e-6;    // $ per input token (mock)
-const PRICE_OUT = 12e-6;  // $ per output token (mock)
-
-// ── State ──────────────────────────────────────────────────────────────────
+export type BackendStatus = 'connecting' | 'online' | 'offline';
 
 interface ChatState {
   sessions: ChatSession[];
@@ -55,22 +80,215 @@ interface ChatState {
   activeChatId: string | null;
   /** tab ids currently open in the workspace */
   openViewTabIds: Set<string>;
+  backend: BackendStatus;
+  backendError: string;
+  /** last send failure, shown in chat windows */
+  lastError: string;
 }
 
 const state = reactive<ChatState>({
   sessions: [],
   activeChatId: null,
   openViewTabIds: new Set(),
+  backend: 'connecting',
+  backendError: '',
+  lastError: '',
 });
 
 /** Tab id scheme: one tab per session, stable across open/close. */
 const TAB_PREFIX = 'chat-';
 const chatTabId = (sessionId: string) => TAB_PREFIX + sessionId;
 
+// ── Backend client ─────────────────────────────────────────────────────────
+
+const NEW_CHAT_CWD = '/workspace/sf';
+
+async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, init);
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try {
+      const j = await res.json();
+      if (j?.error) msg = j.error;
+    } catch { /* keep default */ }
+    throw new Error(msg);
+  }
+  return res.json() as Promise<T>;
+}
+
+interface SessionInfo {
+  file: string;
+  name: string | null;
+  cwd: string;
+  created: number;
+  modified: number;
+  messageCount: number;
+  userMessages: number;
+  firstMessage: string;
+  preview: string;
+  model: string | null;
+  tokens: { input: number; output: number; total: number };
+  cost: number;
+  running: boolean;
+  tuiActive: boolean;
+}
+
+function toSession(raw: SessionInfo): ChatSession {
+  const id = encodeURIComponent(raw.file);
+  const title = raw.name
+    ?? (raw.firstMessage ? (raw.firstMessage.length > 60 ? raw.firstMessage.slice(0, 60) + '…' : raw.firstMessage) : 'Untitled chat');
+  return {
+    id,
+    file: raw.file,
+    title,
+    cwd: raw.cwd,
+    createdAt: raw.created,
+    lastActivity: raw.modified,
+    status: raw.running ? 'running' : 'idle',
+    tuiActive: raw.tuiActive,
+    preview: raw.preview || raw.firstMessage,
+    stats: {
+      model: raw.model,
+      tokensIn: raw.tokens.input,
+      tokensOut: raw.tokens.output,
+      costUsd: raw.cost,
+      startedAt: raw.created,
+      lastActivity: raw.modified,
+      messageCount: raw.messageCount,
+      userMessages: raw.userMessages,
+    },
+    messages: [],
+    messagesLoaded: false,
+    hasMoreOlder: false,
+    oldestId: null,
+    loadingOlder: false,
+  };
+}
+
+let listTimer: number | null = null;
+
+async function fetchList() {
+  try {
+    const { sessions } = await api<{ sessions: SessionInfo[] }>('/api/sessions');
+    const prev = new Map(state.sessions.map((s) => [s.file, s]));
+    state.sessions = sessions.map((raw) => {
+      const old = prev.get(raw.file);
+      const s = toSession(raw);
+      if (old) {
+        s.messages = old.messages;
+        s.messagesLoaded = old.messagesLoaded;
+        s.hasMoreOlder = old.hasMoreOlder;
+        s.oldestId = old.oldestId;
+        s.loadingOlder = old.loadingOlder;
+      }
+      return s;
+    });
+    state.backend = 'online';
+    state.backendError = '';
+  } catch (e) {
+    state.backend = 'offline';
+    state.backendError = e instanceof Error ? e.message : String(e);
+  }
+}
+
+// ── SSE live events ────────────────────────────────────────────────────────
+
+function byFile(file: string): ChatSession | undefined {
+  return state.sessions.find((s) => s.file === file);
+}
+
+function upsert(s: ChatSession, m: DisplayMessage) {
+  const i = s.messages.findIndex((x) => x.id === m.id);
+  if (i >= 0) s.messages[i] = m;
+  else s.messages.push(m);
+}
+
+function lastAssistant(s: ChatSession): DisplayMessage | undefined {
+  for (let i = s.messages.length - 1; i >= 0; i--) {
+    if (s.messages[i].role === 'assistant') return s.messages[i];
+  }
+  return undefined;
+}
+
+function mergeToolResult(s: ChatSession, toolCallId: string, text: string, isError: boolean) {
+  for (let i = s.messages.length - 1; i >= 0; i--) {
+    const tc = s.messages[i].toolCalls?.find((t) => t.id === toolCallId);
+    if (tc) { tc.result = text; tc.isError = isError; return; }
+  }
+}
+
+function handleEvent(ev: any) {
+  switch (ev.type) {
+    case 'session_status': {
+      const s = byFile(ev.file);
+      if (s) s.status = ev.status;
+      break;
+    }
+    case 'message': {
+      const s = byFile(ev.file);
+      if (!s) break;
+      if (!s.messagesLoaded) {
+        // Session was opened without messages — load them now.
+        void fetchMessages(s.id);
+        break;
+      }
+      const m = ev.message as DisplayMessage;
+      if (m.role === 'user') {
+        // Replace the optimistic pending message (same text, last position).
+        const last = s.messages[s.messages.length - 1];
+        if (last?.role === 'user' && last.text === m.text) s.messages[s.messages.length - 1] = m;
+        else upsert(s, m);
+      } else if (m.role === 'toolResult') {
+        mergeToolResult(s, m.toolCallId ?? '', m.text, !!m.isError);
+      } else {
+        upsert(s, m);
+      }
+      break;
+    }
+    case 'tool_start': {
+      const s = byFile(ev.file);
+      if (!s) break;
+      const asst = lastAssistant(s);
+      if (asst) {
+        asst.toolCalls ??= [];
+        if (!asst.toolCalls.some((t) => t.id === ev.toolCallId)) {
+          asst.toolCalls.push({
+            id: ev.toolCallId,
+            name: ev.toolName,
+            args: JSON.stringify(ev.args ?? {}, null, 1),
+          });
+        }
+      }
+      break;
+    }
+    case 'tool_partial':
+    case 'tool_result': {
+      const s = byFile(ev.file);
+      if (s) mergeToolResult(s, ev.toolCallId, ev.text ?? '', !!ev.isError);
+      break;
+    }
+    case 'refresh':
+      void fetchList();
+      break;
+  }
+}
+
+let es: EventSource | null = null;
+
+function connectEvents() {
+  if (es) return;
+  es = new EventSource('/api/events');
+  es.onopen = () => { state.backend = 'online'; };
+  es.onerror = () => { state.backend = 'offline'; }; // EventSource auto-reconnects
+  es.onmessage = (e) => {
+    try { handleEvent(JSON.parse(e.data)); } catch { /* ignore malformed */ }
+  };
+}
+
 // ── Workspace binding ──────────────────────────────────────────────────────
 
 let ws: WorkspaceApi | null = null;
-let seeded = false;
+let firstBind = true;
 
 function activeTabOfFocusedTile(): string {
   if (!ws) return '';
@@ -85,7 +303,6 @@ function openTabIds(): string[] {
 
 function targetTileId(): string {
   if (!ws) return '';
-  // Prefer the focused tile; fall back to the first tile of the first root.
   if (ws.focusedTileId && ws.findTileGlobal(ws.focusedTileId)) return ws.focusedTileId;
   for (const root of ws.roots) {
     const t = firstTile(root.node);
@@ -120,24 +337,22 @@ export function bindWorkspace(api: WorkspaceApi) {
     { immediate: true },
   );
 
-  // First launch: open the demo running session so the workspace shows a
-  // live chat (and the stats panel has something to display).
-  if (!seeded) {
-    seeded = true;
-    const running = state.sessions.find((s) => s.status === 'running');
-    if (running) openChat(running.id);
+  connectEvents();
+  void fetchList().then(() => {
+    if (firstBind) {
+      firstBind = false;
+      // Show the most recent real conversation on first launch.
+      if (state.sessions.length > 0) openChat(state.sessions[0].id);
+    }
+  });
+
+  // Periodic refresh picks up sessions created outside the UI (e.g. TUI).
+  if (listTimer === null) {
+    listTimer = window.setInterval(() => void fetchList(), 15000);
   }
 }
 
 // ── Session helpers ────────────────────────────────────────────────────────
-
-function uid(prefix: string): string {
-  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function estimateTokens(text: string): number {
-  return Math.max(1, Math.ceil(text.length / 4));
-}
 
 export function findSession(sessionId: string): ChatSession | undefined {
   return state.sessions.find((s) => s.id === sessionId);
@@ -148,102 +363,45 @@ export function isViewOpen(sessionId: string): boolean {
   return state.openViewTabIds.has(chatTabId(sessionId));
 }
 
-/** Sessions considered active: running in the background, or with an open view. */
+/** Sessions considered active: generating in the backend, or with an open view. */
 export function activeSessions(): ChatSession[] {
   return state.sessions
     .filter((s) => s.status === 'running' || isViewOpen(s.id))
-    .sort((a, b) => b.stats.lastActivity - a.stats.lastActivity);
-}
-
-// ── Cost / duration (computed, shown in the stats panel) ───────────────────
-
-export function costOf(s: ChatSession): number {
-  return s.stats.tokensIn * PRICE_IN + s.stats.tokensOut * PRICE_OUT;
-}
-
-export function durationSec(s: ChatSession): number {
-  const end = s.status === 'running' ? Date.now() : Math.max(s.stats.lastActivity, s.stats.startedAt);
-  return Math.max(0, (end - s.stats.startedAt) / 1000);
-}
-
-// ── Mock streaming engine ──────────────────────────────────────────────────
-
-/** sessionId → interval id of the active stream */
-const streams = new Map<string, number>();
-
-const MOCK_REPLIES: string[] = [
-  'Good question. The split-tree workspace model keeps every tile proportional: each split stores a ratio, and flexbox turns that ratio into flex-basis percentages. When you resize the window, tiles stay in proportion and only break that rule when a tile hits its minimum size — that is exactly what keeps the layout stable in StudioFramework.',
-  'Here is what I would do. First, keep the chat session as the source of truth and treat the workspace tab as a mere view onto it. Closing a tab then only unmounts the view, while the session keeps running in the background. The sessions list can show live status per session, and the right panel can render session stats for whichever window is activated.',
-  'Let me outline the steps. 1) Model the session store with status transitions idle → running → stopped. 2) Bind it to the workspace API so opening a history entry inserts a tab with the session id as prop. 3) Stream reply tokens into the session even when no view is open. 4) Let the stats panel subscribe to the activated session and re-render every second.',
-  'That approach is solid, with one caveat: watch out for state duplication. If the tab definition carries the session id and the store is the single source of truth, you never have to sync message arrays between the view and the panel. Keep the tab label in sync by mutating the reactive tabDefs entry when the title changes.',
-  'I agree, and I would add a small detail: auto-scroll in the chat window should only kick in when the user is already at the bottom. Track stickiness on scroll, then jump to the newest message only when sticky. That prevents the stream from yanking the scroll position out from under the user while they read earlier messages.',
-];
-
-function pick<T>(arr: T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-
-function startStream(s: ChatSession) {
-  stopStream(s);
-  const words = (pick(MOCK_REPLIES) + ' ' + pick(MOCK_REPLIES)).split(/\s+/);
-  const msg: ChatMessage = { id: uid('msg'), role: 'assistant', text: '', ts: Date.now() };
-  s.messages.push(msg);
-  s.status = 'running';
-  s.stats.lastActivity = Date.now();
-
-  let i = 0;
-  const timer = window.setInterval(() => {
-    if (s.status !== 'running') {
-      // Stopped externally (stopSession) — clean up quietly.
-      window.clearInterval(timer);
-      streams.delete(s.id);
-      return;
-    }
-    if (i >= words.length) {
-      window.clearInterval(timer);
-      streams.delete(s.id);
-      s.status = 'idle';
-      s.stats.lastActivity = Date.now();
-      return;
-    }
-    const n = 1 + Math.floor(Math.random() * 2);
-    const chunk = words.slice(i, i + n).join(' ');
-    i += n;
-    msg.text += (msg.text ? ' ' : '') + chunk;
-    s.stats.tokensOut += n;
-    s.stats.lastActivity = Date.now();
-  }, 70 + Math.floor(Math.random() * 130));
-  streams.set(s.id, timer);
-}
-
-function stopStream(s: ChatSession) {
-  const t = streams.get(s.id);
-  if (t !== undefined) {
-    window.clearInterval(t);
-    streams.delete(s.id);
-  }
+    .sort((a, b) => b.lastActivity - a.lastActivity);
 }
 
 // ── Public operations ──────────────────────────────────────────────────────
 
-function createSession(title: string, status: SessionStatus): ChatSession {
-  const now = Date.now();
-  return {
-    id: uid('session'),
-    title,
-    createdAt: now,
-    status,
-    messages: [],
-    stats: { model: MODEL, tokensIn: 0, tokensOut: 0, startedAt: now, lastActivity: now },
-  };
-}
-
-/** Create a chat and open its window in the workspace. */
-export function newChat(): ChatSession {
-  const s = createSession('New Chat', 'idle');
-  state.sessions.unshift(s);
-  openChat(s.id);
-  return s;
+/** Create a real chat session (backend) and open its window. */
+export async function newChat(): Promise<void> {
+  try {
+    const { file } = await api<{ file: string; cwd: string }>('/api/new-chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cwd: NEW_CHAT_CWD }),
+    });
+    // The file is created by the backend on the first message — build the
+    // session entry locally so the window opens immediately.
+    const id = encodeURIComponent(file);
+    const now = Date.now();
+    if (!findSession(id)) {
+      state.sessions.unshift({
+        id, file, title: 'New Chat', cwd: NEW_CHAT_CWD,
+        createdAt: now, lastActivity: now,
+        status: 'idle', tuiActive: false, preview: '',
+        stats: {
+          model: null, tokensIn: 0, tokensOut: 0, costUsd: 0,
+          startedAt: now, lastActivity: now, messageCount: 0, userMessages: 0,
+        },
+        messages: [], messagesLoaded: true,
+        hasMoreOlder: false, oldestId: null, loadingOlder: false,
+      });
+    }
+    openChat(id);
+  } catch (e) {
+    state.lastError = e instanceof Error ? e.message : String(e);
+    state.backend = 'offline';
+  }
 }
 
 /** Open (or activate, if already open) a session's window in the workspace. */
@@ -252,7 +410,6 @@ export function openChat(sessionId: string) {
   if (!s || !ws) return;
   const tabId = chatTabId(sessionId);
 
-  // Already open → just activate it.
   const existing = ws.findTileGlobal(tabId);
   if (existing) {
     ws.ops.activateTab(existing.id, tabId);
@@ -268,45 +425,51 @@ export function openChat(sessionId: string) {
     content: 'chat-window',
     props: { sessionId },
   });
+  if (!s.messagesLoaded) void fetchMessages(sessionId);
 }
 
-/** Send a user message; the session starts streaming a reply (mock). */
-export function sendMessage(sessionId: string, text: string) {
+/** Send a user message; the real pi agent replies (streaming via SSE). */
+export async function sendMessage(sessionId: string, text: string) {
   const s = findSession(sessionId);
   const trimmed = text.trim();
   if (!s || !trimmed) return;
-
-  stopStream(s);
-  s.messages.push({ id: uid('msg'), role: 'user', text: trimmed, ts: Date.now() });
-
-  // First user message becomes the session title (and the tab label).
-  const userCount = s.messages.filter((m) => m.role === 'user').length;
-  if (userCount === 1) {
-    s.title = trimmed.length > 48 ? trimmed.slice(0, 48) + '…' : trimmed;
-    const def = ws?.tabDefs[chatTabId(s.id)];
-    if (def) def.label = s.title;
+  if (s.status === 'running') return;
+  if (s.tuiActive) {
+    state.lastError = 'This session is live in the pi TUI — open another chat to send messages.';
+    return;
   }
+  state.lastError = '';
 
-  s.stats.tokensIn += estimateTokens(trimmed);
-  s.stats.lastActivity = Date.now();
-  startStream(s);
+  // Optimistic append (the backend confirms with the same text shortly).
+  const mid = `pending-${Date.now()}`;
+  s.messages.push({ id: mid, role: 'user', text: trimmed, ts: Date.now() });
+  try {
+    await api('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: s.file, message: trimmed }),
+    });
+  } catch (e) {
+    const i = s.messages.findIndex((m) => m.id === mid);
+    if (i >= 0) s.messages.splice(i, 1);
+    state.lastError = e instanceof Error ? e.message : String(e);
+  }
 }
 
-/** Stop a running session. The conversation stays; only generation halts. */
-export function stopSession(sessionId: string) {
+/** Abort the running agent (the conversation stays; generation halts). */
+export async function stopSession(sessionId: string) {
   const s = findSession(sessionId);
   if (!s) return;
-  stopStream(s);
-  if (s.status === 'running') {
-    s.status = 'stopped';
-    s.stats.lastActivity = Date.now();
-  }
+  try {
+    await api('/api/abort', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: s.file }),
+    });
+  } catch { /* session not running — fine */ }
 }
 
-/**
- * Close the workspace *view* of a session. The session itself is untouched:
- * a running session keeps streaming in the background.
- */
+/** Close the workspace *view* of a session. The session itself is untouched. */
 export function closeChatView(sessionId: string) {
   const s = findSession(sessionId);
   if (!s || !ws) return;
@@ -314,57 +477,51 @@ export function closeChatView(sessionId: string) {
   if (tile) ws.ops.closeTab(chatTabId(sessionId));
 }
 
-// ── Seed demo data ─────────────────────────────────────────────────────────
+/** Number of messages fetched per page (newest window). */
+const PAGE_SIZE = 50;
 
-function seed() {
-  const now = Date.now();
-  const H = 3600e3;
-  const D = 24 * H;
-
-  const s1 = createSession('Explain the split-tree workspace model', 'idle');
-  s1.createdAt = now - 2 * D;
-  s1.messages = [
-    { id: uid('msg'), role: 'user', text: 'How does the split-tree workspace model keep tiles stable on resize?', ts: now - 2 * D + 60e3 },
-    { id: uid('msg'), role: 'assistant', text: MOCK_REPLIES[0], ts: now - 2 * D + 120e3 },
-  ];
-  s1.stats = { model: MODEL, tokensIn: 31, tokensOut: 142, startedAt: now - 2 * D + 60e3, lastActivity: now - 2 * D + 130e3 };
-  state.sessions.push(s1);
-
-  const s2 = createSession('Refactor Panel.vue resize handling', 'idle');
-  s2.createdAt = now - 5 * H;
-  s2.messages = [
-    { id: uid('msg'), role: 'user', text: 'Can you review the resize observer logic in Panel.vue?', ts: now - 5 * H + 30e3 },
-    { id: uid('msg'), role: 'assistant', text: MOCK_REPLIES[1], ts: now - 5 * H + 90e3 },
-    { id: uid('msg'), role: 'user', text: 'And make sure collapsing a sub-section preserves its height.', ts: now - 5 * H + 100e3 },
-    { id: uid('msg'), role: 'assistant', text: MOCK_REPLIES[3], ts: now - 5 * H + 160e3 },
-  ];
-  s2.stats = { model: MODEL, tokensIn: 58, tokensOut: 210, startedAt: now - 5 * H + 30e3, lastActivity: now - 5 * H + 170e3 };
-  state.sessions.push(s2);
-
-  // Running session: started 40s ago, streams in the background (its view
-  // is auto-opened on first bind). Closing the view does not stop it.
-  const s3 = createSession('Plan pi-agent-studio v1', 'running');
-  s3.createdAt = now - 40e3;
-  s3.messages = [
-    { id: uid('msg'), role: 'user', text: 'Plan the first milestone of pi-agent-studio: a chat app on the StudioFramework.', ts: now - 40e3 },
-    { id: uid('msg'), role: 'assistant', text: 'Let me lay out the plan. First, keep the session', ts: now - 38e3 },
-  ];
-  s3.stats = { model: MODEL, tokensIn: 27, tokensOut: 22, startedAt: now - 40e3, lastActivity: now - 30e3 };
-  state.sessions.push(s3);
-  startStream(s3);
-
-  // Stopped session: a previous run was interrupted mid-generation.
-  const s4 = createSession('Summarize yesterday’s session', 'stopped');
-  s4.createdAt = now - D;
-  s4.messages = [
-    { id: uid('msg'), role: 'user', text: 'Summarize what we worked on yesterday.', ts: now - D + 10e3 },
-    { id: uid('msg'), role: 'assistant', text: 'Yesterday we covered the workspace split-tree, drag-to-tile, and the sub-section height model. The key takeaways were:', ts: now - D + 15e3 },
-  ];
-  s4.stats = { model: MODEL, tokensIn: 19, tokensOut: 48, startedAt: now - D + 10e3, lastActivity: now - D + 16e3 };
-  state.sessions.push(s4);
+/**
+ * Load a session's messages from the backend. First call replaces the
+ * list with the newest PAGE_SIZE; `older: true` prepends the page before
+ * the current oldest message (scroll-up pagination).
+ */
+export async function fetchMessages(sessionId: string, opts?: { older?: boolean }) {
+  const s = findSession(sessionId);
+  if (!s) return;
+  const params = new URLSearchParams({ file: s.file, limit: String(PAGE_SIZE) });
+  if (opts?.older && s.oldestId) params.set('before', s.oldestId);
+  try {
+    const data = await api<any>(`/api/sessions/messages?${params.toString()}`);
+    const incoming = (data.messages ?? []) as DisplayMessage[];
+    if (opts?.older) {
+      // Prepend, keeping any live/optimistic messages at the tail intact.
+      s.messages = [...incoming, ...s.messages];
+    } else {
+      s.messages = incoming;
+      s.messagesLoaded = true;
+    }
+    s.oldestId = data.oldestId ?? null;
+    s.hasMoreOlder = !!data.hasMore;
+    s.loadingOlder = false;
+    s.stats.model = data.model ?? s.stats.model;
+    s.stats.tokensIn = data.tokens?.input ?? s.stats.tokensIn;
+    s.stats.tokensOut = data.tokens?.output ?? s.stats.tokensOut;
+    s.stats.costUsd = data.cost ?? s.stats.costUsd;
+    s.stats.messageCount = data.messageCount ?? s.stats.messageCount;
+    s.status = data.running ? 'running' : s.status;
+  } catch (e) {
+    s.loadingOlder = false;
+    state.lastError = `Failed to load messages: ${e instanceof Error ? e.message : e}`;
+  }
 }
 
-seed();
+/** Load the page of messages older than the current oldest one. */
+export async function loadOlder(sessionId: string) {
+  const s = findSession(sessionId);
+  if (!s || s.loadingOlder || !s.hasMoreOlder || !s.oldestId) return;
+  s.loadingOlder = true;
+  await fetchMessages(sessionId, { older: true });
+}
 
 // ── Public API ─────────────────────────────────────────────────────────────
 
@@ -372,6 +529,10 @@ export const store = {
   get sessions() { return state.sessions; },
   get activeChatId() { return state.activeChatId; },
   get openViewTabIds() { return state.openViewTabIds; },
+  get backend() { return state.backend; },
+  get backendError() { return state.backendError; },
+  get lastError() { return state.lastError; },
+  clearLastError() { state.lastError = ''; },
   findSession,
   isViewOpen,
   activeSessions,
@@ -380,6 +541,8 @@ export const store = {
   sendMessage,
   stopSession,
   closeChatView,
+  fetchMessages,
+  loadOlder,
   bindWorkspace,
 };
 

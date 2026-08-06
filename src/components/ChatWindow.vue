@@ -124,7 +124,7 @@ export interface WorkMove {
 
 export type ChatItem =
   | { kind: 'user' | 'system' | 'summary' | 'custom'; msg: DisplayMessage }
-  | { kind: 'reply'; msg: DisplayMessage; timeUsedMs: number }
+  | { kind: 'reply'; msg: DisplayMessage; timeUsedMs: number; lastInTurn: boolean }
   | { kind: 'work'; id: string; moves: WorkMove[]; wip: boolean; startTs: number; durMs: number };
 
 function moveLabel(mv: WorkMove): string {
@@ -244,7 +244,15 @@ const items = computed<ChatItem[]>(() => {
         // contributed moves, the run ends at the next message's step
         // boundary (this message's own ts would measure 0).
         flush(added ? (msgs[i + 1]?.ts ?? m.ts) : m.ts, false);
-        out.push({ kind: 'reply', msg: m, timeUsedMs: i > 0 ? Math.max(0, m.ts - msgs[i - 1].ts) : 0 });
+        // The agent may emit several text replies per turn — the status
+        // footer shows only after the LAST one (next user message).
+        let lastInTurn = true;
+        for (let j = i + 1; j < msgs.length; j++) {
+          const n = msgs[j];
+          if (n.role === 'user') break;
+          if (n.role === 'assistant' && n.text) { lastInTurn = false; break; }
+        }
+        out.push({ kind: 'reply', msg: m, timeUsedMs: i > 0 ? Math.max(0, m.ts - msgs[i - 1].ts) : 0, lastInTurn });
       }
       continue;
     }
@@ -607,7 +615,7 @@ onMounted(() => {
             <span v-if="streaming && item.msg.id === lastMessage?.id" class="chat-cursor">▌</span>
             <div v-if="item.msg.stopReason === 'aborted'" class="chat-aborted">⏹ generation aborted</div>
             <div v-if="item.msg.error" class="chat-aborted chat-aborted--error">⚠ {{ item.msg.error }}</div>
-            <div class="chat-msg-meta chat-msg-meta--agent">{{ agentMeta(item) }}</div>
+            <div v-if="item.lastInTurn" class="chat-msg-meta chat-msg-meta--agent">{{ agentMeta(item) }}</div>
           </template>
 
           <!-- System (slash command output) -->

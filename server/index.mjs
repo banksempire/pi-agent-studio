@@ -150,41 +150,58 @@ function leafChain(entries) {
   return chain.reverse();
 }
 
-/** Parse a session file: header, name, stats, and display messages. */
-async function analyzeSession(file, opts = {}) {
-  const content = await readFile(file, 'utf8').catch(() => null);
-  if (content === null) return null;
-  const entries = sdk.parseSessionEntries(content);
-  const chain = leafChain(entries);
-  const header = entries.find((e) => e.type === 'session');
-  let name;
-  let model = null;
-  let tokensIn = 0, tokensOut = 0, cost = 0;
-  let firstMessage = '';
-  let lastText = '';
-  let userMessages = 0;
-  const messages = [];
+/** Cache of parsed session bases, invalidated by (mtime, size). Re-parsing
+ *  every session file on each /api/sessions call (15s frontend poll + every
+ *  SSE refresh event) is the dominant backend cost — this keeps repeated
+ *  reads near-free while staying correct on any actual file change. */
+const sessionParseCache = new Map();
 
-  const toolCallIndex = new Map(); // toolCallId → display message index
-  for (const entry of chain) {
-    if (entry.type === 'session') continue;
-    if (entry.type === 'session_info' && entry.name !== undefined) name = entry.name;
-    if (entry.type === 'model_change') {
-      if (!model) model = entry.modelId ?? null;
-      continue;
-    }
-    if (entry.type === 'compaction') {
-      messages.push({
-        role: 'summary',
-        text: entry.summary ?? '',
-        ts: Date.parse(entry.timestamp) || Date.now(),
-        id: `summary-${hashId(entry.summary ?? '')}`,
-      });
-      continue;
-    }
-    if (entry.type !== 'message') continue;
-    const msg = entry.message;
-    if (!msg) continue;
+/**
+ * Parse a session file: header, name, stats, and display messages. The
+ * expensive parse is cached per (mtime, size); `running` and the requested
+ * message slice are overlaid fresh on every call.
+ */
+async function analyzeSession(file, opts = {}) {
+  const st = await stat(file).catch(() => null);
+  let base = null;
+  if (st) {
+    const hit = sessionParseCache.get(file);
+    if (hit && hit.mtime === st.mtimeMs && hit.size === st.size) base = hit.base;
+  }
+  if (!base) {
+    const content = await readFile(file, 'utf8').catch(() => null);
+    if (content === null) return null;
+    const entries = sdk.parseSessionEntries(content);
+    const chain = leafChain(entries);
+    const header = entries.find((e) => e.type === 'session');
+    let name;
+    let model = null;
+    let tokensIn = 0, tokensOut = 0, cost = 0;
+    let firstMessage = '';
+    let lastText = '';
+    let userMessages = 0;
+    const messages = [];
+
+    const toolCallIndex = new Map(); // toolCallId → display message index
+    for (const entry of chain) {
+      if (entry.type === 'session') continue;
+      if (entry.type === 'session_info' && entry.name !== undefined) name = entry.name;
+      if (entry.type === 'model_change') {
+        if (!model) model = entry.modelId ?? null;
+        continue;
+      }
+      if (entry.type === 'compaction') {
+        messages.push({
+          role: 'summary',
+          text: entry.summary ?? '',
+          ts: Date.parse(entry.timestamp) || Date.now(),
+          id: `summary-${hashId(entry.summary ?? '')}`,
+        });
+        continue;
+      }
+      if (entry.type !== 'message') continue;
+      const msg = entry.message;
+      if (!msg) continue;
     if (msg.usage) {
       tokensIn += msg.usage.input ?? 0;
       tokensOut += msg.usage.output ?? 0;
@@ -218,17 +235,42 @@ async function analyzeSession(file, opts = {}) {
       }
     }
   }
-  let merged = messages.filter((m) => m.role !== 'toolResult' || !m.merged);
+    let merged = messages.filter((m) => m.role !== 'toolResult' || !m.merged);
+    if (st) {
+      sessionParseCache.set(file, {
+        mtime: st.mtimeMs,
+        size: st.size,
+        base: {
+          header,
+          name,
+          cwd: header?.cwd ?? '',
+          created: header?.timestamp ? new Date(header.timestamp).getTime() : st.mtimeMs,
+          messageCount: chain.filter((e) => e.type === 'message').length,
+          userMessages,
+          firstMessage: firstMessage.slice(0, 200),
+          preview: lastText.slice(0, 200),
+          model,
+          tokens: { input: tokensIn, output: tokensOut, total: tokensIn + tokensOut },
+          cost,
+          merged,
+        },
+      });
+      base = sessionParseCache.get(file).base;
+    }
+  }
+  if (!base) return null;  // file vanished between stat and read
 
-  // Pagination: by default (or with `before`) only the newest slice is
-  // converted/returned; `oldestId` + `hasMore` let the client page upward.
-  // With `after`, return the unbounded tail newer than that entry (used by
-  // clients to sync live appends without re-reading what they have).
+  // Per-request overlay: pagination slices the cached message list.
+  // By default (or with `before`) only the newest slice is returned;
+  // `oldestId` + `hasMore` let the client page upward. With `after`,
+  // return the unbounded tail newer than that entry (used by clients to
+  // sync live appends without re-reading what they have).
+  let merged = base.merged;
   let oldestId = null;
   let hasMore = false;
   if (opts.after) {
     const idx = merged.findIndex((m) => m.id === opts.after);
-    if (idx >= 0) merged.splice(0, idx + 1);
+    if (idx >= 0) merged = merged.slice(idx + 1);
     // unknown cursor → return everything; the client dedupes by id
   } else if (opts.limit || opts.before) {
     let end = merged.length;
@@ -243,24 +285,22 @@ async function analyzeSession(file, opts = {}) {
     merged = merged.slice(start, end);
   }
 
-  const st = await stat(file).catch(() => null);
   const modified = st ? st.mtimeMs : Date.now();
-  const created = header?.timestamp ? new Date(header.timestamp).getTime() : modified;
   const running = liveSessions.get(file)?.status === 'running';
 
   const info = {
     file,
-    name: name ?? null,
-    cwd: header?.cwd ?? '',
-    created,
+    name: base.name ?? null,
+    cwd: base.cwd,
+    created: base.created,
     modified,
-    messageCount: chain.filter((e) => e.type === 'message').length,
-    userMessages,
-    firstMessage: firstMessage.slice(0, 200),
-    preview: lastText.slice(0, 200),
-    model,
-    tokens: { input: tokensIn, output: tokensOut, total: tokensIn + tokensOut },
-    cost,
+    messageCount: base.messageCount,
+    userMessages: base.userMessages,
+    firstMessage: base.firstMessage,
+    preview: base.preview,
+    model: base.model,
+    tokens: base.tokens,
+    cost: base.cost,
     running,
   };
   if (opts.withMessages) {
@@ -679,16 +719,16 @@ const server = createServer(async (req, res) => {
 
     // ── Session list ──
     if (p === '/api/sessions' && req.method === 'GET') {
-      const sessions = [];
+      const files = [];
       for (const dirEntry of await readdir(SESSIONS_ROOT, { withFileTypes: true })) {
         if (!dirEntry.isDirectory()) continue;
         const dir = path.join(SESSIONS_ROOT, dirEntry.name);
         for (const f of await readdir(dir)) {
-          if (!f.endsWith('.jsonl')) continue;
-          const info = await analyzeSession(path.join(dir, f));
-          if (info) sessions.push(info);
+          if (f.endsWith('.jsonl')) files.push(path.join(dir, f));
         }
       }
+      // Parallel parse (cache makes re-reads cheap; cold starts split across cores).
+      const sessions = (await Promise.all(files.map((f) => analyzeSession(f)))).filter(Boolean);
       sessions.sort((a, b) => b.modified - a.modified);
       sendJson(res, 200, { sessions });
       return;

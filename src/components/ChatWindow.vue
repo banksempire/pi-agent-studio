@@ -195,9 +195,34 @@ function fmtSec(ms: number): string {
  */
 const items = computed<ChatItem[]>(() => {
   const msgs = session.value?.messages ?? [];
+  const n = msgs.length;
   const out: ChatItem[] = [];
   const work: { src: number; mv: Omit<WorkMove, 'durMs' | 'startTs' | 'live' | 'status'> }[] = [];
   let workId = '';
+
+  // Turn-boundary precompute (single O(n) pass): the old per-reply forward
+  // scans were O(turn²) and re-ran on every streamed token/tool partial.
+  const nextUser: number[] = new Array(n).fill(n);   // first user index > i
+  const prevUserTs: number[] = new Array(n).fill(0); // ts of the last user < i
+  const lastTextReply: boolean[] = new Array(n).fill(false);
+  let next = n;
+  for (let i = n - 1; i >= 0; i--) {
+    if (msgs[i].role === 'user') next = i;
+    nextUser[i] = next;
+  }
+  let prevTs = 0;
+  let turnLastText = -1;
+  for (let i = 0; i < n; i++) {
+    prevUserTs[i] = prevTs;
+    if (msgs[i].role === 'user') {
+      if (turnLastText >= 0) lastTextReply[turnLastText] = true;
+      turnLastText = -1;
+      prevTs = msgs[i].ts;
+    } else if (msgs[i].role === 'assistant' && msgs[i].text) {
+      turnLastText = i;
+    }
+  }
+  if (turnLastText >= 0) lastTextReply[turnLastText] = true;
 
   /** endTs = ts of the message that follows the run (null = the run is the tail). */
   const flush = (endTs: number | null, wip: boolean) => {
@@ -253,26 +278,16 @@ const items = computed<ChatItem[]>(() => {
         // contributed moves, the run ends at the next message's step
         // boundary (this message's own ts would measure 0).
         flush(added ? (msgs[i + 1]?.ts ?? m.ts) : m.ts, false);
-        // The agent may emit several text replies per turn — the status
-        // footer shows only after the LAST one (next user message), with the
-        // whole-job timing: time = when the turn finished (last message of
-        // the turn), time used = from the user's input until then.
-        let lastInTurn = true;
-        let endTs = m.ts;
-        let startTs = 0;
-        let trailing = true;
-        for (let j = i - 1; j >= 0; j--) {
-          if (msgs[j].role === 'user') { startTs = msgs[j].ts; break; }
-        }
-        for (let j = i + 1; j < msgs.length; j++) {
-          const n = msgs[j];
-          if (n.role === 'user') { trailing = false; break; }
-          endTs = n.ts;
-          if (n.role === 'assistant' && n.text) lastInTurn = false;
-        }
+        // Whole-job footer timing from the precomputed turn boundaries:
+        // time = when the turn finished (last message of the turn),
+        // time used = from the user's input until then.
+        const end = nextUser[i];
+        const endTs = end > i ? msgs[end - 1].ts : m.ts;
+        const lastInTurn = lastTextReply[i];
+        const trailing = end === n;
         out.push({
           kind: 'reply', msg: m,
-          timeUsedMs: lastInTurn && startTs > 0 ? Math.max(0, endTs - startTs) : 0,
+          timeUsedMs: lastInTurn && prevUserTs[i] > 0 ? Math.max(0, endTs - prevUserTs[i]) : 0,
           endTs,
           lastInTurn,
           trailing,

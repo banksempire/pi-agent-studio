@@ -61,6 +61,10 @@ export interface ChatSession {
   status: 'idle' | 'running';
   /** a manual /compact is running on the backend (LLM summarization) */
   compacting: boolean;
+  /** outcome of the last /compact: null = none yet, 'done'/'failed' persists until audited */
+  compactResult: 'done' | 'failed' | null;
+  /** when the last /compact started (for the WIP elapsed timer) */
+  compactStartedAt: number;
   preview: string;
   stats: SessionStatsView;
   messages: DisplayMessage[];
@@ -183,6 +187,8 @@ function toSession(raw: SessionInfo): ChatSession {
     title,
     cwd: raw.cwd,
     compacting: false,
+    compactResult: null,
+    compactStartedAt: 0,
     createdAt: raw.created,
     lastActivity: raw.modified,
     status: raw.running ? 'running' : 'idle',
@@ -229,6 +235,11 @@ async function fetchList() {
           s.hasMoreOlder = old.hasMoreOlder;
           s.oldestId = old.oldestId;
           s.loadingOlder = old.loadingOlder;
+          // Transient /compact UI state must survive list refreshes (the
+          // backend emits refresh right after appending the compaction entry).
+          s.compacting = old.compacting;
+          s.compactResult = old.compactResult;
+          s.compactStartedAt = old.compactStartedAt;
         }
         return s;
       }),
@@ -280,10 +291,20 @@ function handleEvent(ev: any) {
       break;
     }
     case 'compaction_status': {
-      // /compact progress: 'started' lights the WIP indicator; 'done'/'failed'
-      // clear it (command errors surface via the /api/slash response).
+      // /compact progress: 'started' lights the WIP indicator and resets the
+      // previous outcome; 'done'/'failed' stops it and keeps the result so the
+      // chat window can flash the box and offer click-to-audit.
       const s = byFile(ev.file);
-      if (s) s.compacting = ev.status === 'started';
+      if (!s) break;
+      s.compacting = ev.status === 'started';
+      if (ev.status === 'started') {
+        s.compactResult = null;
+        s.compactStartedAt = Date.now();
+      } else if (ev.status === 'done') {
+        s.compactResult = 'done';
+      } else if (ev.status === 'failed') {
+        s.compactResult = 'failed';
+      }
       break;
     }
     case 'message': {
@@ -471,7 +492,7 @@ export async function newChat(): Promise<void> {
       state.sessions.unshift({
         id, file, title: 'New Chat', cwd: NEW_CHAT_CWD,
         createdAt: now, lastActivity: now,
-        status: 'idle', compacting: false, preview: '',
+        status: 'idle', compacting: false, compactResult: null, compactStartedAt: 0, preview: '',
         stats: {
           model: null, tokensIn: 0, tokensOut: 0, costUsd: 0,
           startedAt: now, lastActivity: now, messageCount: 0, userMessages: 0,

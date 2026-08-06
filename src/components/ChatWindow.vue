@@ -312,21 +312,60 @@ let nowTimer: number | null = null;
 watch(
   () => {
     const last = items.value[items.value.length - 1];
-    return last?.kind === 'work' && last.wip;
+    const workWip = last?.kind === 'work' && last.wip;
+    return workWip || session.value?.compacting === true;
   },
-  (wip) => {
-    if (wip && nowTimer === null) {
+  (active) => {
+    if (active && nowTimer === null) {
       nowTimer = window.setInterval(() => {
         now.value = Date.now();
         dots.value = (dots.value % 6) + 1;
       }, 300);
-    } else if (!wip && nowTimer !== null) {
+    } else if (!active && nowTimer !== null) {
       window.clearInterval(nowTimer);
       nowTimer = null;
     }
   },
   { immediate: true },
 );
+
+/**
+ * Flash the /compact box green (done) / red (failed) when the status flips.
+ * The result itself persists on the session so the box stays for auditing.
+ */
+const compactFlash = ref<'ok' | 'fail' | null>(null);
+watch(
+  () => session.value?.compactResult,
+  (res, prev) => {
+    if (!res || res === prev) return;
+    compactFlash.value = res === 'done' ? 'ok' : 'fail';
+    window.setTimeout(() => { compactFlash.value = null; }, 1400);
+  },
+);
+
+/** Click-to-audit: reveal the summary in the flow, highlight it, clear the box.
+ *  A click on the failed box just dismisses it. */
+function auditCompaction() {
+  const s = session.value;
+  if (!s || !s.compactResult) return;
+  if (s.compactResult === 'done') {
+    const summary = s.messages.find(m => m.role === 'summary');
+    if (!summary) return;
+    s.compactResult = null; // box disappears — the summary itself is the record
+    nextTick(() => {
+      const el = listEl.value;
+      const target = el?.querySelector<HTMLElement>(`[data-msg-id="${CSS.escape(summary.id)}"]`);
+      if (target) {
+        target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        const cls = target.classList;
+        cls.add('chat-msg--flash');
+        window.setTimeout(() => cls.remove('chat-msg--flash'), 1600);
+      }
+    });
+  } else {
+    s.compactResult = null; // failed — dismiss the box
+  }
+}
 onMounted(() => { now.value = Date.now(); });
 
 /**
@@ -665,6 +704,7 @@ let anchorBottom = 0;
           v-for="item in items"
           :key="item.kind === 'work' ? item.id : item.msg.id"
           class="chat-msg"
+          :data-msg-id="item.kind === 'work' ? item.id : item.msg.id"
           :class="[
             'chat-msg--' + item.kind,
             { 'chat-msg--error': item.kind === 'system' && item.msg.isError },
@@ -738,10 +778,28 @@ let anchorBottom = 0;
 
         </div>
 
-        <!-- /compact running on the backend (LLM summarization) -->
-        <div v-if="session?.compacting" class="chat-work chat-work--wip chat-compacting">
+        <!-- /compact status: WIP box with dots while running, then a done/failed
+             box (green flash on success) that the user clicks to audit. -->
+        <div
+          v-if="session?.compacting || session?.compactResult"
+          class="chat-work chat-work--wip chat-compacting"
+          :class="[
+            session?.compactResult === 'done' ? 'chat-compacting--done' : '',
+            session?.compactResult === 'failed' ? 'chat-compacting--failed' : '',
+            compactFlash === 'ok' ? 'chat-work--flash-ok' : '',
+            compactFlash === 'fail' ? 'chat-work--flash-fail' : '',
+          ]"
+          :title="session?.compactResult === 'done' ? 'Click to view the summary' : ''"
+          @click="auditCompaction()"
+        >
           <div class="chat-work-head">
-            <span class="chat-work-title">Compacting conversation<span class="chat-compact-dots" /></span>
+            <span class="chat-work-toggle">{{ session?.compacting ? '▸' : '✓' }}</span>
+            <span class="chat-work-title">
+              <template v-if="session?.compacting">Compacting conversation<span class="chat-compact-dots" /></template>
+              <template v-else-if="session?.compactResult === 'done'">Compaction done — click to audit</template>
+              <template v-else>Compaction failed</template>
+            </span>
+            <span v-if="session?.compacting" class="chat-work-time">{{ fmtSec(now - (session.compactStartedAt || now)) }}</span>
           </div>
         </div>
       </template>

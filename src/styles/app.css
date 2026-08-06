@@ -312,6 +312,25 @@
   100% { content: ''; }
 }
 
+/* /compact result box: done (clickable, green flash handled by
+   chat-work--flash-ok) and failed states. */
+.chat-compacting--done {
+  border-color: rgba(78, 201, 176, 0.45);
+  cursor: pointer;
+}
+.chat-compacting--done:hover {
+  background: rgba(78, 201, 176, 0.08);
+}
+.chat-compacting--done .chat-work-toggle {
+  color: var(--sf-ok, #4ec9b0);
+}
+.chat-compacting--done .chat-work-title {
+  color: #4ec9b0;
+}
+.chat-compacting--failed .chat-work-title {
+  color: #f87171;
+}
+
 /* Tool-completion flash: green on success, red on failure, then settle. */
 @keyframes chat-work-flash-ok {
   0%   { border-color: rgba(78, 201, 176, 0.95); background: rgba(78, 201, 176, 0.18); }
@@ -449,6 +468,15 @@
   font-size: 12px;
   line-height: 1.5;
   white-space: pre-wrap;
+}
+
+/* Audit highlight: briefly glows the summary after click-to-audit. */
+.chat-msg--flash {
+  animation: chat-msg-flash 1.6s ease-out;
+}
+@keyframes chat-msg-flash {
+  0%   { box-shadow: 0 0 0 3px rgba(78, 201, 176, 0.55); border-radius: 4px; }
+  100% { box-shadow: 0 0 0 0 rgba(78, 201, 176, 0); }
 }
 
 .chat-aborted {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onUnmounted, ref, watch } from 'vue';
 import {
   useChatStore, fmtCost, fmtDuration, fmtTime, fmtTokens,
   type ChatSession,
@@ -7,19 +7,24 @@ import {
 
 const store = useChatStore();
 
-// Live clock — drives the duration ticker of a running session.
-const now = ref(Date.now());
-let timer: number | null = null;
-onMounted(() => {
-  timer = window.setInterval(() => { now.value = Date.now(); }, 1000);
-});
-onUnmounted(() => {
-  if (timer !== null) window.clearInterval(timer);
-});
-
 const session = computed<ChatSession | null>(
   () => (store.activeChatId ? store.findSession(store.activeChatId) ?? null : null),
 );
+
+// Live clock — drives the duration ticker. Runs only while the activated
+// session is generating (no point ticking for idle sessions).
+const now = ref(Date.now());
+let timer: number | null = null;
+function tick() { now.value = Date.now(); }
+watch(
+  () => session.value?.status,
+  (status) => {
+    if (status === 'running' && timer === null) timer = window.setInterval(tick, 1000);
+    else if (status !== 'running' && timer !== null) { window.clearInterval(timer); timer = null; }
+  },
+  { immediate: true },
+);
+onUnmounted(() => { if (timer !== null) window.clearInterval(timer); });
 
 interface StatRow { key: string; value: string; kind?: 'status' | 'view' }
 

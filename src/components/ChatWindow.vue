@@ -17,10 +17,18 @@ const session = computed<ChatSession | undefined>(() => store.findSession(props.
 /** Per-window toggle (right panel): render message text as markdown. */
 const renderMd = computed(() => session.value?.renderMarkdown ?? true);
 
-/** Markdown → sanitized HTML (agent output may echo untrusted content). */
-function md(text: string): string {
-  if (!text) return '';
-  return DOMPurify.sanitize(marked.parse(text) as string);
+/**
+ * Markdown → sanitized HTML (agent output may echo untrusted content).
+ * Memoized per message object: while the agent streams, only the mutated
+ * tail message re-parses — history stays cache-hit (avoids O(n²) re-parsing).
+ */
+const mdCache = new WeakMap<DisplayMessage, { text: string; html: string }>();
+function md(m: DisplayMessage): string {
+  const hit = mdCache.get(m);
+  if (hit && hit.text === m.text) return hit.html;
+  const html = m.text ? DOMPurify.sanitize(marked.parse(m.text) as string) : '';
+  mdCache.set(m, { text: m.text, html });
+  return html;
 }
 const input = ref('');
 const listEl = ref<HTMLElement | null>(null);
@@ -76,9 +84,10 @@ const lastMessage = computed<DisplayMessage | undefined>(() => {
   return msgs[msgs.length - 1];
 });
 
-function isStreaming(): boolean {
-  return session.value?.status === 'running' && lastMessage.value?.role === 'assistant';
-}
+/** The agent is producing the tail message right now. */
+const streaming = computed(() =>
+  session.value?.status === 'running' && lastMessage.value?.role === 'assistant',
+);
 
 function roleLabel(m: DisplayMessage): string {
   if (m.role === 'user') return 'You';
@@ -341,10 +350,10 @@ onMounted(() => {
           </div>
 
           <!-- Text -->
-          <div v-if="m.text && m.role !== 'system'" class="chat-msg-text" :class="{ 'chat-msg-text--streaming': isStreaming() && m.id === lastMessage?.id }">
-            <div v-if="renderMd" class="chat-msg-md" v-html="md(m.text)" />
+          <div v-if="m.text && m.role !== 'system'" class="chat-msg-text">
+            <div v-if="renderMd" class="chat-msg-md" v-html="md(m)" />
             <template v-else>{{ m.text }}</template>
-            <span v-if="isStreaming() && m.id === lastMessage?.id" class="chat-cursor">▌</span>
+            <span v-if="streaming && m.id === lastMessage?.id" class="chat-cursor">▌</span>
           </div>
 
           <!-- Tool calls -->
@@ -386,7 +395,7 @@ onMounted(() => {
             <template v-if="m.role === 'assistant' && m.model">· {{ m.model }}</template>
           </div>
         </div>
-        <div v-if="isStreaming()" class="chat-streaming-hint">pi is working…</div>
+        <div v-if="streaming" class="chat-streaming-hint">pi is working…</div>
       </template>
     </div>
 

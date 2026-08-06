@@ -587,12 +587,7 @@ export async function fetchMessages(sessionId: string, opts?: { older?: boolean 
     s.oldestId = data.oldestId ?? null;
     s.hasMoreOlder = !!data.hasMore;
     s.loadingOlder = false;
-    s.stats.model = data.model ?? s.stats.model;
-    s.stats.tokensIn = data.tokens?.input ?? s.stats.tokensIn;
-    s.stats.tokensOut = data.tokens?.output ?? s.stats.tokensOut;
-    s.stats.costUsd = data.cost ?? s.stats.costUsd;
-    s.stats.messageCount = data.messageCount ?? s.stats.messageCount;
-    s.status = data.running ? 'running' : s.status;
+    applySessionInfo(s, data);
   } catch (e) {
     s.loadingOlder = false;
     state.lastError = `Failed to load messages: ${e instanceof Error ? e.message : e}`;
@@ -639,13 +634,18 @@ export async function syncTail(sessionId: string) {
       if (fresh.length > 0) s.messages = [...s.messages, ...fresh];
     }
     // Full-session info rides along — keep stats fresh too.
-    if (data.model) s.stats.model = data.model;
-    s.stats.tokensIn = data.tokens?.input ?? s.stats.tokensIn;
-    s.stats.tokensOut = data.tokens?.output ?? s.stats.tokensOut;
-    s.stats.costUsd = data.cost ?? s.stats.costUsd;
-    s.stats.messageCount = data.messageCount ?? s.stats.messageCount;
-    s.status = data.running ? 'running' : s.status;
+    applySessionInfo(s, data);
   } catch { /* transient — next refresh/connect will retry */ }
+}
+
+/** Merge the full-session info that rides along on message responses. */
+function applySessionInfo(s: ChatSession, data: any) {
+  s.stats.model = data.model ?? s.stats.model;
+  s.stats.tokensIn = data.tokens?.input ?? s.stats.tokensIn;
+  s.stats.tokensOut = data.tokens?.output ?? s.stats.tokensOut;
+  s.stats.costUsd = data.cost ?? s.stats.costUsd;
+  s.stats.messageCount = data.messageCount ?? s.stats.messageCount;
+  s.status = data.running ? 'running' : s.status;
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────

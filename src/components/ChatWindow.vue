@@ -120,51 +120,44 @@ const ROLE_LABELS: Record<string, string> = {
 };
 function roleLabel(m: DisplayMessage): string { return ROLE_LABELS[m.role] ?? 'custom'; }
 
-// ── Unofficial-reply work groups ──────────────────────────────────────────
+// ── ActionBubble work groups ─────────────────────────────────────────────
 // Consecutive "unofficial" replies (thinking blocks + tool calls) between a
-// user message and the final text reply collapse into ONE box per run:
-//   - run in progress:  "Working on: <latest move>" (one line)
-//   - run finished:     "Work done" — click to expand and audit the details
+// user message and the final text reply collapse into ONE ActionGroup box:
+//   - group in progress: header shows the LATEST bubble: name + dots + live
+//     content preview + elapsed (the bubble's own format)
+//   - group finished:    "n actions done" + total elapsed — click to expand
+//     the stacked sub-bubbles; a sub-bubble click reveals its detail.
 
-export interface WorkMove {
-  key: string;
-  kind: 'thinking' | 'tool' | 'bash';
-  /** step duration in ms (static part — see `live` for the streaming tail) */
-  durMs: number;
-  /** source message timestamp (start of this step) */
-  startTs: number;
-  /** trailing move of a WIP run — elapsed runs against the live clock */
-  live: boolean;
-  status: 'ok' | 'fail' | 'pending';
-  isError?: boolean;
-  thinking?: string;
-  name?: string;
-  args?: string;
-  result?: string;
-  text?: string;
-}
+import { ActionBubble, ActionGroup, actionName, type ActionKind, type ActionStatus } from '../actionBubble';
 
 export type ChatItem =
   | { kind: 'user' | 'system' | 'summary' | 'custom'; msg: DisplayMessage }
   | { kind: 'reply'; msg: DisplayMessage; timeUsedMs: number; endTs: number; lastInTurn: boolean; trailing: boolean }
-  | { kind: 'work'; id: string; moves: WorkMove[]; wip: boolean; startTs: number; durMs: number };
+  | { kind: 'work'; group: ActionGroup };
 
-function moveLabel(mv: WorkMove): string {
-  if (mv.kind === 'thinking') return 'thinking';
-  if (mv.kind === 'bash') return 'bash';
-  return mv.status === 'pending' ? `calling ${mv.name}` : `${mv.name}`;
+/** Intermediate move record before it becomes an ActionBubble (timing/status
+ *  are only known when the run is flushed). */
+interface PendingMove {
+  kind: ActionKind;
+  /** final display name (from actionName()) */
+  name: string;
+  thinking?: string;
+  args?: string;
+  result?: string;
+  isError?: boolean;
+  text?: string;
 }
 
-function latestMoveLabel(moves: WorkMove[]): string {
-  const last = moves[moves.length - 1];
-  return last ? moveLabel(last) : '';
+function groupDoneLabel(g: ActionGroup): string {
+  const n = g.bubbles.length;
+  return `${n} action${n === 1 ? '' : 's'} done`;
 }
 
-/** Tool-call rows are tinted by outcome: green on success, red on failure. */
-function moveClass(mv: WorkMove): string {
-  if (mv.kind !== 'tool') return '';
-  if (mv.status === 'fail') return 'chat-work-move--fail';
-  if (mv.status === 'ok') return 'chat-work-move--ok';
+/** Sub-bubble rows are tinted by outcome: green on success, red on failure. */
+function subClass(b: ActionBubble): string {
+  if (b.kind !== 'tool') return '';
+  if (b.status === 'fail') return 'chat-ab-sub--fail';
+  if (b.status === 'ok') return 'chat-ab-sub--ok';
   return '';
 }
 
@@ -209,7 +202,7 @@ const items = computed<ChatItem[]>(() => {
   const msgs = session.value?.messages ?? [];
   const n = msgs.length;
   const out: ChatItem[] = [];
-  const work: { src: number; mv: Omit<WorkMove, 'durMs' | 'startTs' | 'live' | 'status'> }[] = [];
+  const work: { src: number; mv: PendingMove }[] = [];
   let workId = '';
 
   // Turn-boundary precompute (single O(n) pass): the old per-reply forward
@@ -241,30 +234,38 @@ const items = computed<ChatItem[]>(() => {
     if (work.length === 0) return;
     const startTs = msgs[work[0].src].ts;
     const end = endTs ?? msgs[work[work.length - 1].src].ts;
-    const moves: WorkMove[] = work.map(({ src, mv }, i) => {
-      const nextMsg = msgs[src + 1];
-      const nextTs = nextMsg ? nextMsg.ts : end;
+    const group = new ActionGroup(workId, startTs);
+    group.wip = wip;
+    group.durMs = Math.max(0, end - startTs);
+    work.forEach(({ src, mv }, i) => {
+      // A bubble's duration spans its step: from this message's ts to the
+      // NEXT message's ts (or the run end for the last step).
       const live = wip && i === work.length - 1;
-      return {
-        ...mv,
-        durMs: Math.max(0, nextTs - msgs[src].ts),
-        startTs: msgs[src].ts,
-        live,
-        status: mv.kind === 'thinking'
-          ? (live ? 'pending' : 'ok')
-          : mv.kind === 'tool'
-            ? (mv.isError ? 'fail' : mv.result !== undefined ? 'ok' : 'pending')
-            : (mv.text ? 'ok' : 'pending'),
-      };
+      const b = new ActionBubble(mv.kind, `${workId}:${i}`, mv.name, msgs[src].ts);
+      b.live = live;
+      b.durMs = Math.max(0, (msgs[src + 1]?.ts ?? end) - msgs[src].ts);
+      if (mv.kind === 'thinking') {
+        b.detail = mv.thinking ?? '';
+        b.status = live ? 'pending' : 'ok';
+      } else if (mv.kind === 'bash') {
+        b.detail = mv.text ?? '';
+        b.status = mv.text ? 'ok' : 'pending';
+      } else {
+        b.args = mv.args;
+        b.detail = mv.result ?? '';
+        b.isError = !!mv.isError;
+        b.status = mv.isError ? 'fail' : mv.result !== undefined ? 'ok' : 'pending';
+      }
+      group.bubbles.push(b);
     });
-    out.push({ kind: 'work', id: workId, moves, wip, startTs, durMs: Math.max(0, end - startTs) });
+    out.push({ kind: 'work', group });
     work.length = 0;
     workId = '';
   };
 
-  const addMove = (src: number, msgId: string, mv: Omit<WorkMove, 'durMs' | 'startTs' | 'live' | 'status' | 'key'>) => {
+  const addMove = (src: number, msgId: string, kind: ActionKind, mv: Omit<PendingMove, 'kind' | 'name'> & { name?: string }) => {
     if (!workId) workId = 'work-' + msgId;
-    work.push({ src, mv: { ...mv, key: `${workId}:${work.length}` } });
+    work.push({ src, mv: { ...mv, kind, name: actionName(kind, mv.name) } });
   };
 
   for (let i = 0; i < msgs.length; i++) {
@@ -275,14 +276,14 @@ const items = computed<ChatItem[]>(() => {
       continue;
     }
     if (m.role === 'bash') {
-      addMove(i, m.id, { kind: 'bash', text: m.text });
+      addMove(i, m.id, 'bash', { text: m.text });
       continue;
     }
     if (m.role === 'assistant') {
       let added = false;
-      if (m.thinking) { addMove(i, m.id, { kind: 'thinking', thinking: m.thinking }); added = true; }
+      if (m.thinking) { addMove(i, m.id, 'thinking', { thinking: m.thinking }); added = true; }
       for (const tc of m.toolCalls ?? []) {
-        addMove(i, m.id, { kind: 'tool', name: tc.name, args: tc.args, result: tc.result, isError: tc.isError });
+        addMove(i, m.id, 'tool', { name: tc.name, args: tc.args, result: tc.result, isError: tc.isError });
         added = true;
       }
       if (m.text || m.error || m.stopReason === 'error' || m.stopReason === 'aborted') {
@@ -318,21 +319,21 @@ const items = computed<ChatItem[]>(() => {
 });
 
 /** Live clock for WIP elapsed times + loading dots — ticks only while a work
- *  run is in progress. 300ms also drives the ". → ......" dot animation. */
+ *  run is in progress. 300ms also drives the ". → …" dot animation. */
 const now = ref(Date.now());
 const dots = ref(1);
 let nowTimer: number | null = null;
 watch(
   () => {
     const last = items.value[items.value.length - 1];
-    const workWip = last?.kind === 'work' && last.wip;
+    const workWip = last?.kind === 'work' && last.group.wip;
     return workWip || session.value?.compacting === true;
   },
   (active) => {
     if (active && nowTimer === null) {
       nowTimer = window.setInterval(() => {
         now.value = Date.now();
-        dots.value = (dots.value % 6) + 1;
+        dots.value = (dots.value % 3) + 1;
       }, 300);
     } else if (!active && nowTimer !== null) {
       window.clearInterval(nowTimer);
@@ -383,35 +384,56 @@ function auditCompaction() {
     s.compactResult = null; // failed — dismiss the box
   }
 }
+
+/** The /compact status rendered as an ActionBubble (one-bubble group). */
+const compactGroup = computed<ActionGroup | null>(() => {
+  const s = session.value;
+  if (!s || (!s.compacting && !s.compactResult)) return null;
+  const started = s.compactStartedAt || Date.now();
+  const g = new ActionGroup('compact', started);
+  const b = new ActionBubble('compaction', 'compact:0', 'Compaction', started);
+  if (s.compacting) {
+    g.wip = true;
+    b.live = true;
+    b.status = 'pending';
+  } else if (s.compactResult === 'done') {
+    b.status = 'ok';
+    b.durMs = Math.max(0, (s.compactEndedAt || started) - started);
+  } else {
+    b.status = 'fail';
+    b.durMs = Math.max(0, (s.compactEndedAt || started) - started);
+  }
+  g.bubbles.push(b);
+  return g;
+});
 onMounted(() => { now.value = Date.now(); });
 
 /**
- * Flash the work box green/red when a tool call completes (success/failure).
- * Detects pending → ok/fail transitions on tool moves; the class is removed
- * after the animation so a later completion re-triggers it.
+ * Flash the work box green/red when an action bubble completes (success/
+ * failure). Detects pending → ok/fail transitions on every bubble kind; the
+ * class is removed after the animation so a later completion re-triggers it.
  */
 const flash = ref<Record<string, 'ok' | 'fail'>>({});
-const prevToolStatus = new Map<string, 'pending' | 'ok' | 'fail'>();
+const prevBubbleStatus = new Map<string, ActionStatus>();
 watch(
   items,
   (list) => {
     for (const item of list) {
       if (item.kind !== 'work') continue;
-      for (const mv of item.moves) {
-        if (mv.kind !== 'tool') continue;
-        const prev = prevToolStatus.get(mv.key);
-        if (prev === 'pending' && mv.status !== 'pending') {
-          const kind = mv.status === 'ok' ? 'ok' : 'fail';
-          flash.value = { ...flash.value, [item.id]: kind };
+      for (const b of item.group.bubbles) {
+        const prev = prevBubbleStatus.get(b.key);
+        if (prev === 'pending' && b.status !== 'pending') {
+          const kind = b.status === 'ok' ? 'ok' : 'fail';
+          flash.value = { ...flash.value, [item.group.id]: kind };
           window.setTimeout(() => {
-            if (flash.value[item.id]) {
+            if (flash.value[item.group.id]) {
               const next = { ...flash.value };
-              delete next[item.id];
+              delete next[item.group.id];
               flash.value = next;
             }
           }, 1400);
         }
-        prevToolStatus.set(mv.key, mv.status);
+        prevBubbleStatus.set(b.key, b.status);
       }
     }
   },
@@ -719,53 +741,67 @@ let anchorBottom = 0;
         <div v-if="session.loadingOlder" class="chat-load-older chat-load-older--loading">loading older messages…</div>
         <div
           v-for="item in items"
-          :key="item.kind === 'work' ? item.id : item.msg.id"
+          :key="item.kind === 'work' ? item.group.id : item.msg.id"
           class="chat-msg"
-          :data-msg-id="item.kind === 'work' ? item.id : item.msg.id"
+          :data-msg-id="item.kind === 'work' ? item.group.id : item.msg.id"
           :class="[
             'chat-msg--' + item.kind,
             { 'chat-msg--error': item.kind === 'system' && item.msg.isError },
           ]"
         >
-          <!-- Unofficial work run: one collapsible box per run -->
+          <!-- ActionBubble group: consecutive thinking/tool/bash actions in
+               one collapsible box. WIP header = the latest bubble; done
+               header = "n actions done". Click to reveal the stacked
+               sub-bubbles; a sub-bubble click reveals its detail. -->
           <div
             v-if="item.kind === 'work'"
             class="chat-work"
             :class="[
-              { 'chat-work--open': workOpen[item.id] },
-              flash[item.id] === 'ok' ? 'chat-work--flash-ok' : '',
-              flash[item.id] === 'fail' ? 'chat-work--flash-fail' : '',
+              { 'chat-work--open': workOpen[item.group.id] },
+              flash[item.group.id] === 'ok' ? 'chat-work--flash-ok' : '',
+              flash[item.group.id] === 'fail' ? 'chat-work--flash-fail' : '',
             ]"
           >
-            <div class="chat-work-head" @click="toggleWork(item.id)">
-              <span class="chat-work-toggle">{{ workOpen[item.id] ? '▾' : '▸' }}</span>
-              <span v-if="item.wip" class="chat-work-title"><span class="chat-work-latest">{{ latestMoveLabel(item.moves) }}</span><span class="chat-work-dots">{{ '.'.repeat(dots) }}</span></span>
-              <span v-else class="chat-work-title">Work done</span>
-              <span class="chat-work-time">{{ item.wip ? fmtSec(now - item.startTs) : fmtSec(item.durMs) }}</span>
-            </div>
-            <div v-if="workOpen[item.id]" class="chat-work-body">
-              <template v-for="mv in item.moves" :key="mv.key">
-                <div
-                  class="chat-work-move"
-                  :class="[moveClass(mv), { 'chat-work-move--open': moveOpen[mv.key] }]"
-                >
-                  <div class="chat-work-move-head" @click="toggleMove(mv.key)">
-                    <span class="chat-work-move-toggle">{{ moveOpen[mv.key] ? '▾' : '▸' }}</span>
-                    <span class="chat-work-move-name">{{ mv.kind === 'thinking' ? '💭 Thinking' : mv.kind === 'tool' ? '🔧 Tool call · ' + mv.name : 'bash' }}</span>
-                    <span class="chat-work-move-time">{{ mv.live ? fmtSec(now - mv.startTs) : fmtSec(mv.durMs) }}</span>
-                  </div>
-                  <div v-if="moveOpen[mv.key]" class="chat-work-move-details">
-                    <pre v-if="mv.kind === 'thinking'" class="chat-work-code">{{ mv.thinking }}</pre>
-                    <template v-else-if="mv.kind === 'tool'">
-                      <pre v-if="mv.args" class="chat-work-code">{{ mv.args }}</pre>
-                      <div v-if="mv.status !== 'pending'" class="chat-work-result" :class="{ 'chat-work-result--error': mv.isError }">
-                        <pre class="chat-work-code chat-work-result-body">{{ mv.result }}</pre>
-                      </div>
-                    </template>
-                    <pre v-else class="chat-work-code chat-work-bash">{{ mv.text }}</pre>
-                  </div>
-                </div>
+            <div class="chat-work-head" @click="toggleWork(item.group.id)">
+              <span class="chat-work-toggle">{{ workOpen[item.group.id] ? '▾' : '▸' }}</span>
+              <!-- While working the group shows the same thing as the latest bubble:
+                   [action name|ani|content|time elapsed] -->
+              <template v-if="item.group.wip && item.group.latest">
+                <span class="chat-ab-name">{{ item.group.latest.name }}</span>
+                <span class="chat-ab-dots">{{ '.'.repeat(dots) }}</span>
+                <span class="chat-ab-content">{{ item.group.latest.preview() }}</span>
+                <span class="chat-ab-time">{{ fmtSec(now - item.group.latest.startTs) }}</span>
               </template>
+              <!-- All done: [n actions done|total time elapsed] -->
+              <template v-else>
+                <span class="chat-ab-name">{{ groupDoneLabel(item.group) }}</span>
+                <span class="chat-ab-time">{{ fmtSec(item.group.durMs) }}</span>
+              </template>
+            </div>
+            <div v-if="workOpen[item.group.id]" class="chat-work-body">
+              <div
+                v-for="b in item.group.bubbles"
+                :key="b.key"
+                class="chat-ab-sub"
+                :class="[subClass(b), { 'chat-ab-sub--open': moveOpen[b.key] }]"
+              >
+                <!-- Completed bubble: [action name|time elapsed] -->
+                <div class="chat-ab-sub-head" @click="toggleMove(b.key)">
+                  <span class="chat-ab-sub-toggle">{{ moveOpen[b.key] ? '▾' : '▸' }}</span>
+                  <span class="chat-ab-sub-name">{{ b.name }}</span>
+                  <span class="chat-ab-sub-time">{{ b.live ? fmtSec(now - b.startTs) : fmtSec(b.durMs) }}</span>
+                </div>
+                <div v-if="moveOpen[b.key]" class="chat-ab-sub-details">
+                  <pre v-if="b.kind === 'thinking'" class="chat-ab-code">{{ b.detail }}</pre>
+                  <template v-else-if="b.kind === 'tool'">
+                    <pre v-if="b.args" class="chat-ab-code">{{ b.args }}</pre>
+                    <div v-if="b.status !== 'pending'" class="chat-ab-result" :class="{ 'chat-ab-result--error': b.isError }">
+                      <pre class="chat-ab-code chat-ab-result-body">{{ b.detail }}</pre>
+                    </div>
+                  </template>
+                  <pre v-else class="chat-ab-code chat-ab-bash">{{ b.detail }}</pre>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -808,28 +844,32 @@ let anchorBottom = 0;
 
         </div>
 
-        <!-- /compact status: WIP box with dots while running, then a done/failed
-             box (green flash on success) that the user clicks to audit. -->
+        <!-- /compact status as an ActionBubble: WIP shows [Compaction|ani|time],
+             done/failed show [Compaction done/failed|total time] with a green/
+             red flash; clicking a done box audits the summary. -->
         <div
-          v-if="session?.compacting || session?.compactResult"
+          v-if="compactGroup"
           class="chat-work chat-work--wip chat-compacting"
           :class="[
-            session?.compactResult === 'done' ? 'chat-compacting--done' : '',
-            session?.compactResult === 'failed' ? 'chat-compacting--failed' : '',
+            !compactGroup.wip && compactGroup.bubbles[0].status === 'ok' ? 'chat-compacting--done' : '',
+            !compactGroup.wip && compactGroup.bubbles[0].status === 'fail' ? 'chat-compacting--failed' : '',
             compactFlash === 'ok' ? 'chat-work--flash-ok' : '',
             compactFlash === 'fail' ? 'chat-work--flash-fail' : '',
           ]"
-          :title="session?.compactResult === 'done' ? 'Click to view the summary' : ''"
+          :title="!compactGroup.wip && compactGroup.bubbles[0].status === 'ok' ? 'Click to view the summary' : ''"
           @click="auditCompaction()"
         >
           <div class="chat-work-head">
-            <span class="chat-work-toggle">{{ session?.compacting ? '▸' : '✓' }}</span>
-            <span class="chat-work-title">
-              <template v-if="session?.compacting">Compacting conversation<span class="chat-compact-dots" /></template>
-              <template v-else-if="session?.compactResult === 'done'">Compaction done — click to audit</template>
-              <template v-else>Compaction failed</template>
-            </span>
-            <span v-if="session?.compacting" class="chat-work-time">{{ fmtSec(now - (session.compactStartedAt || now)) }}</span>
+            <span class="chat-work-toggle">{{ compactGroup.wip ? '▸' : (compactGroup.bubbles[0].status === 'ok' ? '✓' : '✕') }}</span>
+            <template v-if="compactGroup.wip">
+              <span class="chat-ab-name">Compaction</span>
+              <span class="chat-ab-dots">{{ '.'.repeat(dots) }}</span>
+              <span class="chat-ab-time">{{ fmtSec(now - compactGroup.startTs) }}</span>
+            </template>
+            <template v-else>
+              <span class="chat-ab-name">{{ compactGroup.bubbles[0].status === 'ok' ? 'Compaction done' : 'Compaction failed' }}</span>
+              <span class="chat-ab-time">{{ fmtSec(compactGroup.bubbles[0].durMs) }}</span>
+            </template>
           </div>
         </div>
       </template>

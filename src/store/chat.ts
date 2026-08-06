@@ -65,6 +65,8 @@ export interface ChatSession {
   compactResult: 'done' | 'failed' | null;
   /** when the last /compact started (for the WIP elapsed timer) */
   compactStartedAt: number;
+  /** when the last /compact finished (for the done box's total time) */
+  compactEndedAt: number;
   preview: string;
   stats: SessionStatsView;
   messages: DisplayMessage[];
@@ -189,6 +191,7 @@ function toSession(raw: SessionInfo): ChatSession {
     compacting: false,
     compactResult: null,
     compactStartedAt: 0,
+    compactEndedAt: 0,
     createdAt: raw.created,
     lastActivity: raw.modified,
     status: raw.running ? 'running' : 'idle',
@@ -240,6 +243,7 @@ async function fetchList() {
           s.compacting = old.compacting;
           s.compactResult = old.compactResult;
           s.compactStartedAt = old.compactStartedAt;
+          s.compactEndedAt = old.compactEndedAt;
         }
         return s;
       }),
@@ -302,8 +306,10 @@ function handleEvent(ev: any) {
         s.compactStartedAt = Date.now();
       } else if (ev.status === 'done') {
         s.compactResult = 'done';
+        s.compactEndedAt = Date.now();
       } else if (ev.status === 'failed') {
         s.compactResult = 'failed';
+        s.compactEndedAt = Date.now();
       }
       break;
     }
@@ -496,7 +502,7 @@ export async function newChat(): Promise<void> {
       state.sessions.unshift({
         id, file, title: 'New Chat', cwd: NEW_CHAT_CWD,
         createdAt: now, lastActivity: now,
-        status: 'idle', compacting: false, compactResult: null, compactStartedAt: 0, preview: '',
+        status: 'idle', compacting: false, compactResult: null, compactStartedAt: 0, compactEndedAt: 0, preview: '',
         stats: {
           model: null, tokensIn: 0, tokensOut: 0, costUsd: 0,
           startedAt: now, lastActivity: now, messageCount: 0, userMessages: 0,

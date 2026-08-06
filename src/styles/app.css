@@ -236,7 +236,7 @@
   50% { opacity: 0; }
 }
 
-/* ── Unofficial-work box (consecutive thinking + tool calls) ────────────── */
+/* ── ActionBubble group box (consecutive thinking + tool calls) ────────── */
 
 .chat-work {
   border: 1px solid var(--sf-border);
@@ -267,18 +267,34 @@
   flex-shrink: 0;
 }
 
-.chat-work-title {
-  flex: 1;
+/* [action name|ani|content|time elapsed] — header parts */
+.chat-ab-name {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--sf-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 40%;
 }
 
-.chat-work-latest {
-  color: var(--sf-text);
+.chat-ab-dots {
+  flex-shrink: 0;
+  font-family: var(--sf-mono);
+  color: var(--sf-accent);
 }
 
-.chat-work-time {
+/* Content preview fills all remaining space (truncated to one line). */
+.chat-ab-content {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--sf-text-muted);
+}
+
+.chat-ab-time {
   margin-left: auto;
   flex-shrink: 0;
   font-family: var(--sf-mono);
@@ -286,34 +302,11 @@
   color: var(--sf-text-muted);
 }
 
-.chat-work-head:hover .chat-work-time {
+.chat-work-head:hover .chat-ab-time {
   color: var(--sf-text);
 }
 
-.chat-work-dots {
-  font-family: var(--sf-mono);
-  color: var(--sf-accent);
-  margin-left: 2px;
-}
-
-/* /compact progress box: CSS-only animated ellipsis (no JS ticker needed). */
-.chat-compacting .chat-work-title {
-  color: var(--sf-accent);
-}
-.chat-compact-dots::after {
-  content: '';
-  animation: chat-compact-dots 1.2s steps(4, end) infinite;
-}
-@keyframes chat-compact-dots {
-  0%   { content: ''; }
-  25%  { content: '.'; }
-  50%  { content: '..'; }
-  75%  { content: '...'; }
-  100% { content: ''; }
-}
-
-/* /compact result box: done (clickable, green flash handled by
-   chat-work--flash-ok) and failed states. */
+/* /compact done/failed states. */
 .chat-compacting--done {
   border-color: rgba(78, 201, 176, 0.45);
   cursor: pointer;
@@ -324,14 +317,14 @@
 .chat-compacting--done .chat-work-toggle {
   color: var(--sf-ok, #4ec9b0);
 }
-.chat-compacting--done .chat-work-title {
+.chat-compacting--done .chat-ab-name {
   color: #4ec9b0;
 }
-.chat-compacting--failed .chat-work-title {
+.chat-compacting--failed .chat-ab-name {
   color: #f87171;
 }
 
-/* Tool-completion flash: green on success, red on failure, then settle. */
+/* Action-completion flash: green on success, red on failure, then settle. */
 @keyframes chat-work-flash-ok {
   0%   { border-color: rgba(78, 201, 176, 0.95); background: rgba(78, 201, 176, 0.18); }
   100% { border-color: var(--sf-border);        background: var(--sf-bg-dark); }
@@ -358,7 +351,8 @@
   gap: 10px;
 }
 
-.chat-work-move {
+/* Stacked sub-bubble (one action) — collapsed until clicked. */
+.chat-ab-sub {
   border: 1px solid var(--sf-border);
   border-radius: 5px;
   background: rgba(255, 255, 255, 0.02);
@@ -366,17 +360,17 @@
 }
 
 /* Tool-call outcome tint: green on success, red on failure (no status icon). */
-.chat-work-move--ok {
+.chat-ab-sub--ok {
   border-color: rgba(78, 201, 176, 0.5);
   background: rgba(78, 201, 176, 0.06);
 }
 
-.chat-work-move--fail {
+.chat-ab-sub--fail {
   border-color: rgba(244, 135, 113, 0.6);
   background: rgba(244, 135, 113, 0.07);
 }
 
-.chat-work-move-head {
+.chat-ab-sub-head {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -385,18 +379,18 @@
   user-select: none;
 }
 
-.chat-work-move-head:hover {
+.chat-ab-sub-head:hover {
   background: var(--sf-bg-hover);
 }
 
-.chat-work-move-toggle {
+.chat-ab-sub-toggle {
   width: 12px;
   font-size: 10px;
   color: var(--sf-text-muted);
   flex-shrink: 0;
 }
 
-.chat-work-move-name {
+.chat-ab-sub-name {
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
@@ -404,7 +398,7 @@
   color: var(--sf-text-muted);
 }
 
-.chat-work-move-time {
+.chat-ab-sub-time {
   margin-left: auto;
   flex-shrink: 0;
   font-family: var(--sf-mono);
@@ -415,14 +409,14 @@
   color: var(--sf-text-muted);
 }
 
-.chat-work-move-details {
+.chat-ab-sub-details {
   padding: 0 8px 8px;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-.chat-work-code {
+.chat-ab-code {
   margin: 0;
   padding: 6px 8px;
   background: var(--sf-bg);
@@ -437,23 +431,23 @@
   color: var(--sf-text);
 }
 
-.chat-work-result {
+.chat-ab-result {
   margin-top: 4px;
   border: 1px solid var(--sf-border);
   border-radius: 5px;
   overflow: hidden;
 }
 
-.chat-work-result--error {
+.chat-ab-result--error {
   border-color: rgba(244, 135, 113, 0.5);
 }
 
-.chat-work-result-body {
+.chat-ab-result-body {
   border-radius: 0;
   max-height: 260px;
 }
 
-.chat-work-bash {
+.chat-ab-bash {
   max-height: 300px;
 }
 

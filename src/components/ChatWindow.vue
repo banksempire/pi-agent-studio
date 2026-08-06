@@ -14,8 +14,8 @@ const props = defineProps<{ sessionId: string }>();
 const store = useChatStore();
 
 const session = computed<ChatSession | undefined>(() => store.findSession(props.sessionId));
-/** Per-window toggle (right panel): render message text as markdown. */
-const renderMd = computed(() => session.value?.renderMarkdown ?? true);
+/** Global preference (right panel): render message text as markdown. */
+const renderMd = computed(() => store.prefs.renderMarkdown);
 
 /**
  * Markdown → sanitized HTML (agent output may echo untrusted content).
@@ -531,11 +531,15 @@ function onKeydown(e: KeyboardEvent) {
     }
   }
 
-  if (e.key === 'Enter' && !e.shiftKey) {
+  // Send-key mode (global preference): 'enter' → Enter sends, Shift+Enter
+  // newline; 'shiftEnter' → Shift+Enter sends, Enter newline (textarea default).
+  const sendPressed = e.key === 'Enter'
+    && (store.prefs.sendKey === 'enter' ? !e.shiftKey : e.shiftKey);
+  if (sendPressed) {
     e.preventDefault();
     const parsed = parseSlash(input.value);
     if (completionOpen.value && parsed && !isKnownCommand(parsed.command) && completionItems.value.length > 0) {
-      // Partial command: fill in the highlighted name, then run on next Enter.
+      // Partial command: fill in the highlighted name, then run on next send key.
       completeWith(completionItems.value[completionIndex.value]);
       return;
     }

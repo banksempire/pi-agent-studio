@@ -77,11 +77,11 @@ export interface ChatSession {
    * refreshes until they appear on disk.
    */
   onDisk: boolean;
-  /** Per-window preference: render chat text as markdown (localStorage-backed). */
-  renderMarkdown: boolean;
 }
 
 export type BackendStatus = 'connecting' | 'online' | 'offline';
+
+export type SendKeyMode = 'enter' | 'shiftEnter';
 
 interface ChatState {
   sessions: ChatSession[];
@@ -93,6 +93,13 @@ interface ChatState {
   backendError: string;
   /** last send failure, shown in chat windows */
   lastError: string;
+  /** global UI preferences (localStorage-backed, apply to all chats) */
+  prefs: {
+    /** which key sends a message; the other key inserts a newline */
+    sendKey: SendKeyMode;
+    /** render message text as markdown */
+    renderMarkdown: boolean;
+  };
 }
 
 const state = reactive<ChatState>({
@@ -102,20 +109,35 @@ const state = reactive<ChatState>({
   backend: 'connecting',
   backendError: '',
   lastError: '',
+  prefs: loadPrefs(),
 });
 
 /** Tab id scheme: one tab per session, stable across open/close. */
 const TAB_PREFIX = 'chat-';
 const chatTabId = (sessionId: string) => TAB_PREFIX + sessionId;
 
-// ── Per-window markdown preference (localStorage, keyed by session id) ────
+// ── Global preferences (localStorage, apply to ALL chats) ──────────────────
 
-const MD_KEY = 'sf-chat:md:';  // value '1' = render markdown, '0' = raw text
-function loadMdPref(id: string): boolean {
-  try { return localStorage.getItem(MD_KEY + id) !== '0'; } catch { return true; }
+const PREFS_KEY = 'sf-chat:prefs';
+function loadPrefs(): ChatState['prefs'] {
+  try {
+    const raw = localStorage.getItem(PREFS_KEY);
+    if (raw) {
+      const j = JSON.parse(raw);
+      return {
+        sendKey: j.sendKey === 'shiftEnter' ? 'shiftEnter' : 'enter',
+        renderMarkdown: j.renderMarkdown !== false,
+      };
+    }
+  } catch { /* corrupted or unavailable — use defaults */ }
+  return { sendKey: 'enter', renderMarkdown: true };
 }
-function saveMdPref(id: string, on: boolean) {
-  try { localStorage.setItem(MD_KEY + id, on ? '1' : '0'); } catch { /* storage unavailable */ }
+function savePrefs() {
+  try { localStorage.setItem(PREFS_KEY, JSON.stringify(state.prefs)); } catch { /* storage unavailable */ }
+}
+function setSendKey(mode: SendKeyMode) {
+  state.prefs.sendKey = mode;
+  savePrefs();
 }
 
 // ── Backend client ─────────────────────────────────────────────────────────
@@ -181,7 +203,6 @@ function toSession(raw: SessionInfo): ChatSession {
     oldestId: null,
     loadingOlder: false,
     onDisk: true,
-    renderMarkdown: loadMdPref(id),
   };
 }
 
@@ -458,7 +479,6 @@ export async function newChat(): Promise<void> {
         messages: [], messagesLoaded: true,
         hasMoreOlder: false, oldestId: null, loadingOlder: false,
         onDisk: false,
-        renderMarkdown: loadMdPref(id),
       });
     }
     openChat(id);
@@ -555,12 +575,10 @@ export function closeChatView(sessionId: string) {
   if (ws.findTabGlobal(tabId)) ws.ops.closeTab(tabId);
 }
 
-/** Per-window preference: render markdown in this session's chat window. */
-export function setRenderMarkdown(sessionId: string, on: boolean) {
-  const s = findSession(sessionId);
-  if (!s) return;
-  s.renderMarkdown = on;
-  saveMdPref(sessionId, on);
+/** Global preference: render markdown in every chat window. */
+export function setRenderMarkdown(on: boolean) {
+  state.prefs.renderMarkdown = on;
+  savePrefs();
 }
 
 /** Number of messages fetched per page (newest window). */
@@ -668,6 +686,8 @@ export const store = {
   sendMessage,
   stopSession,
   closeChatView,
+  get prefs() { return state.prefs; },
+  setSendKey,
   setRenderMarkdown,
   fetchMessages,
   loadOlder,

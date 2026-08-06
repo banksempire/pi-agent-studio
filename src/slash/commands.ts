@@ -147,15 +147,17 @@ export async function runSlash(sessionId: string, text: string): Promise<SlashRe
     return { kind: 'none' };
   }
   if (command === 'hotkeys') {
+    const sendKey = store.prefs.sendKey === 'shiftEnter' ? 'Shift+Enter — send message\nEnter — new line' : 'Enter — send message\nShift+Enter — new line';
     return {
       kind: 'notice',
       text: [
         'Keyboard shortcuts',
-        'Enter — send message',
-        'Shift+Enter — new line',
+        sendKey,
         'Ctrl+N — new chat',
         'Type / for slash commands, ! for a bash command',
         'Chat window tabs can be dragged between tiles; ✕ closes the view, not the session.',
+        '',
+        'Right panel: Send with + Markdown switches are global.',
       ].join('\n'),
     };
   }

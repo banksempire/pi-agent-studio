@@ -862,6 +862,12 @@
   flex-shrink: 0;
 }
 
+.session-stats-hint {
+  color: var(--sf-text-muted);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
 .session-stats-val {
   color: var(--sf-text);
   text-align: right;

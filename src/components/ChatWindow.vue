@@ -107,7 +107,13 @@ function roleLabel(m: DisplayMessage): string {
 export interface WorkMove {
   key: string;
   kind: 'thinking' | 'tool' | 'bash';
-  done: boolean;
+  /** step duration in ms (static part — see `live` for the streaming tail) */
+  durMs: number;
+  /** source message timestamp (start of this step) */
+  startTs: number;
+  /** trailing move of a WIP run — elapsed runs against the live clock */
+  live: boolean;
+  status: 'ok' | 'fail' | 'pending';
   isError?: boolean;
   thinking?: string;
   name?: string;
@@ -118,13 +124,13 @@ export interface WorkMove {
 
 export type ChatItem =
   | { kind: 'user' | 'system' | 'summary' | 'reply' | 'custom'; msg: DisplayMessage }
-  | { kind: 'work'; id: string; moves: WorkMove[]; wip: boolean };
+  | { kind: 'work'; id: string; moves: WorkMove[]; wip: boolean; startTs: number; durMs: number };
 
 function moveLabel(mv: WorkMove): string {
   if (mv.kind === 'thinking') return 'thinking';
-  if (mv.kind === 'bash') return mv.done ? 'bash ✓' : 'bash';
-  if (mv.isError) return `${mv.name} ✗`;
-  return mv.done ? `${mv.name} ✓` : `calling ${mv.name}`;
+  if (mv.kind === 'bash') return mv.status === 'ok' ? 'bash ✓' : 'bash';
+  if (mv.status === 'fail') return `${mv.name} ✗`;
+  return mv.status === 'ok' ? `${mv.name} ✓` : `calling ${mv.name}`;
 }
 
 function latestMoveLabel(moves: WorkMove[]): string {
@@ -132,58 +138,124 @@ function latestMoveLabel(moves: WorkMove[]): string {
   return last ? moveLabel(last) : '';
 }
 
-/** The conversation as render items: work runs collapsed into one box each. */
+function statusIcon(mv: WorkMove): string {
+  if (mv.status === 'ok') return '✓';
+  if (mv.status === 'fail') return '✗';
+  return '…';
+}
+
+function statusClass(mv: WorkMove): string {
+  if (mv.status === 'fail') return 'chat-work-status--error';
+  if (mv.status === 'pending') return 'chat-work-status--pending';
+  return 'chat-work-status--ok';
+}
+
+/** Short duration: "<1s" / "12.3s" / "1m 30s". */
+function fmtSec(ms: number): string {
+  if (ms <= 0) return '';
+  const s = ms / 1000;
+  if (s < 1) return '<1s';
+  if (s < 60) return `${s.toFixed(1)}s`;
+  const m = Math.floor(s / 60);
+  const r = Math.floor(s % 60);
+  return r > 0 ? `${m}m ${r}s` : `${m}m`;
+}
+
+/**
+ * The conversation as render items: work runs collapse into one box each.
+ *
+ * Timing: a message is one agent step (thinking + tool call + maybe text)
+ * starting at its ts. A move's duration is its step's duration — from this
+ * message's ts to the NEXT message's ts (or the run end for the last step).
+ * The trailing step of a WIP run (live) measures against the live clock.
+ */
 const items = computed<ChatItem[]>(() => {
   const msgs = session.value?.messages ?? [];
   const out: ChatItem[] = [];
-  let work: WorkMove[] = [];
+  const work: { src: number; mv: Omit<WorkMove, 'durMs' | 'startTs' | 'live' | 'status'> }[] = [];
   let workId = '';
 
-  const flush = (wip: boolean) => {
+  /** endTs = ts of the message that follows the run (null = the run is the tail). */
+  const flush = (endTs: number | null, wip: boolean) => {
     if (work.length === 0) return;
-    out.push({ kind: 'work', id: workId, moves: work, wip });
-    work = [];
+    const startTs = msgs[work[0].src].ts;
+    const end = endTs ?? msgs[work[work.length - 1].src].ts;
+    const moves: WorkMove[] = work.map(({ src, mv }, i) => {
+      const nextMsg = msgs[src + 1];
+      const nextTs = nextMsg ? nextMsg.ts : end;
+      const live = wip && i === work.length - 1;
+      return {
+        ...mv,
+        durMs: Math.max(0, nextTs - msgs[src].ts),
+        startTs: msgs[src].ts,
+        live,
+        status: mv.kind === 'thinking'
+          ? (live ? 'pending' : 'ok')
+          : mv.kind === 'tool'
+            ? (mv.isError ? 'fail' : mv.result !== undefined ? 'ok' : 'pending')
+            : (mv.text ? 'ok' : 'pending'),
+      };
+    });
+    out.push({ kind: 'work', id: workId, moves, wip, startTs, durMs: Math.max(0, end - startTs) });
+    work.length = 0;
     workId = '';
   };
 
-  const addMove = (msgId: string, mv: Omit<WorkMove, 'key' | 'done'>) => {
+  const addMove = (src: number, msgId: string, mv: Omit<WorkMove, 'durMs' | 'startTs' | 'live' | 'status' | 'key'>) => {
     if (!workId) workId = 'work-' + msgId;
-    work.push({
-      ...mv,
-      key: `${workId}:${work.length}`,
-      done: mv.kind === 'tool' ? mv.result !== undefined : true,
-    });
+    work.push({ src, mv: { ...mv, key: `${workId}:${work.length}` } });
   };
 
-  for (const m of msgs) {
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i];
     if (m.role === 'user' || m.role === 'system' || m.role === 'summary') {
-      flush(false);
+      flush(m.ts, false);
       out.push({ kind: m.role, msg: m });
       continue;
     }
     if (m.role === 'bash') {
-      addMove(m.id, { kind: 'bash', text: m.text });
+      addMove(i, m.id, { kind: 'bash', text: m.text });
       continue;
     }
     if (m.role === 'assistant') {
-      if (m.thinking) addMove(m.id, { kind: 'thinking', thinking: m.thinking });
+      let added = false;
+      if (m.thinking) { addMove(i, m.id, { kind: 'thinking', thinking: m.thinking }); added = true; }
       for (const tc of m.toolCalls ?? []) {
-        addMove(m.id, { kind: 'tool', name: tc.name, args: tc.args, result: tc.result, isError: tc.isError });
+        addMove(i, m.id, { kind: 'tool', name: tc.name, args: tc.args, result: tc.result, isError: tc.isError });
+        added = true;
       }
       if (m.text) {
-        // The official reply ends the work phase.
-        flush(false);
+        // The official reply ends the work phase. If THIS message also
+        // contributed moves, the run ends at the next message's step
+        // boundary (this message's own ts would measure 0).
+        flush(added ? (msgs[i + 1]?.ts ?? m.ts) : m.ts, false);
         out.push({ kind: 'reply', msg: m });
       }
       continue;
     }
-    flush(false);
+    flush(m.ts, false);
     out.push({ kind: 'custom', msg: m });
   }
   // A trailing work run is still in progress while the agent is working.
-  flush(session.value?.status === 'running');
+  flush(null, session.value?.status === 'running');
   return out;
 });
+
+/** Live clock for WIP elapsed times — ticks only while a work run is in progress. */
+const now = ref(Date.now());
+let nowTimer: number | null = null;
+watch(
+  () => {
+    const last = items.value[items.value.length - 1];
+    return last?.kind === 'work' && last.wip;
+  },
+  (wip) => {
+    if (wip && nowTimer === null) nowTimer = window.setInterval(() => { now.value = Date.now(); }, 1000);
+    else if (!wip && nowTimer !== null) { window.clearInterval(nowTimer); nowTimer = null; }
+  },
+  { immediate: true },
+);
+onMounted(() => { now.value = Date.now(); });
 
 /** work-group id → expanded (audit view) */
 const workOpen = ref<Record<string, boolean>>({});
@@ -421,29 +493,37 @@ onMounted(() => {
           <div v-if="item.kind === 'work'" class="chat-work" :class="{ 'chat-work--open': workOpen[item.id] }">
             <div class="chat-work-head" @click="toggleWork(item.id)">
               <span class="chat-work-toggle">{{ workOpen[item.id] ? '▾' : '▸' }}</span>
-              <span v-if="item.wip" class="chat-work-title">Working on: <span class="chat-work-latest">{{ latestMoveLabel(item.moves) }}</span></span>
+              <span v-if="item.wip" class="chat-work-title">Working on : <span class="chat-work-latest">{{ latestMoveLabel(item.moves) }}</span></span>
               <span v-else class="chat-work-title">Work done</span>
+              <span class="chat-work-time">{{ item.wip ? fmtSec(now - item.startTs) : fmtSec(item.durMs) }}</span>
             </div>
             <div v-if="workOpen[item.id]" class="chat-work-body">
               <template v-for="mv in item.moves" :key="mv.key">
                 <div v-if="mv.kind === 'thinking'" class="chat-work-move">
-                  <div class="chat-work-move-label">💭 thinking</div>
+                  <div class="chat-work-move-label">
+                    <span>💭 Thinking</span>
+                    <span class="chat-work-move-time">{{ mv.live ? fmtSec(now - mv.startTs) : fmtSec(mv.durMs) }}</span>
+                    <span class="chat-work-status" :class="statusClass(mv)">{{ statusIcon(mv) }}</span>
+                  </div>
                   <pre class="chat-work-code">{{ mv.thinking }}</pre>
                 </div>
                 <div v-else-if="mv.kind === 'tool'" class="chat-work-move">
                   <div class="chat-work-move-label">
-                    <span>🔧 {{ mv.name }}</span>
-                    <span v-if="mv.isError" class="chat-work-status chat-work-status--error">✗</span>
-                    <span v-else-if="mv.done" class="chat-work-status">✓</span>
-                    <span v-else class="chat-work-status chat-work-status--pending">…</span>
+                    <span>🔧 Tool call · {{ mv.name }}</span>
+                    <span class="chat-work-move-time">{{ mv.live ? fmtSec(now - mv.startTs) : fmtSec(mv.durMs) }}</span>
+                    <span class="chat-work-status" :class="statusClass(mv)">{{ statusIcon(mv) }}</span>
                   </div>
                   <pre v-if="mv.args" class="chat-work-code">{{ mv.args }}</pre>
-                  <div v-if="mv.done" class="chat-work-result" :class="{ 'chat-work-result--error': mv.isError }">
+                  <div v-if="mv.status !== 'pending'" class="chat-work-result" :class="{ 'chat-work-result--error': mv.isError }">
                     <pre class="chat-work-code chat-work-result-body">{{ mv.result }}</pre>
                   </div>
                 </div>
                 <div v-else class="chat-work-move">
-                  <div class="chat-work-move-label">bash</div>
+                  <div class="chat-work-move-label">
+                    <span>bash</span>
+                    <span class="chat-work-move-time">{{ mv.live ? fmtSec(now - mv.startTs) : fmtSec(mv.durMs) }}</span>
+                    <span class="chat-work-status" :class="statusClass(mv)">{{ statusIcon(mv) }}</span>
+                  </div>
                   <pre class="chat-work-code chat-work-bash">{{ mv.text }}</pre>
                 </div>
               </template>

@@ -278,6 +278,18 @@
   color: var(--sf-text);
 }
 
+.chat-work-time {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-family: var(--sf-mono);
+  font-size: 11px;
+  color: var(--sf-text-muted);
+}
+
+.chat-work-head:hover .chat-work-time {
+  color: var(--sf-text);
+}
+
 .chat-work-body {
   border-top: 1px solid var(--sf-border);
   padding: 8px 10px;
@@ -296,6 +308,16 @@
   letter-spacing: 0.4px;
   color: var(--sf-text-muted);
   margin-bottom: 4px;
+}
+
+.chat-work-move-time {
+  margin-left: auto;
+  font-family: var(--sf-mono);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--sf-text-muted);
 }
 
 .chat-work-code {
@@ -336,6 +358,10 @@
 .chat-work-status {
   margin-left: auto;
   font-size: 11px;
+  color: #4ec9b0;
+}
+
+.chat-work-status--ok {
   color: #4ec9b0;
 }
 

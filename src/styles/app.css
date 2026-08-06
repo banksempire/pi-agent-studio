@@ -502,6 +502,34 @@
   flex-shrink: 0;
 }
 
+/* Drag-to-resize handle on the composer's top edge. */
+.chat-composer-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 8px;
+  cursor: row-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+
+.chat-composer-grip {
+  width: 36px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--sf-border);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.chat-composer:hover .chat-composer-grip,
+.chat-composer-handle:hover .chat-composer-grip {
+  opacity: 1;
+}
+
 .chat-input {
   flex: 1;
   resize: none;

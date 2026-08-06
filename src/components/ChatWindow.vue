@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch, type Ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Ref } from 'vue';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import {
@@ -506,14 +506,56 @@ function onKeydown(e: KeyboardEvent) {
 function autoGrow() {
   const el = inputEl.value;
   if (!el) return;
+  if (manualHeight.value !== null) {
+    // Drag-set height: fixed, no auto-grow.
+    el.style.height = manualHeight.value + 'px';
+    return;
+  }
   el.style.height = 'auto';
   el.style.height = Math.min(el.scrollHeight, 160) + 'px';
+}
+
+/** Composer height set by dragging the handle (null = auto-grow). */
+const manualHeight = ref<number | null>(null);
+const MIN_INPUT_H = 60;
+const MAX_INPUT_H = 320;
+
+let resizeCleanup: (() => void) | null = null;
+
+/** Drag the composer's top handle to set a fixed input height. */
+function startResize(e: MouseEvent) {
+  e.preventDefault();
+  const startY = e.clientY;
+  const startH = manualHeight.value ?? (inputEl.value?.offsetHeight ?? 80);
+  const onMove = (ev: MouseEvent) => {
+    manualHeight.value = Math.min(MAX_INPUT_H, Math.max(MIN_INPUT_H, startH + (startY - ev.clientY)));
+  };
+  const onUp = () => {
+    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('mouseup', onUp);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    resizeCleanup = null;
+  };
+  resizeCleanup = onUp;
+  document.body.style.cursor = 'row-resize';
+  document.body.style.userSelect = 'none';
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onUp);
+}
+
+/** Reset to auto-grow on double-click of the handle. */
+function resetResize() {
+  manualHeight.value = null;
+  nextTick(autoGrow);
 }
 
 onMounted(() => {
   scrollToBottom();
   inputEl.value?.focus();
 });
+
+onUnmounted(() => { resizeCleanup?.(); });
 </script>
 
 <template>
@@ -638,6 +680,13 @@ onMounted(() => {
 
     <!-- Composer (hidden entirely when the session is locked by the TUI) -->
     <div class="chat-composer">
+      <div
+        v-if="!session?.tuiActive"
+        class="chat-composer-handle"
+        title="Drag to resize the input · double-click to reset"
+        @mousedown="startResize"
+        @dblclick="resetResize"
+      ><span class="chat-composer-grip" /></div>
       <div v-if="session?.tuiActive" class="chat-banner chat-banner--tui" title="Click to recheck lock status" @click="store.refreshList()">🔒 Live in the pi TUI — this window is read-only. (click to recheck)</div>
       <div v-else-if="store.lastError" class="chat-banner chat-banner--error" @click="store.clearLastError()">
         ⚠ {{ store.lastError }} (click to dismiss)
@@ -664,6 +713,7 @@ onMounted(() => {
           v-model="input"
           class="chat-input"
           rows="1"
+          :style="manualHeight !== null ? { height: manualHeight + 'px', maxHeight: manualHeight + 'px' } : {}"
           placeholder="Message the pi agent…  (/ for commands, Enter to send, Shift+Enter for a new line)"
           @keydown="onKeydown"
           @input="autoGrow"

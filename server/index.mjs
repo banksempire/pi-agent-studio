@@ -11,6 +11,7 @@
  * Override with PI_SDK_DIR. The server is dependency-free Node (ESM).
  */
 import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, readlinkSync } from 'node:fs';
 import { readFile, readdir, stat, mkdir, writeFile } from 'node:fs/promises';
@@ -48,6 +49,24 @@ const { BUILTIN_SLASH_COMMANDS } = slashCommandsModule;
 
 /** file → { session: AgentSession, status: 'idle' | 'running' } */
 const liveSessions = new Map();
+
+/**
+ * Lazy-start new chats: /api/new-chat only RESERVES a future session file
+ * path (matching the SDK's naming) and remembers it here — the real SDK
+ * agent session is created on the first message (/api/chat → ensureSession),
+ * pinned to that exact path. Nothing is created until the user actually
+ * chats: no AgentSession instance, no file on disk.
+ */
+const pendingSessions = new Map(); // file → { cwd, dir }
+
+/** Mirror the SDK's session-file naming so a lazy session lands on its path. */
+function newSessionPath(cwd) {
+  const resolved = path.resolve(cwd);
+  const safe = `--${resolved.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`;
+  const dir = path.join(SESSIONS_ROOT, safe);
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  return path.join(dir, `${ts}_${randomUUID()}.jsonl`);
+}
 
 /** Stable id for compaction/branch summaries: derived from the text, so the
  *  live SSE copy and the file-parse copy upsert to the same message. */
@@ -336,6 +355,18 @@ function extractText(result) {
 async function ensureSession(file) {
   let live = liveSessions.get(file);
   if (live) return live;
+  if (pendingSessions.has(file)) {
+    // Lazy start: the reserved virtual new-chat becomes real here, pinned
+    // to the exact file path the frontend already holds as its session id.
+    const { cwd, dir } = pendingSessions.get(file);
+    pendingSessions.delete(file);
+    const sessionManager = new sdk.SessionManager(cwd, dir, file, true);
+    const { session } = await sdk.createAgentSession({ sessionManager });
+    live = { session, status: 'idle' };
+    liveSessions.set(file, live);
+    attachSession(file, live);
+    return live;
+  }
   const { session } = await sdk.createAgentSession({
     sessionManager: sdk.SessionManager.open(file),
   });
@@ -738,8 +769,9 @@ const server = createServer(async (req, res) => {
       const before = url.searchParams.get('before') || undefined;
       const after = url.searchParams.get('after') || undefined;
       // Brand-new sessions (created via /api/new-chat) have no file until
-      // their first message is appended — serve them as empty.
-      if (!existsSync(file) && liveSessions.has(file)) {
+      // their first message is appended — serve them as empty (live AND
+      // still-pending lazy sessions).
+      if (!existsSync(file) && (liveSessions.has(file) || pendingSessions.has(file))) {
         sendJson(res, 200, { file, name: null, cwd: NEW_CHAT_CWD, created: Date.now(), modified: Date.now(), messageCount: 0, userMessages: 0, firstMessage: '', preview: '', model: null, tokens: { input: 0, output: 0, total: 0 }, cost: 0, running: false, messages: [], oldestId: null, hasMore: false });
         return;
       }
@@ -756,8 +788,9 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 400, { error: 'file and message required' });
       }
       // Files we created/opened ourselves may not exist on disk yet
-      // (session files are written on the first appended entry).
-      if (!liveSessions.has(file) && !existsSync(file)) {
+      // (session files are written on the first appended entry); pending
+      // lazy new-chats don't exist until their first message arrives.
+      if (!liveSessions.has(file) && !existsSync(file) && !pendingSessions.has(file)) {
         return sendJson(res, 404, { error: 'session file not found' });
       }
       const live = await ensureSession(file);
@@ -815,13 +848,11 @@ const server = createServer(async (req, res) => {
     if (p === '/api/new-chat' && req.method === 'POST') {
       const { cwd } = await readBody(req);
       const targetCwd = cwd || NEW_CHAT_CWD;
-      const sessionManager = sdk.SessionManager.create(targetCwd);
-      const { session } = await sdk.createAgentSession({ sessionManager });
-      const file = session.sessionFile;
-      const live = { session, status: 'idle' };
-      liveSessions.set(file, live);
-      attachSession(file, live);
-      sendJson(res, 200, { file, cwd: targetCwd });
+      // Lazy start: only reserve the future session file path. The real
+      // agent session is created on the first message (see ensureSession).
+      const file = newSessionPath(targetCwd);
+      pendingSessions.set(file, { cwd: targetCwd, dir: path.dirname(file) });
+      sendJson(res, 200, { file, cwd: targetCwd, virtual: true });
       return;
     }
 

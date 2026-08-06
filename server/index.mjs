@@ -416,10 +416,6 @@ const NA_COMMANDS = {
   quit: 'Nothing to quit in a browser tab — close the tab instead.',
 };
 
-function slashSession(file) {
-  return ensureSession(file);
-}
-
 function serializeModel(m) {
   if (!m) return null;
   return {
@@ -463,7 +459,7 @@ async function handleSlashCommand({ file, command, args, extra }) {
     }
 
     case 'session': {
-      const live = await slashSession(file);
+      const live = await ensureSession(file);
       const stats = live.session.getSessionStats();
       const sm = live.session.sessionManager;
       const t = stats.tokens;
@@ -493,7 +489,7 @@ async function handleSlashCommand({ file, command, args, extra }) {
     }
 
     case 'name': {
-      const live = await slashSession(file);
+      const live = await ensureSession(file);
       const requested = args?.trim() ?? '';
       if (!requested) {
         const current = live.session.sessionManager.getSessionName();
@@ -506,7 +502,7 @@ async function handleSlashCommand({ file, command, args, extra }) {
     }
 
     case 'compact': {
-      const live = await slashSession(file);
+      const live = await ensureSession(file);
       if (live.status === 'running') {
         return { ok: false, error: 'Wait for the current response to finish before compacting.' };
       }
@@ -515,14 +511,14 @@ async function handleSlashCommand({ file, command, args, extra }) {
     }
 
     case 'copy': {
-      const live = await slashSession(file);
+      const live = await ensureSession(file);
       const text = live.session.getLastAssistantText();
       if (!text) return { ok: true, notice: 'No agent messages to copy yet.' };
       return { ok: true, data: { text } };
     }
 
     case 'model': {
-      const live = await slashSession(file);
+      const live = await ensureSession(file);
       const rt = live.session.modelRuntime;
       const current = live.session.model;
       const requested = args?.trim() ?? '';
@@ -542,7 +538,7 @@ async function handleSlashCommand({ file, command, args, extra }) {
     }
 
     case 'scoped-models': {
-      const live = await slashSession(file);
+      const live = await ensureSession(file);
       const rt = live.session.modelRuntime;
       const models = await rt.getAvailable().catch(() => []);
       const scoped = live.session.scopedModels;
@@ -564,7 +560,7 @@ async function handleSlashCommand({ file, command, args, extra }) {
     }
 
     case 'tree': {
-      const live = await slashSession(file);
+      const live = await ensureSession(file);
       const sm = live.session.sessionManager;
       if (extra?.entryId) {
         const target = sm.getEntry(extra.entryId);
@@ -584,7 +580,7 @@ async function handleSlashCommand({ file, command, args, extra }) {
     }
 
     case 'fork': {
-      const live = await slashSession(file);
+      const live = await ensureSession(file);
       if (extra?.entryId) {
         const entry = live.session.sessionManager.getEntry(extra.entryId);
         if (!entry || entry.type !== 'message' || entry.message?.role !== 'user') {
@@ -598,7 +594,7 @@ async function handleSlashCommand({ file, command, args, extra }) {
     }
 
     case 'clone': {
-      const live = await slashSession(file);
+      const live = await ensureSession(file);
       const leafId = live.session.sessionManager.getLeafId();
       if (!leafId) return { ok: false, error: 'Nothing to clone yet.' };
       const forked = await forkSession(live, leafId);
@@ -606,7 +602,7 @@ async function handleSlashCommand({ file, command, args, extra }) {
     }
 
     case 'export': {
-      const live = await slashSession(file);
+      const live = await ensureSession(file);
       const outPath = args?.trim() || undefined;
       let filePath, mime, filename;
       if (outPath?.endsWith('.jsonl')) {
@@ -644,7 +640,7 @@ async function handleSlashCommand({ file, command, args, extra }) {
     }
 
     case 'reload': {
-      const live = await slashSession(file);
+      const live = await ensureSession(file);
       await live.session.reload().catch(() => {});
       emit({ type: 'refresh', file });
       return { ok: true, notice: 'Reloaded resources (skills, prompts, context files).' };

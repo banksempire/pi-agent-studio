@@ -627,12 +627,12 @@ export async function syncTail(sessionId: string) {
     const data = await api<any>(`/api/sessions/messages?file=${encodeURIComponent(s.file)}&after=${encodeURIComponent(lastEntryId)}`);
     const incoming = (data.messages ?? []) as DisplayMessage[];
     if (incoming.length > 0) {
-      const known = new Set(s.messages.map((m) => m.id));
-      const fresh = incoming.filter((m) => {
-        if (known.has(m.id)) return false;
-        // Same content already shown under a live id (streamed → persisted)?
-        return !s.messages.some((x) => x.role === m.role && x.ts === m.ts);
-      });
+      // Dedupe by id, or by (role, timestamp): streamed messages carry live
+      // ids that differ from their persisted entry ids. One set each —
+      // avoids the old per-item O(n) scan over the loaded messages.
+      const seenId = new Set(s.messages.map((m) => m.id));
+      const seenTs = new Set(s.messages.map((m) => `${m.role}:${m.ts}`));
+      const fresh = incoming.filter((m) => !seenId.has(m.id) && !seenTs.has(`${m.role}:${m.ts}`));
       if (fresh.length > 0) s.messages = [...s.messages, ...fresh];
     }
     // Full-session info rides along — keep stats fresh too.

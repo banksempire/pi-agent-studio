@@ -71,6 +71,12 @@ async function loadOlder() {
 // append-only except the live tail being streamed, so a change always
 // shows up in the last message or in the count. The DOM must be updated
 // before measuring, so scroll runs after the render flush.
+const keepBottom = () => { if (sticky) nextTick(scrollToBottom); };
+// Re-run on new messages and on streaming text/thinking growth. A cheap
+// O(1) key (count + last message identity/lengths) is enough: messages are
+// append-only except the live tail being streamed, so a change always
+// shows up in the last message or in the count. The DOM must be updated
+// before measuring, so scroll runs after the render flush.
 watch(
   () => {
     const s = session.value;
@@ -80,13 +86,11 @@ watch(
       ? `${s.messages.length}:${last.id}:${last.text.length}:${(last.thinking ?? '').length}`
       : `${s.messages.length}:`;
   },
-  () => { if (sticky) nextTick(scrollToBottom); },
+  keepBottom,
 );
 
-watch(
-  () => session.value?.compacting,
-  () => { if (sticky) nextTick(scrollToBottom); },
-);
+// The /compact progress box toggles without changing messages.
+watch(() => session.value?.compacting, keepBottom);
 
 const lastMessage = computed<DisplayMessage | undefined>(() => {
   const msgs = session.value?.messages ?? [];
@@ -98,14 +102,10 @@ const streaming = computed(() =>
   session.value?.status === 'running' && lastMessage.value?.role === 'assistant',
 );
 
-function roleLabel(m: DisplayMessage): string {
-  if (m.role === 'user') return 'You';
-  if (m.role === 'assistant') return 'pi';
-  if (m.role === 'summary') return 'summary';
-  if (m.role === 'bash') return 'bash';
-  if (m.role === 'system') return 'system';
-  return 'custom';
-}
+const ROLE_LABELS: Record<string, string> = {
+  user: 'You', assistant: 'pi', summary: 'summary', bash: 'bash', system: 'system',
+};
+function roleLabel(m: DisplayMessage): string { return ROLE_LABELS[m.role] ?? 'custom'; }
 
 // ── Unofficial-reply work groups ──────────────────────────────────────────
 // Consecutive "unofficial" replies (thinking blocks + tool calls) between a
@@ -155,15 +155,14 @@ function moveClass(mv: WorkMove): string {
   return '';
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 /** Chat timestamp: HH:MM today, "Mon D, HH:MM" for older messages. */
 function fmtMsgTime(ts: number): string {
   const d = new Date(ts);
-  const now = new Date();
   const hhmm = fmtTime(ts);
-  const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-  if (sameDay) return hhmm;
-  const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()];
-  return `${mon} ${d.getDate()}, ${hhmm}`;
+  return d.toDateString() === new Date().toDateString()
+    ? hhmm
+    : `${MONTHS[d.getMonth()]} ${d.getDate()}, ${hhmm}`;
 }
 
 /** Agent reply footer: "pi · model[ · thinking] · time[ · time used]". */
@@ -273,9 +272,10 @@ const items = computed<ChatItem[]>(() => {
         addMove(i, m.id, { kind: 'tool', name: tc.name, args: tc.args, result: tc.result, isError: tc.isError });
         added = true;
       }
-      if (m.text) {
-        // The official reply ends the work phase. If THIS message also
-        // contributed moves, the run ends at the next message's step
+      if (m.text || m.error || m.stopReason === 'error' || m.stopReason === 'aborted') {
+        // The reply (or LLM API error / abort — textless error messages must
+        // surface too, like in the TUI) ends the work phase. If THIS message
+        // also contributed moves, the run ends at the next message's step
         // boundary (this message's own ts would measure 0).
         flush(added ? (msgs[i + 1]?.ts ?? m.ts) : m.ts, false);
         // Whole-job footer timing from the precomputed turn boundaries:
@@ -284,23 +284,13 @@ const items = computed<ChatItem[]>(() => {
         const end = nextUser[i];
         const endTs = end > i ? msgs[end - 1].ts : m.ts;
         const lastInTurn = lastTextReply[i];
-        const trailing = end === n;
         out.push({
           kind: 'reply', msg: m,
+          // Textless error messages are never the turn's last text reply
+          // (lastInTurn=false), so timeUsedMs falls back to 0.
           timeUsedMs: lastInTurn && prevUserTs[i] > 0 ? Math.max(0, endTs - prevUserTs[i]) : 0,
           endTs,
           lastInTurn,
-          trailing,
-        });
-      } else if (m.error || m.stopReason === 'error' || m.stopReason === 'aborted') {
-        // LLM API error / abort with no text — the TUI surfaces these; the
-        // web UI must too instead of dropping the message entirely.
-        flush(added ? (msgs[i + 1]?.ts ?? m.ts) : m.ts, false);
-        const end = nextUser[i];
-        out.push({
-          kind: 'reply', msg: m, timeUsedMs: 0,
-          endTs: end > i ? msgs[end - 1].ts : m.ts,
-          lastInTurn: lastTextReply[i],
           trailing: end === n,
         });
       }
@@ -718,11 +708,12 @@ let anchorBottom = 0;
             </div>
           </div>
 
-          <!-- User: boxed, full width; meta on top -->
-          <template v-else-if="item.kind === 'user'">
+          <!-- User / custom: boxed, full width; meta on top -->
+          <template v-else-if="item.kind === 'user' || item.kind === 'custom'">
             <div class="chat-msg-meta">{{ roleLabel(item.msg) }} · {{ fmtMsgTime(item.msg.ts) }}</div>
             <div v-if="renderMd" class="chat-msg-md" v-html="md(item.msg)" />
             <template v-else>{{ item.msg.text }}</template>
+            <div v-if="item.kind === 'custom'" class="chat-msg-time">{{ fmtTime(item.msg.ts) }}</div>
           </template>
 
           <!-- Assistant official reply: full width, no box; meta footer -->
@@ -741,13 +732,6 @@ let anchorBottom = 0;
           <!-- Summary -->
           <div v-else-if="item.kind === 'summary'" class="chat-summary">{{ item.msg.text }}</div>
 
-          <!-- Custom (unrecognized roles) -->
-          <template v-else>
-            <div class="chat-msg-meta">{{ roleLabel(item.msg) }} · {{ fmtMsgTime(item.msg.ts) }}</div>
-            <div v-if="renderMd" class="chat-msg-md" v-html="md(item.msg)" />
-            <template v-else>{{ item.msg.text }}</template>
-            <div class="chat-msg-time">{{ fmtTime(item.msg.ts) }}</div>
-          </template>
         </div>
 
         <!-- /compact running on the backend (LLM summarization) -->

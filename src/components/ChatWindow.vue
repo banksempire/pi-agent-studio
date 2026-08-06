@@ -236,8 +236,10 @@ const items = computed<ChatItem[]>(() => {
   return out;
 });
 
-/** Live clock for WIP elapsed times — ticks only while a work run is in progress. */
+/** Live clock for WIP elapsed times + loading dots — ticks only while a work
+ *  run is in progress. 300ms also drives the ". → ......" dot animation. */
 const now = ref(Date.now());
+const dots = ref(1);
 let nowTimer: number | null = null;
 watch(
   () => {
@@ -245,12 +247,51 @@ watch(
     return last?.kind === 'work' && last.wip;
   },
   (wip) => {
-    if (wip && nowTimer === null) nowTimer = window.setInterval(() => { now.value = Date.now(); }, 1000);
-    else if (!wip && nowTimer !== null) { window.clearInterval(nowTimer); nowTimer = null; }
+    if (wip && nowTimer === null) {
+      nowTimer = window.setInterval(() => {
+        now.value = Date.now();
+        dots.value = (dots.value % 6) + 1;
+      }, 300);
+    } else if (!wip && nowTimer !== null) {
+      window.clearInterval(nowTimer);
+      nowTimer = null;
+    }
   },
   { immediate: true },
 );
 onMounted(() => { now.value = Date.now(); });
+
+/**
+ * Flash the work box green/red when a tool call completes (success/failure).
+ * Detects pending → ok/fail transitions on tool moves; the class is removed
+ * after the animation so a later completion re-triggers it.
+ */
+const flash = ref<Record<string, 'ok' | 'fail'>>({});
+const prevToolStatus = new Map<string, 'pending' | 'ok' | 'fail'>();
+watch(
+  items,
+  (list) => {
+    for (const item of list) {
+      if (item.kind !== 'work') continue;
+      for (const mv of item.moves) {
+        if (mv.kind !== 'tool') continue;
+        const prev = prevToolStatus.get(mv.key);
+        if (prev === 'pending' && mv.status !== 'pending') {
+          const kind = mv.status === 'ok' ? 'ok' : 'fail';
+          flash.value = { ...flash.value, [item.id]: kind };
+          window.setTimeout(() => {
+            if (flash.value[item.id]) {
+              const next = { ...flash.value };
+              delete next[item.id];
+              flash.value = next;
+            }
+          }, 1400);
+        }
+        prevToolStatus.set(mv.key, mv.status);
+      }
+    }
+  },
+);
 
 /** work-group id → expanded (audit view) */
 const workOpen = ref<Record<string, boolean>>({});
@@ -491,10 +532,18 @@ onMounted(() => {
           ]"
         >
           <!-- Unofficial work run: one collapsible box per run -->
-          <div v-if="item.kind === 'work'" class="chat-work" :class="{ 'chat-work--open': workOpen[item.id] }">
+          <div
+            v-if="item.kind === 'work'"
+            class="chat-work"
+            :class="[
+              { 'chat-work--open': workOpen[item.id] },
+              flash[item.id] === 'ok' ? 'chat-work--flash-ok' : '',
+              flash[item.id] === 'fail' ? 'chat-work--flash-fail' : '',
+            ]"
+          >
             <div class="chat-work-head" @click="toggleWork(item.id)">
               <span class="chat-work-toggle">{{ workOpen[item.id] ? '▾' : '▸' }}</span>
-              <span v-if="item.wip" class="chat-work-title">Working on : <span class="chat-work-latest">{{ latestMoveLabel(item.moves) }}</span></span>
+              <span v-if="item.wip" class="chat-work-title">Working on : <span class="chat-work-latest">{{ latestMoveLabel(item.moves) }}</span><span class="chat-work-dots">{{ '.'.repeat(dots) }}</span></span>
               <span v-else class="chat-work-title">Work done</span>
               <span class="chat-work-time">{{ item.wip ? fmtSec(now - item.startTs) : fmtSec(item.durMs) }}</span>
             </div>

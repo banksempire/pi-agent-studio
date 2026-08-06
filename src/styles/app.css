@@ -290,6 +290,31 @@
   color: var(--sf-text);
 }
 
+.chat-work-dots {
+  font-family: var(--sf-mono);
+  color: var(--sf-accent);
+  margin-left: 2px;
+}
+
+/* Tool-completion flash: green on success, red on failure, then settle. */
+@keyframes chat-work-flash-ok {
+  0%   { border-color: rgba(78, 201, 176, 0.95); background: rgba(78, 201, 176, 0.18); }
+  100% { border-color: var(--sf-border);        background: var(--sf-bg-dark); }
+}
+
+@keyframes chat-work-flash-fail {
+  0%   { border-color: rgba(244, 135, 113, 0.95); background: rgba(244, 135, 113, 0.22); }
+  100% { border-color: var(--sf-border);          background: var(--sf-bg-dark); }
+}
+
+.chat-work--flash-ok {
+  animation: chat-work-flash-ok 1.1s ease-out;
+}
+
+.chat-work--flash-fail {
+  animation: chat-work-flash-fail 1.1s ease-out;
+}
+
 .chat-work-body {
   border-top: 1px solid var(--sf-border);
   padding: 8px 10px;

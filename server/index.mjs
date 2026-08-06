@@ -13,7 +13,7 @@
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, readlinkSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, readlinkSync } from 'node:fs';
 import { readFile, readdir, stat, mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -369,10 +369,26 @@ function extractText(result) {
 
 /** Register an AgentSession as a live session and wire its events to SSE. */
 function registerLive(file, session) {
-  const live = { session, status: 'idle', runningSince: null, lastEventAt: Date.now() };
+  const live = {
+    session,
+    status: 'idle',
+    runningSince: null,
+    lastEventAt: Date.now(),
+    // Per-session FIFO: concurrent /api/chat calls (e.g. two chat windows
+    // on the same session) run strictly one after another instead of being
+    // rejected or racing the SDK's append path.
+    opChain: Promise.resolve(),
+  };
   liveSessions.set(file, live);
   attachSession(file, live);
   return live;
+}
+
+/** Queue an async op so it runs only after all previously queued ops finished. */
+function enqueueOp(live, op) {
+  const next = live.opChain.then(op);
+  live.opChain = next.catch(() => {}); // chain survives a rejected op
+  return next;
 }
 
 async function ensureSession(file) {
@@ -403,8 +419,6 @@ async function ensureSession(file) {
  */
 const STALE_RUN_MS = 20 * 60 * 1000;
 const WATCHDOG_INTERVAL_MS = 30 * 1000;
-/** Compact guard: skip a whole-file rewrite within this window of the last write. */
-const EXTERNAL_WRITE_GRACE_MS = 2_000;
 function scanStaleRuns() {
   const now = Date.now();
   for (const [file, live] of liveSessions) {
@@ -589,21 +603,6 @@ async function handleSlashCommand({ file, command, args, extra }) {
       const live = await ensureSession(file);
       if (live.status === 'running') {
         return { ok: false, error: 'Wait for the current response to finish before compacting.' };
-      }
-      // Compaction rewrites the whole session file. The SDK reconciles
-      // concurrent appends (it re-reads the file before writing), but avoid a
-      // same-millisecond race with an external writer by skipping compacts
-      // within a tiny window of the last write. The window is small because
-      // the backend's OWN just-finished response also updates the mtime — a
-      // long window would block the user's normal "compact right after a
-      // reply" flow with a misleading "another client" error.
-      try {
-        const { mtimeMs } = statSync(file);
-        if (Date.now() - mtimeMs < EXTERNAL_WRITE_GRACE_MS) {
-          return { ok: false, error: 'The session file was just modified — retry in a moment.' };
-        }
-      } catch {
-        // file vanished — let the SDK surface the real error
       }
       try {
         await live.session.compact(args?.trim() || undefined);
@@ -869,17 +868,20 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 404, { error: 'session file not found' });
       }
       const live = await ensureSession(file);
-      if (live.status === 'running') {
-        return sendJson(res, 409, { error: 'Session is already generating' });
-      }
-      // Fire the user message immediately (snappy UI), then prompt.
-      const ts = Date.now();
-      emit({
-        type: 'message',
-        file,
-        message: { id: `pending-${ts}`, role: 'user', text: message, ts },
+      // Queue, don't reject: a second chat window sending to the same session
+      // waits for the current turn, then runs. (The frontend's optimistic
+      // message covers the wait; the real user message is emitted when the
+      // op starts.)
+      await enqueueOp(live, async () => {
+        // Fire the user message immediately (snappy UI), then prompt.
+        const ts = Date.now();
+        emit({
+          type: 'message',
+          file,
+          message: { id: `pending-${ts}`, role: 'user', text: message, ts },
+        });
+        await live.session.prompt(message);
       });
-      await live.session.prompt(message);
       sendJson(res, 200, { ok: true });
       return;
     }

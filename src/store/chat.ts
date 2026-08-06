@@ -317,9 +317,13 @@ function handleEvent(ev: any) {
       }
       const m = ev.message as DisplayMessage;
       if (m.role === 'user') {
-        // Replace the optimistic pending message (same text, last position).
-        const last = s.messages[s.messages.length - 1];
-        if (last?.role === 'user' && last.text === m.text) s.messages[s.messages.length - 1] = m;
+        // Replace the optimistic pending message (same text). It may no longer
+        // be the last message: a queued message's turn starts only after the
+        // previous turn's stream has pushed more messages in between.
+        const opt = s.messages.findIndex(
+          (x) => x.role === 'user' && x.id.startsWith('pending-') && x.text === m.text,
+        );
+        if (opt >= 0) s.messages[opt] = m;
         else upsert(s, m);
       } else if (m.role === 'toolResult') {
         mergeToolResult(s, m.toolCallId ?? '', m.text, !!m.isError);
@@ -544,10 +548,12 @@ export async function sendMessage(sessionId: string, text: string) {
   const s = findSession(sessionId);
   const trimmed = text.trim();
   if (!s || !trimmed) return;
-  if (s.status === 'running') return;
   state.lastError = '';
 
   // Optimistic append (the backend confirms with the same text shortly).
+  // No "already running" guard here: the backend queues messages per
+  // session, so a second view (or a second send while the agent streams)
+  // runs after the current turn instead of being silently dropped.
   const mid = `pending-${Date.now()}`;
   s.messages.push({ id: mid, role: 'user', text: trimmed, ts: Date.now() });
   try {

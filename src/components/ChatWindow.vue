@@ -554,15 +554,23 @@ onMounted(() => {
   scrollToBottom();
   inputEl.value?.focus();
   // When the messages area resizes (e.g. the composer grows/shrinks via its
-  // drag handle), keep the bottom edge of the visible text anchored: the
-  // content moves UP by the shrink amount. This applies whether the user was
-  // at the bottom (clamps to the new bottom) or scrolled up mid-history.
+  // drag handle), keep the bottom edge of the visible text anchored in both
+  // directions: the content moves UP as the area shrinks and DOWN as it
+  // grows (clamped at the scroll bounds, so at-bottom stays at the bottom).
   const el = listEl.value;
   if (el) {
-    listObserver = new ResizeObserver((entries) => {
-      const h = entries[0]?.contentRect.height ?? el.clientHeight;
-      if (prevListH > 0 && h < prevListH) {
-        el.scrollTop = Math.max(0, Math.min(el.scrollTop + (prevListH - h), el.scrollHeight - el.clientHeight));
+    listObserver = new ResizeObserver(() => {
+      // Keep the content at the viewport's bottom edge anchored as the
+      // messages area resizes: scroll down by the shrink amount, up by the
+      // growth amount. Exception: when the area grows and the user is at the
+      // bottom, the browser already clamped the scroll to the new bottom —
+      // applying the delta again would overshoot.
+      const h = el.clientHeight;
+      if (prevListH > 0 && h !== prevListH) {
+        const maxScroll = el.scrollHeight - el.clientHeight;
+        if (!(h > prevListH && el.scrollTop >= maxScroll)) {
+          el.scrollTop = Math.max(0, Math.min(el.scrollTop + (prevListH - h), maxScroll));
+        }
       }
       prevListH = h;
     });

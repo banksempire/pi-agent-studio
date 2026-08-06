@@ -45,6 +45,7 @@ function scrollToBottom() {
 function onScroll() {
   const el = listEl.value;
   if (!el) return;
+  anchorBottom = el.scrollTop + el.clientHeight;  // re-anchor on manual scrolls
   sticky = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
   // Scroll-up pagination: near the top → load older messages.
   if (el.scrollTop < 80) void loadOlder();
@@ -560,17 +561,15 @@ onMounted(() => {
   const el = listEl.value;
   if (el) {
     listObserver = new ResizeObserver(() => {
-      // Keep the content at the viewport's bottom edge anchored as the
-      // messages area resizes: scroll down by the shrink amount, up by the
-      // growth amount. Exception: when the area grows and the user is at the
-      // bottom, the browser already clamped the scroll to the new bottom —
-      // applying the delta again would overshoot.
+      // Keep the content that sits at the viewport's bottom edge anchored
+      // while the messages area resizes. The anchor is a content offset that
+      // only changes on user scrolls, so repeated resizes round-trip exactly
+      // (delta-based shifting accumulated sub-pixel drift).
       const h = el.clientHeight;
-      if (prevListH > 0 && h !== prevListH) {
-        const maxScroll = el.scrollHeight - el.clientHeight;
-        if (!(h > prevListH && el.scrollTop >= maxScroll)) {
-          el.scrollTop = Math.max(0, Math.min(el.scrollTop + (prevListH - h), maxScroll));
-        }
+      if (prevListH === 0) {
+        anchorBottom = el.scrollTop + h;   // first observation: seed the anchor
+      } else if (h !== prevListH) {
+        el.scrollTop = Math.max(0, Math.min(anchorBottom - h, el.scrollHeight - el.clientHeight));
       }
       prevListH = h;
     });
@@ -582,6 +581,8 @@ onUnmounted(() => { resizeCleanup?.(); listObserver?.disconnect(); });
 
 let listObserver: ResizeObserver | null = null;
 let prevListH = 0;
+/** content offset kept at the viewport's bottom edge (resize anchor) */
+let anchorBottom = 0;
 </script>
 
 <template>

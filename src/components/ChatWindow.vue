@@ -19,10 +19,13 @@ const renderMd = computed(() => store.prefs.renderMarkdown);
 
 /**
  * Compacted-context summaries stay collapsed until clicked (a summary can be
- * tens of thousands of characters — showing it inline as a wall of yellow text
- * was the #1 complaint). Toggling a summary header expands/collapses it.
+ * tens of thousands of characters — showing it inline as a wall of text was
+ * the #1 complaint). They render as ActionBubble-style boxes (no yellow box);
+ * toggling the header expands/collapses the text.
  */
 const expandedSummaries = ref<Set<string>>(new Set());
+/** id of the summary box currently glowing after click-to-audit */
+const flashingSummary = ref<string | null>(null);
 function toggleSummary(id: string) {
   const next = new Set(expandedSummaries.value);
   if (next.has(id)) next.delete(id);
@@ -357,8 +360,8 @@ watch(
   },
 );
 
-/** Click-to-audit: reveal the summary in the flow, highlight it, clear the box.
- *  A click on the failed box just dismisses it. */
+/** Click-to-audit: reveal the summary (an ActionBubble-style box) in the flow,
+ *  highlight it, clear the box. A click on the failed box just dismisses it. */
 function auditCompaction() {
   const s = session.value;
   if (!s || !s.compactResult) return;
@@ -370,15 +373,13 @@ function auditCompaction() {
     if (!summary) return;
     s.compactResult = null; // box disappears — the summary itself is the record
     expandedSummaries.value = new Set([...expandedSummaries.value, summary.id]);
+    flashingSummary.value = summary.id;
+    window.setTimeout(() => {
+      if (flashingSummary.value === summary.id) flashingSummary.value = null;
+    }, 1600);
     nextTick(() => {
-      const el = listEl.value;
-      const target = el?.querySelector<HTMLElement>(`[data-msg-id="${CSS.escape(summary.id)}"]`);
-      if (target) {
-        target.scrollIntoView({ block: 'center', behavior: 'smooth' });
-        const cls = target.classList;
-        cls.add('chat-msg--flash');
-        window.setTimeout(() => cls.remove('chat-msg--flash'), 1600);
-      }
+      const target = listEl.value?.querySelector<HTMLElement>(`[data-msg-id="${CSS.escape(summary.id)}"]`);
+      target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
     });
   } else {
     s.compactResult = null; // failed — dismiss the box
@@ -826,20 +827,26 @@ let anchorBottom = 0;
           <!-- System (slash command output) -->
           <pre v-else-if="item.kind === 'system'" class="chat-system">{{ item.msg.text }}</pre>
 
-          <!-- Summary: compacted context — collapsed until clicked. The box's
-               done-state click auto-expands the most recent one. -->
+          <!-- Summary: compacted context as an ActionBubble box (same look as
+               the /compact status bubble — no separate yellow box). Collapsed
+               until clicked; the compact done-box click auto-expands it. -->
           <div
             v-else-if="item.kind === 'summary'"
-            class="chat-summary"
-            :class="{ 'chat-summary--open': expandedSummaries.has(item.msg.id) }"
+            class="chat-work chat-summary-ab"
+            :class="{
+              'chat-summary-ab--open': expandedSummaries.has(item.msg.id),
+              'chat-msg--flash': flashingSummary === item.msg.id,
+            }"
             @click="toggleSummary(item.msg.id)"
           >
-            <div class="chat-summary-head">
-              <span class="chat-summary-toggle">{{ expandedSummaries.has(item.msg.id) ? '▾' : '▸' }}</span>
-              <span class="chat-summary-title">Compaction summary</span>
-              <span class="chat-summary-time">{{ fmtTime(item.msg.ts) }}</span>
+            <div class="chat-work-head">
+              <span class="chat-work-toggle">{{ expandedSummaries.has(item.msg.id) ? '▾' : '▸' }}</span>
+              <span class="chat-ab-name">Compaction summary</span>
+              <span class="chat-ab-time">{{ fmtTime(item.msg.ts) }}</span>
             </div>
-            <div v-if="expandedSummaries.has(item.msg.id)" class="chat-summary-body">{{ item.msg.text }}</div>
+            <div v-if="expandedSummaries.has(item.msg.id)" class="chat-work-body">
+              <pre class="chat-ab-code chat-summary-ab-body">{{ item.msg.text }}</pre>
+            </div>
           </div>
 
         </div>

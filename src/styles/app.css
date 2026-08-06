@@ -453,43 +453,11 @@
   max-height: 300px;
 }
 
-.chat-summary {
-  align-self: center;
-  max-width: 90%;
-  border-radius: 6px;
-  background: rgba(215, 186, 125, 0.08);
-  border: 1px solid rgba(215, 186, 125, 0.25);
-  color: #d7ba7d;
-  font-size: 12px;
-  cursor: pointer;
-  user-select: none;
-}
-.chat-summary-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-}
-.chat-summary-toggle {
-  font-size: 10px;
-  opacity: 0.7;
-}
-.chat-summary-title {
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-.chat-summary-time {
-  margin-left: auto;
-  opacity: 0.6;
-  font-size: 11px;
-}
-.chat-summary-body {
-  border-top: 1px dashed rgba(215, 186, 125, 0.2);
-  padding: 8px 12px 10px;
+/* Compaction summary: an ActionBubble-style box (same look as the /compact
+   status bubble — the old yellow box is gone). Body is a scrollable pre. */
+.chat-summary-ab-body {
+  max-height: 300px;
   white-space: pre-wrap;
-  line-height: 1.5;
-  cursor: text;
-  user-select: text;
 }
 
 /* Audit highlight: briefly glows the summary after click-to-audit. */

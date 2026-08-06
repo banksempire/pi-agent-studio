@@ -280,8 +280,10 @@
 
 .chat-ab-dots {
   flex-shrink: 0;
+  width: 3ch;              /* constant space: dot growth never shifts the content */
   font-family: var(--sf-mono);
   color: var(--sf-accent);
+  text-align: left;
 }
 
 /* Content preview fills all remaining space (truncated to one line). */

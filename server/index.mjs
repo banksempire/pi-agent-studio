@@ -13,7 +13,7 @@
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, readlinkSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, readlinkSync, statSync } from 'node:fs';
 import { readFile, readdir, stat, mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -47,7 +47,7 @@ const { BUILTIN_SLASH_COMMANDS } = slashCommandsModule;
 
 // ── Live agent sessions (one per session file, in-process) ────────────────
 
-/** file → { session: AgentSession, status: 'idle' | 'running' } */
+/** file → { session: AgentSession, status: 'idle' | 'running', runningSince, lastEventAt } */
 const liveSessions = new Map();
 
 /**
@@ -158,15 +158,28 @@ function leafChain(entries) {
   for (const e of entries) {
     if (e.id !== undefined) byId.set(e.id, e);
   }
+  // Root → tail along parentId links (the active branch).
   const chain = [];
-  let cur = entries[entries.length - 1];
   const seen = new Set();
+  let cur = entries[entries.length - 1];
   while (cur && !seen.has(cur.id)) {
     seen.add(cur.id);
     chain.push(cur);
     cur = cur.parentId ? byId.get(cur.parentId) : undefined;
   }
-  return chain.reverse();
+  chain.reverse();
+  // Compaction entries are appended as SIBLINGS of the messages that follow
+  // them (both share the same parentId), so the parent walk above never
+  // reaches them. Merge each one back, chronologically, right before the
+  // first chain entry that shares its parentId.
+  const compactions = entries
+    .filter((e) => e.type === 'compaction' && !seen.has(e.id))
+    .sort((a, b) => (Date.parse(a.timestamp) || 0) - (Date.parse(b.timestamp) || 0));
+  for (const c of compactions) {
+    const pos = chain.findIndex((e) => e.type !== 'compaction' && e.parentId === c.parentId);
+    if (pos >= 0) chain.splice(pos, 0, c);
+  }
+  return chain;
 }
 
 /** Cache of parsed session bases, invalidated by (mtime, size). Re-parsing
@@ -306,6 +319,7 @@ async function analyzeSession(file, opts = {}) {
 
   const modified = st ? st.mtimeMs : Date.now();
   const running = liveSessions.get(file)?.status === 'running';
+  const runningSince = liveSessions.get(file)?.runningSince ?? null;
 
   const info = {
     file,
@@ -321,6 +335,7 @@ async function analyzeSession(file, opts = {}) {
     tokens: base.tokens,
     cost: base.cost,
     running,
+    runningSince,
   };
   if (opts.withMessages) {
     info.messages = merged;
@@ -362,7 +377,7 @@ async function ensureSession(file) {
     pendingSessions.delete(file);
     const sessionManager = new sdk.SessionManager(cwd, dir, file, true);
     const { session } = await sdk.createAgentSession({ sessionManager });
-    live = { session, status: 'idle' };
+    live = { session, status: 'idle', runningSince: null, lastEventAt: Date.now() };
     liveSessions.set(file, live);
     attachSession(file, live);
     return live;
@@ -370,22 +385,52 @@ async function ensureSession(file) {
   const { session } = await sdk.createAgentSession({
     sessionManager: sdk.SessionManager.open(file),
   });
-  live = { session, status: 'idle' };
+  live = { session, status: 'idle', runningSince: null, lastEventAt: Date.now() };
   liveSessions.set(file, live);
   attachSession(file, live);
   return live;
 }
 
+/**
+ * Stale-run watchdog: the SDK has no LLM timeout, so a hung agent run (dead
+ * stream, never-resolving prompt) leaves a session stuck 'running' forever,
+ * blocking /compact and new messages. Any 'running' live session that emits
+ * NO agent events for STALE_RUN_MS is force-settled to idle. A live run
+ * streams events continuously (message_start/update/end, tool_*, etc.), so a
+ * genuinely active run can never trip this.
+ */
+const STALE_RUN_MS = 20 * 60 * 1000;
+const WATCHDOG_INTERVAL_MS = 30 * 1000;
+function scanStaleRuns() {
+  const now = Date.now();
+  for (const [file, live] of liveSessions) {
+    if (live.status !== 'running') continue;
+    const lastEvent = live.lastEventAt ?? live.runningSince ?? now;
+    if (now - lastEvent <= STALE_RUN_MS) continue;
+    console.log(
+      `[watchdog] force-settling stale run ${file.split('/').pop()} (no events for ${Math.round((now - lastEvent) / 60000)}m)`
+    );
+    live.status = 'idle';
+    live.runningSince = null;
+    emit({ type: 'session_status', file, status: 'idle' });
+    emit({ type: 'refresh', file });
+  }
+}
+
 /** Subscribe an AgentSession's events to the SSE hub. */
 function attachSession(file, live) {
   live.session.subscribe((ev) => {
+    // Liveness tick — every event counts as activity for the stale watchdog.
+    live.lastEventAt = Date.now();
     switch (ev.type) {
       case 'agent_start':
         live.status = 'running';
-        emit({ type: 'session_status', file, status: 'running' });
+        live.runningSince = Date.now();
+        emit({ type: 'session_status', file, status: 'running', runningSince: live.runningSince });
         break;
       case 'agent_settled':
         live.status = 'idle';
+        live.runningSince = null;
         emit({ type: 'session_status', file, status: 'idle' });
         emit({ type: 'refresh', file });
         break;
@@ -536,6 +581,15 @@ async function handleSlashCommand({ file, command, args, extra }) {
       const live = await ensureSession(file);
       if (live.status === 'running') {
         return { ok: false, error: 'Wait for the current response to finish before compacting.' };
+      }
+      // Compaction rewrites the whole session file. If another client (e.g. the
+      // pi TUI) appended entries within the last few seconds, a rewrite here
+      // would race it and silently drop entries — guard with a clear message.
+      if (existsSync(file)) {
+        const { mtimeMs } = statSync(file);
+        if (Date.now() - mtimeMs < 15_000) {
+          return { ok: false, error: 'The session is being actively written by another client (e.g. the pi TUI) right now — try again in a moment.' };
+        }
       }
       await live.session.compact(args?.trim() || undefined);
       return { ok: true, notice: 'Compaction complete — the conversation was summarized.' };
@@ -924,6 +978,10 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`sessions: ${SESSIONS_ROOT}`);
   console.log(`new chats cwd: ${NEW_CHAT_CWD}`);
 });
+
+// Stale-run watchdog — force-settle hung runs so they stop blocking /compact
+// and new messages (the SDK has no LLM timeout of its own).
+setInterval(scanStaleRuns, WATCHDOG_INTERVAL_MS).unref();
 
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {

@@ -128,9 +128,8 @@ export type ChatItem =
 
 function moveLabel(mv: WorkMove): string {
   if (mv.kind === 'thinking') return 'thinking';
-  if (mv.kind === 'bash') return mv.status === 'ok' ? 'bash ✓' : 'bash';
-  if (mv.status === 'fail') return `${mv.name} ✗`;
-  return mv.status === 'ok' ? `${mv.name} ✓` : `calling ${mv.name}`;
+  if (mv.kind === 'bash') return 'bash';
+  return mv.status === 'pending' ? `calling ${mv.name}` : `${mv.name}`;
 }
 
 function latestMoveLabel(moves: WorkMove[]): string {
@@ -138,16 +137,12 @@ function latestMoveLabel(moves: WorkMove[]): string {
   return last ? moveLabel(last) : '';
 }
 
-function statusIcon(mv: WorkMove): string {
-  if (mv.status === 'ok') return '✓';
-  if (mv.status === 'fail') return '✗';
-  return '…';
-}
-
-function statusClass(mv: WorkMove): string {
-  if (mv.status === 'fail') return 'chat-work-status--error';
-  if (mv.status === 'pending') return 'chat-work-status--pending';
-  return 'chat-work-status--ok';
+/** Tool-call rows are tinted by outcome: green on success, red on failure. */
+function moveClass(mv: WorkMove): string {
+  if (mv.kind !== 'tool') return '';
+  if (mv.status === 'fail') return 'chat-work-move--fail';
+  if (mv.status === 'ok') return 'chat-work-move--ok';
+  return '';
 }
 
 /** Short duration: "<1s" / "12.3s" / "1m 30s". */
@@ -261,6 +256,12 @@ onMounted(() => { now.value = Date.now(); });
 const workOpen = ref<Record<string, boolean>>({});
 function toggleWork(id: string) {
   workOpen.value = { ...workOpen.value, [id]: !workOpen.value[id] };
+}
+
+/** move key → details expanded */
+const moveOpen = ref<Record<string, boolean>>({});
+function toggleMove(key: string) {
+  moveOpen.value = { ...moveOpen.value, [key]: !moveOpen.value[key] };
 }
 
 // ── Slash commands: autocomplete ───────────────────────────────────────────
@@ -499,32 +500,25 @@ onMounted(() => {
             </div>
             <div v-if="workOpen[item.id]" class="chat-work-body">
               <template v-for="mv in item.moves" :key="mv.key">
-                <div v-if="mv.kind === 'thinking'" class="chat-work-move">
-                  <div class="chat-work-move-label">
-                    <span>💭 Thinking</span>
+                <div
+                  class="chat-work-move"
+                  :class="[moveClass(mv), { 'chat-work-move--open': moveOpen[mv.key] }]"
+                >
+                  <div class="chat-work-move-head" @click="toggleMove(mv.key)">
+                    <span class="chat-work-move-toggle">{{ moveOpen[mv.key] ? '▾' : '▸' }}</span>
+                    <span class="chat-work-move-name">{{ mv.kind === 'thinking' ? '💭 Thinking' : mv.kind === 'tool' ? '🔧 Tool call · ' + mv.name : 'bash' }}</span>
                     <span class="chat-work-move-time">{{ mv.live ? fmtSec(now - mv.startTs) : fmtSec(mv.durMs) }}</span>
-                    <span class="chat-work-status" :class="statusClass(mv)">{{ statusIcon(mv) }}</span>
                   </div>
-                  <pre class="chat-work-code">{{ mv.thinking }}</pre>
-                </div>
-                <div v-else-if="mv.kind === 'tool'" class="chat-work-move">
-                  <div class="chat-work-move-label">
-                    <span>🔧 Tool call · {{ mv.name }}</span>
-                    <span class="chat-work-move-time">{{ mv.live ? fmtSec(now - mv.startTs) : fmtSec(mv.durMs) }}</span>
-                    <span class="chat-work-status" :class="statusClass(mv)">{{ statusIcon(mv) }}</span>
+                  <div v-if="moveOpen[mv.key]" class="chat-work-move-details">
+                    <pre v-if="mv.kind === 'thinking'" class="chat-work-code">{{ mv.thinking }}</pre>
+                    <template v-else-if="mv.kind === 'tool'">
+                      <pre v-if="mv.args" class="chat-work-code">{{ mv.args }}</pre>
+                      <div v-if="mv.status !== 'pending'" class="chat-work-result" :class="{ 'chat-work-result--error': mv.isError }">
+                        <pre class="chat-work-code chat-work-result-body">{{ mv.result }}</pre>
+                      </div>
+                    </template>
+                    <pre v-else class="chat-work-code chat-work-bash">{{ mv.text }}</pre>
                   </div>
-                  <pre v-if="mv.args" class="chat-work-code">{{ mv.args }}</pre>
-                  <div v-if="mv.status !== 'pending'" class="chat-work-result" :class="{ 'chat-work-result--error': mv.isError }">
-                    <pre class="chat-work-code chat-work-result-body">{{ mv.result }}</pre>
-                  </div>
-                </div>
-                <div v-else class="chat-work-move">
-                  <div class="chat-work-move-label">
-                    <span>bash</span>
-                    <span class="chat-work-move-time">{{ mv.live ? fmtSec(now - mv.startTs) : fmtSec(mv.durMs) }}</span>
-                    <span class="chat-work-status" :class="statusClass(mv)">{{ statusIcon(mv) }}</span>
-                  </div>
-                  <pre class="chat-work-code chat-work-bash">{{ mv.text }}</pre>
                 </div>
               </template>
             </div>

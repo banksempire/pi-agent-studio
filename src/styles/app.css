@@ -298,26 +298,68 @@
   gap: 10px;
 }
 
-.chat-work-move-label {
+.chat-work-move {
+  border: 1px solid var(--sf-border);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.02);
+  overflow: hidden;
+}
+
+/* Tool-call outcome tint: green on success, red on failure (no status icon). */
+.chat-work-move--ok {
+  border-color: rgba(78, 201, 176, 0.5);
+  background: rgba(78, 201, 176, 0.06);
+}
+
+.chat-work-move--fail {
+  border-color: rgba(244, 135, 113, 0.6);
+  background: rgba(244, 135, 113, 0.07);
+}
+
+.chat-work-move-head {
   display: flex;
   align-items: center;
   gap: 6px;
+  padding: 5px 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.chat-work-move-head:hover {
+  background: var(--sf-bg-hover);
+}
+
+.chat-work-move-toggle {
+  width: 12px;
+  font-size: 10px;
+  color: var(--sf-text-muted);
+  flex-shrink: 0;
+}
+
+.chat-work-move-name {
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.4px;
   color: var(--sf-text-muted);
-  margin-bottom: 4px;
 }
 
 .chat-work-move-time {
   margin-left: auto;
+  flex-shrink: 0;
   font-family: var(--sf-mono);
   font-size: 10px;
   font-weight: 400;
   letter-spacing: 0;
   text-transform: none;
   color: var(--sf-text-muted);
+}
+
+.chat-work-move-details {
+  padding: 0 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .chat-work-code {
@@ -353,25 +395,6 @@
 
 .chat-work-bash {
   max-height: 300px;
-}
-
-.chat-work-status {
-  margin-left: auto;
-  font-size: 11px;
-  color: #4ec9b0;
-}
-
-.chat-work-status--ok {
-  color: #4ec9b0;
-}
-
-.chat-work-status--error {
-  color: #f48771;
-}
-
-.chat-work-status--pending {
-  color: var(--sf-text-muted);
-  animation: chat-blink 1s steps(1) infinite;
 }
 
 .chat-summary {

@@ -18,6 +18,19 @@ const session = computed<ChatSession | undefined>(() => store.findSession(props.
 const renderMd = computed(() => store.prefs.renderMarkdown);
 
 /**
+ * Compacted-context summaries stay collapsed until clicked (a summary can be
+ * tens of thousands of characters — showing it inline as a wall of yellow text
+ * was the #1 complaint). Toggling a summary header expands/collapses it.
+ */
+const expandedSummaries = ref<Set<string>>(new Set());
+function toggleSummary(id: string) {
+  const next = new Set(expandedSummaries.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  expandedSummaries.value = next;
+}
+
+/**
  * Markdown → sanitized HTML (agent output may echo untrusted content).
  * Memoized per message object: while the agent streams, only the mutated
  * tail message re-parses — history stays cache-hit (avoids O(n²) re-parsing).
@@ -350,10 +363,12 @@ function auditCompaction() {
   if (!s || !s.compactResult) return;
   if (s.compactResult === 'done') {
     // The most recent summary is the one this compaction produced (a session
-    // can contain several from earlier compacts).
+    // can contain several from earlier compacts). Expand it, then scroll to it
+    // so the compacted context is actually revealed (not just linked).
     const summary = [...s.messages].reverse().find(m => m.role === 'summary');
     if (!summary) return;
     s.compactResult = null; // box disappears — the summary itself is the record
+    expandedSummaries.value = new Set([...expandedSummaries.value, summary.id]);
     nextTick(() => {
       const el = listEl.value;
       const target = el?.querySelector<HTMLElement>(`[data-msg-id="${CSS.escape(summary.id)}"]`);
@@ -775,8 +790,21 @@ let anchorBottom = 0;
           <!-- System (slash command output) -->
           <pre v-else-if="item.kind === 'system'" class="chat-system">{{ item.msg.text }}</pre>
 
-          <!-- Summary -->
-          <div v-else-if="item.kind === 'summary'" class="chat-summary">{{ item.msg.text }}</div>
+          <!-- Summary: compacted context — collapsed until clicked. The box's
+               done-state click auto-expands the most recent one. -->
+          <div
+            v-else-if="item.kind === 'summary'"
+            class="chat-summary"
+            :class="{ 'chat-summary--open': expandedSummaries.has(item.msg.id) }"
+            @click="toggleSummary(item.msg.id)"
+          >
+            <div class="chat-summary-head">
+              <span class="chat-summary-toggle">{{ expandedSummaries.has(item.msg.id) ? '▾' : '▸' }}</span>
+              <span class="chat-summary-title">Compaction summary</span>
+              <span class="chat-summary-time">{{ fmtTime(item.msg.ts) }}</span>
+            </div>
+            <div v-if="expandedSummaries.has(item.msg.id)" class="chat-summary-body">{{ item.msg.text }}</div>
+          </div>
 
         </div>
 

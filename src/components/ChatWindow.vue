@@ -553,9 +553,19 @@ function resetResize() {
 onMounted(() => {
   scrollToBottom();
   inputEl.value?.focus();
+  // Keep the latest text visible when the messages area resizes (e.g. the
+  // composer grows/shrinks via its drag handle): re-anchor to the bottom
+  // when the user was already at the bottom.
+  const el = listEl.value;
+  if (el) {
+    listObserver = new ResizeObserver(() => { if (sticky) nextTick(scrollToBottom); });
+    listObserver.observe(el);
+  }
 });
 
-onUnmounted(() => { resizeCleanup?.(); });
+onUnmounted(() => { resizeCleanup?.(); listObserver?.disconnect(); });
+
+let listObserver: ResizeObserver | null = null;
 </script>
 
 <template>

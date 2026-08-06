@@ -661,7 +661,6 @@ onUnmounted(() => { resizeCleanup?.(); });
             <div class="chat-msg-time">{{ fmtTime(item.msg.ts) }}</div>
           </template>
         </div>
-        <div v-if="streaming" class="chat-streaming-hint">pi is working…</div>
       </template>
     </div>
 

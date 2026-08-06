@@ -236,13 +236,6 @@
   50% { opacity: 0; }
 }
 
-.chat-streaming-hint {
-  align-self: center;
-  font-size: 11px;
-  color: var(--sf-text-muted);
-  font-style: italic;
-}
-
 /* ── Unofficial-work box (consecutive thinking + tool calls) ────────────── */
 
 .chat-work {

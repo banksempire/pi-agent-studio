@@ -543,7 +543,7 @@ onMounted(() => {
           >
             <div class="chat-work-head" @click="toggleWork(item.id)">
               <span class="chat-work-toggle">{{ workOpen[item.id] ? '▾' : '▸' }}</span>
-              <span v-if="item.wip" class="chat-work-title">Working on : <span class="chat-work-latest">{{ latestMoveLabel(item.moves) }}</span><span class="chat-work-dots">{{ '.'.repeat(dots) }}</span></span>
+              <span v-if="item.wip" class="chat-work-title"><span class="chat-work-latest">{{ latestMoveLabel(item.moves) }}</span><span class="chat-work-dots">{{ '.'.repeat(dots) }}</span></span>
               <span v-else class="chat-work-title">Work done</span>
               <span class="chat-work-time">{{ item.wip ? fmtSec(now - item.startTs) : fmtSec(item.durMs) }}</span>
             </div>

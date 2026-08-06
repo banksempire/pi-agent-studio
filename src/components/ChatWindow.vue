@@ -83,6 +83,11 @@ watch(
   () => { if (sticky) nextTick(scrollToBottom); },
 );
 
+watch(
+  () => session.value?.compacting,
+  () => { if (sticky) nextTick(scrollToBottom); },
+);
+
 const lastMessage = computed<DisplayMessage | undefined>(() => {
   const msgs = session.value?.messages ?? [];
   return msgs[msgs.length - 1];
@@ -718,6 +723,13 @@ let anchorBottom = 0;
             <template v-else>{{ item.msg.text }}</template>
             <div class="chat-msg-time">{{ fmtTime(item.msg.ts) }}</div>
           </template>
+        </div>
+
+        <!-- /compact running on the backend (LLM summarization) -->
+        <div v-if="session?.compacting" class="chat-work chat-work--wip chat-compacting">
+          <div class="chat-work-head">
+            <span class="chat-work-title">Compacting conversation<span class="chat-compact-dots" /></span>
+          </div>
         </div>
       </template>
     </div>

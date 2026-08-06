@@ -59,6 +59,8 @@ export interface ChatSession {
   createdAt: number;
   lastActivity: number;
   status: 'idle' | 'running';
+  /** a manual /compact is running on the backend (LLM summarization) */
+  compacting: boolean;
   /** session is live in the pi TUI right now (read-only here) */
   tuiActive: boolean;
   preview: string;
@@ -161,6 +163,7 @@ function toSession(raw: SessionInfo): ChatSession {
     file: raw.file,
     title,
     cwd: raw.cwd,
+    compacting: false,
     createdAt: raw.created,
     lastActivity: raw.modified,
     status: raw.running ? 'running' : 'idle',
@@ -257,6 +260,13 @@ function handleEvent(ev: any) {
     case 'session_status': {
       const s = byFile(ev.file);
       if (s) s.status = ev.status;
+      break;
+    }
+    case 'compaction_status': {
+      // /compact progress: 'started' lights the WIP indicator; 'done'/'failed'
+      // clear it (command errors surface via the /api/slash response).
+      const s = byFile(ev.file);
+      if (s) s.compacting = ev.status === 'started';
       break;
     }
     case 'message': {
@@ -444,7 +454,7 @@ export async function newChat(): Promise<void> {
       state.sessions.unshift({
         id, file, title: 'New Chat', cwd: NEW_CHAT_CWD,
         createdAt: now, lastActivity: now,
-        status: 'idle', tuiActive: false, preview: '',
+        status: 'idle', compacting: false, tuiActive: false, preview: '',
         stats: {
           model: null, tokensIn: 0, tokensOut: 0, costUsd: 0,
           startedAt: now, lastActivity: now, messageCount: 0, userMessages: 0,

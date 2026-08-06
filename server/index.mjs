@@ -57,6 +57,14 @@ const { BUILTIN_SLASH_COMMANDS } = slashCommandsModule;
 /** file → { session: AgentSession, status: 'idle' | 'running' } */
 const liveSessions = new Map();
 
+/** Stable id for compaction/branch summaries: derived from the text, so the
+ *  live SSE copy and the file-parse copy upsert to the same message. */
+function hashId(text) {
+  let h = 0;
+  for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
 /** SSE clients: Set<http.ServerResponse> */
 const clients = new Set();
 
@@ -173,6 +181,15 @@ async function analyzeSession(file, opts = {}) {
       if (!model) model = entry.modelId ?? null;
       continue;
     }
+    if (entry.type === 'compaction') {
+      messages.push({
+        role: 'summary',
+        text: entry.summary ?? '',
+        ts: Date.parse(entry.timestamp) || Date.now(),
+        id: `summary-${hashId(entry.summary ?? '')}`,
+      });
+      continue;
+    }
     if (entry.type !== 'message') continue;
     const msg = entry.message;
     if (!msg) continue;
@@ -272,6 +289,7 @@ function emitMsg(file, message) {
   if (message.role === 'assistant') dm.id = `asst-${message.timestamp ?? Date.now()}`;
   else if (message.role === 'user') dm.id = `user-${message.timestamp ?? Date.now()}`;
   else if (message.role === 'toolResult') dm.id = `toolresult-${message.toolCallId ?? message.timestamp ?? Date.now()}`;
+  else if (message.role === 'compactionSummary' || message.role === 'branchSummary') dm.id = `summary-${hashId(message.summary ?? '')}`;
   else dm.id = `msg-${message.timestamp ?? Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   emit({ type: 'message', file, message: dm });
 }
@@ -339,6 +357,15 @@ function attachSession(file, live) {
         break;
       case 'entry_appended':
         emit({ type: 'refresh', file });
+        break;
+      case 'compaction_start':
+        emit({ type: 'compaction_status', file, status: 'started' });
+        break;
+      case 'compaction_end':
+        emit({ type: 'compaction_status', file, status: ev.errorMessage ? 'failed' : 'done' });
+        if (!ev.errorMessage && ev.result?.summary) {
+          emitMsg(file, { role: 'compactionSummary', summary: ev.result.summary, timestamp: Date.now() });
+        }
         break;
       default:
         break;
@@ -453,7 +480,7 @@ async function handleSlashCommand({ file, command, args, extra }) {
         return { ok: false, error: 'Wait for the current response to finish before compacting.' };
       }
       await live.session.compact(args?.trim() || undefined);
-      return { ok: true, notice: 'Compaction started — the conversation is being summarized.' };
+      return { ok: true, notice: 'Compaction complete — the conversation was summarized.' };
     }
 
     case 'copy': {

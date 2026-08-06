@@ -296,6 +296,22 @@
   margin-left: 2px;
 }
 
+/* /compact progress box: CSS-only animated ellipsis (no JS ticker needed). */
+.chat-compacting .chat-work-title {
+  color: var(--sf-accent);
+}
+.chat-compact-dots::after {
+  content: '';
+  animation: chat-compact-dots 1.2s steps(4, end) infinite;
+}
+@keyframes chat-compact-dots {
+  0%   { content: ''; }
+  25%  { content: '.'; }
+  50%  { content: '..'; }
+  75%  { content: '...'; }
+  100% { content: ''; }
+}
+
 /* Tool-completion flash: green on success, red on failure, then settle. */
 @keyframes chat-work-flash-ok {
   0%   { border-color: rgba(78, 201, 176, 0.95); background: rgba(78, 201, 176, 0.18); }

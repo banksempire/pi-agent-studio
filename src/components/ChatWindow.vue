@@ -292,6 +292,17 @@ const items = computed<ChatItem[]>(() => {
           lastInTurn,
           trailing,
         });
+      } else if (m.error || m.stopReason === 'error' || m.stopReason === 'aborted') {
+        // LLM API error / abort with no text — the TUI surfaces these; the
+        // web UI must too instead of dropping the message entirely.
+        flush(added ? (msgs[i + 1]?.ts ?? m.ts) : m.ts, false);
+        const end = nextUser[i];
+        out.push({
+          kind: 'reply', msg: m, timeUsedMs: 0,
+          endTs: end > i ? msgs[end - 1].ts : m.ts,
+          lastInTurn: lastTextReply[i],
+          trailing: end === n,
+        });
       }
       continue;
     }

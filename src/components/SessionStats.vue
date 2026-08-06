@@ -63,31 +63,6 @@ const rows = computed<StatRow[]>(() => {
       </div>
       <div class="session-stats-file" :title="session.file">{{ shortFile(session.file) }}</div>
       <div class="session-stats-rows">
-        <!-- Global preferences: apply to every chat window -->
-        <div class="session-stats-row">
-          <span class="session-stats-key">Send with</span>
-          <button
-            class="md-switch"
-            :class="{ 'md-switch--on': store.prefs.sendKey === 'shiftEnter' }"
-            role="switch"
-            :aria-checked="store.prefs.sendKey === 'shiftEnter'"
-            :title="store.prefs.sendKey === 'enter' ? 'Enter sends, Shift+Enter new line' : 'Shift+Enter sends, Enter new line'"
-            @click="store.setSendKey(store.prefs.sendKey === 'enter' ? 'shiftEnter' : 'enter')"
-          ><span class="md-switch-knob" /></button>
-          <span class="session-stats-hint">{{ store.prefs.sendKey === 'enter' ? 'Enter ↵' : 'Shift+Enter' }}</span>
-        </div>
-        <div class="session-stats-row">
-          <span class="session-stats-key">Markdown</span>
-          <button
-            class="md-switch"
-            :class="{ 'md-switch--on': store.prefs.renderMarkdown }"
-            role="switch"
-            :aria-checked="store.prefs.renderMarkdown"
-            :title="store.prefs.renderMarkdown ? 'Markdown rendered — click to show raw text' : 'Raw text — click to render markdown'"
-            @click="store.setRenderMarkdown(!store.prefs.renderMarkdown)"
-          ><span class="md-switch-knob" /></button>
-          <span class="session-stats-hint">{{ store.prefs.renderMarkdown ? 'md' : 'raw' }}</span>
-        </div>
         <div v-for="r in rows" :key="r.key" class="session-stats-row">
           <span class="session-stats-key">{{ r.key }}</span>
           <span

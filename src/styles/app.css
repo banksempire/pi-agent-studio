@@ -844,6 +844,40 @@
   white-space: nowrap;
 }
 
+.prefs-panel {
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.prefs-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.prefs-key {
+  color: var(--sf-text-muted);
+  flex-shrink: 0;
+}
+
+/* Right-aligned cluster: hint + switch pinned to the row's right edge. */
+.prefs-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.prefs-hint {
+  color: var(--sf-text-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
 .session-stats-rows {
   padding: 0 8px;
 }
@@ -859,12 +893,6 @@
 
 .session-stats-key {
   color: var(--sf-text-muted);
-  flex-shrink: 0;
-}
-
-.session-stats-hint {
-  color: var(--sf-text-muted);
-  font-size: 10px;
   flex-shrink: 0;
 }
 

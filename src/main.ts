@@ -10,6 +10,7 @@ import WelcomeContent from './components/WelcomeContent.vue';
 import ChatHistory from './components/ChatHistory.vue';
 import ChatSessions from './components/ChatSessions.vue';
 import SessionStats from './components/SessionStats.vue';
+import PrefsPanel from './components/PrefsPanel.vue';
 
 // ── Register content renderers referenced by the layout JSON ──────────────
 
@@ -21,5 +22,6 @@ registerTabContent('chat-window', ChatWindow);
 registerPanelComponent('chat-history', ChatHistory);
 registerPanelComponent('chat-sessions', ChatSessions);
 registerPanelComponent('session-stats', SessionStats);
+registerPanelComponent('prefs', PrefsPanel);
 
 createApp(StudioShell).mount('#app');

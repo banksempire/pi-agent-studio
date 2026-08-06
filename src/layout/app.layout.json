@@ -77,6 +77,15 @@
         "label": "Session",
         "subSections": [
           {
+            "id": "prefs",
+            "label": "Preference",
+            "height": "variable",
+            "minHeight": 40,
+            "components": [
+              { "type": "component", "key": "prefs" }
+            ]
+          },
+          {
             "id": "session-stats",
             "label": "Stats",
             "height": "variable",

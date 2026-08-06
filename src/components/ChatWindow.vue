@@ -460,11 +460,21 @@ const completionIndex = ref(0);
 const completionItems = ref<SlashCommandInfo[]>([]);
 let catalogLoaded = false;
 
+/** Frontend-only commands (not executed by the backend — message modifiers). */
+const LOCAL_COMMANDS: SlashCommandInfo[] = [
+  {
+    name: 'wait',
+    description: 'Queue this message — it runs after the current turn finishes, instead of interrupting it',
+    argumentHint: '<message>',
+    available: true,
+  },
+];
+
 function ensureCatalog() {
   if (catalogLoaded) return;
   catalogLoaded = true;
   void allSlashCommands().then((cmds) => {
-    commandCatalog.value = cmds;
+    commandCatalog.value = [...LOCAL_COMMANDS, ...cmds];
     updateCompletions();
   });
 }
@@ -576,7 +586,29 @@ async function onPickerSelect(id: string) {
 function send() {
   const text = input.value.trim();
   if (!text || !session.value) return;
-  if (parseSlash(text)) {
+  const parsed = parseSlash(text);
+  if (parsed && parsed.command === 'wait') {
+    // /wait <message>: queue instead of interrupting. Default is interrupt:
+    // a plain message cuts the current turn and runs promptly.
+    const rest = parsed.args.trim();
+    if (!rest) {
+      store.appendLocalMessage(props.sessionId, {
+        text: 'Usage: /wait <message> — the message queues and runs after the current turn finishes, instead of interrupting it.',
+      });
+      input.value = '';
+      completionOpen.value = false;
+      inputEl.value?.focus();
+      return;
+    }
+    store.clearLastError();
+    void store.sendMessage(props.sessionId, rest, { wait: true });
+    input.value = '';
+    sticky = true;
+    nextTick(scrollToBottom);
+    inputEl.value?.focus();
+    return;
+  }
+  if (parsed) {
     void runCommand();
     return;
   }

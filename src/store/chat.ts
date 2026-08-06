@@ -550,23 +550,23 @@ export function openChat(sessionId: string) {
 }
 
 /** Send a user message; the real pi agent replies (streaming via SSE). */
-export async function sendMessage(sessionId: string, text: string) {
+export async function sendMessage(sessionId: string, text: string, opts: { wait?: boolean } = {}) {
   const s = findSession(sessionId);
   const trimmed = text.trim();
   if (!s || !trimmed) return;
   state.lastError = '';
 
   // Optimistic append (the backend confirms with the same text shortly).
-  // No "already running" guard here: the backend queues messages per
-  // session, so a second view (or a second send while the agent streams)
-  // runs after the current turn instead of being silently dropped.
+  // No "already running" guard here: the backend decides per message — a
+  // plain message INTERRUPTS a busy turn; `wait: true` (/wait) queues it
+  // until the current turn finishes.
   const mid = `pending-${Date.now()}`;
   s.messages.push({ id: mid, role: 'user', text: trimmed, ts: Date.now() });
   try {
     await api('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file: s.file, message: trimmed }),
+      body: JSON.stringify({ file: s.file, message: trimmed, ...(opts.wait ? { wait: true } : {}) }),
     });
   } catch (e) {
     const i = s.messages.findIndex((m) => m.id === mid);

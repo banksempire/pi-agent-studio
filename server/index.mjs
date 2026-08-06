@@ -438,7 +438,7 @@ const server = createServer(async (req, res) => {
 
     // ── Send a message to a session ──
     if (p === '/api/chat' && req.method === 'POST') {
-      const { file, message } = await readBody(req);
+      const { file, message, wait } = await readBody(req);
       if (!file || typeof message !== 'string' || !message.trim()) {
         return sendJson(res, 400, { error: 'file and message required' });
       }
@@ -449,12 +449,21 @@ const server = createServer(async (req, res) => {
       if (!st?.state?.status && !existsSync(file)) {
         return sendJson(res, 404, { error: 'session file not found' });
       }
-      // Queue, don't reject: pi-nest serializes concurrent sends per agent.
-      // (The frontend's optimistic message covers the wait; the real user
-      // message is emitted by pi-nest when the op starts.) This call resolves
-      // when the queued turn completes — a restart of THIS server mid-run
-      // leaves the agent untouched.
-      await client.prompt({ agentId: file, message });
+      // Default: the message INTERRUPTS a busy session (cut the current turn,
+      // then run). `/wait <message>` (or `wait: true`) queues instead — the
+      // message runs after the current turn finishes naturally.
+      let interrupt = !wait;
+      let text = message;
+      const waitMatch = message.match(/^\/wait\b\s*([\s\S]*)$/);
+      if (waitMatch) {
+        interrupt = false;
+        text = (waitMatch[1] ?? '').trim();
+        if (!text) return sendJson(res, 400, { error: '/wait needs a message: /wait <message>' });
+      }
+      // pi-nest serializes concurrent sends per agent (interrupt or queue);
+      // this call resolves when the queued turn completes — a restart of THIS
+      // server mid-run leaves the agent untouched.
+      await client.prompt({ agentId: file, message: text, interrupt });
       sendJson(res, 200, { ok: true });
       return;
     }

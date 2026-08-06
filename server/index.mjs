@@ -173,7 +173,7 @@ function leafChain(entries) {
   // reaches them. Merge each one back, chronologically, right before the
   // first chain entry that shares its parentId.
   const compactions = entries
-    .filter((e) => e.type === 'compaction' && !seen.has(e.id))
+    .filter((e) => e.type === 'compaction' && e.parentId !== undefined && !seen.has(e.id))
     .sort((a, b) => (Date.parse(a.timestamp) || 0) - (Date.parse(b.timestamp) || 0));
   for (const c of compactions) {
     const pos = chain.findIndex((e) => e.type !== 'compaction' && e.parentId === c.parentId);
@@ -367,6 +367,14 @@ function extractText(result) {
   return '';
 }
 
+/** Register an AgentSession as a live session and wire its events to SSE. */
+function registerLive(file, session) {
+  const live = { session, status: 'idle', runningSince: null, lastEventAt: Date.now() };
+  liveSessions.set(file, live);
+  attachSession(file, live);
+  return live;
+}
+
 async function ensureSession(file) {
   let live = liveSessions.get(file);
   if (live) return live;
@@ -377,18 +385,12 @@ async function ensureSession(file) {
     pendingSessions.delete(file);
     const sessionManager = new sdk.SessionManager(cwd, dir, file, true);
     const { session } = await sdk.createAgentSession({ sessionManager });
-    live = { session, status: 'idle', runningSince: null, lastEventAt: Date.now() };
-    liveSessions.set(file, live);
-    attachSession(file, live);
-    return live;
+    return registerLive(file, session);
   }
   const { session } = await sdk.createAgentSession({
     sessionManager: sdk.SessionManager.open(file),
   });
-  live = { session, status: 'idle', runningSince: null, lastEventAt: Date.now() };
-  liveSessions.set(file, live);
-  attachSession(file, live);
-  return live;
+  return registerLive(file, session);
 }
 
 /**
@@ -401,14 +403,15 @@ async function ensureSession(file) {
  */
 const STALE_RUN_MS = 20 * 60 * 1000;
 const WATCHDOG_INTERVAL_MS = 30 * 1000;
+/** Compact guard: refuse to rewrite a session file written within this window. */
+const EXTERNAL_WRITE_GRACE_MS = 15_000;
 function scanStaleRuns() {
   const now = Date.now();
   for (const [file, live] of liveSessions) {
     if (live.status !== 'running') continue;
-    const lastEvent = live.lastEventAt ?? live.runningSince ?? now;
-    if (now - lastEvent <= STALE_RUN_MS) continue;
+    if (now - (live.lastEventAt ?? now) <= STALE_RUN_MS) continue;
     console.log(
-      `[watchdog] force-settling stale run ${file.split('/').pop()} (no events for ${Math.round((now - lastEvent) / 60000)}m)`
+      `[watchdog] force-settling stale run ${file.split('/').pop()} (no events for ${Math.round((now - (live.lastEventAt ?? now)) / 60000)}m)`
     );
     live.status = 'idle';
     live.runningSince = null;
@@ -585,11 +588,13 @@ async function handleSlashCommand({ file, command, args, extra }) {
       // Compaction rewrites the whole session file. If another client (e.g. the
       // pi TUI) appended entries within the last few seconds, a rewrite here
       // would race it and silently drop entries — guard with a clear message.
-      if (existsSync(file)) {
+      try {
         const { mtimeMs } = statSync(file);
-        if (Date.now() - mtimeMs < 15_000) {
+        if (Date.now() - mtimeMs < EXTERNAL_WRITE_GRACE_MS) {
           return { ok: false, error: 'The session is being actively written by another client (e.g. the pi TUI) right now — try again in a moment.' };
         }
+      } catch {
+        // file vanished — let the SDK surface the real error
       }
       await live.session.compact(args?.trim() || undefined);
       return { ok: true, notice: 'Compaction complete — the conversation was summarized.' };
@@ -752,10 +757,7 @@ async function forkSession(live, targetLeafId) {
   const forkedPath = sm.createBranchedSession(targetLeafId);
   if (!forkedPath) throw new Error('Failed to create forked session');
   const { session } = await sdk.createAgentSession({ sessionManager: sdk.SessionManager.open(forkedPath) });
-  const forkedLive = { session, status: 'idle' };
-  liveSessions.set(forkedPath, forkedLive);
-  attachSession(forkedPath, forkedLive);
-  return forkedPath;
+  return registerLive(forkedPath, session);
 }
 
 // ── HTTP handlers ──────────────────────────────────────────────────────────

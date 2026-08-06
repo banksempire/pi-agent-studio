@@ -45,7 +45,10 @@ function scrollToBottom() {
 function onScroll() {
   const el = listEl.value;
   if (!el) return;
-  anchorBottom = el.scrollTop + el.clientHeight;  // re-anchor on manual scrolls
+  // Re-anchor on genuine user scrolls only: scroll events fired while a
+  // resize is in flight carry a half-applied state (old scrollTop + new
+  // height) that would corrupt the anchor.
+  if (el.clientHeight === prevListH) anchorBottom = el.scrollTop + el.clientHeight;
   sticky = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
   // Scroll-up pagination: near the top → load older messages.
   if (el.scrollTop < 80) void loadOlder();

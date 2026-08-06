@@ -743,8 +743,7 @@ let anchorBottom = 0;
       <div v-if="store.lastError" class="chat-banner chat-banner--error" @click="store.clearLastError()">
         ⚠ {{ store.lastError }} (click to dismiss)
       </div>
-      <template>
-        <!-- Slash command autocomplete -->
+      <!-- Slash command autocomplete -->
         <div v-if="completionOpen && !picker" class="chat-completions">
           <div
             v-for="(c, i) in completionItems"
@@ -774,7 +773,6 @@ let anchorBottom = 0;
           :disabled="!input.trim() || session?.status === 'running'"
           @click="send"
         >{{ session?.status === 'running' ? '…' : 'Send' }}</button>
-      </template>
     </div>
 
     <!-- Picker dialog (model / scoped-models / tree / fork / resume) -->

@@ -98,13 +98,97 @@ function roleLabel(m: DisplayMessage): string {
   return 'custom';
 }
 
-// ── Collapsible blocks ─────────────────────────────────────────────────────
+// ── Unofficial-reply work groups ──────────────────────────────────────────
+// Consecutive "unofficial" replies (thinking blocks + tool calls) between a
+// user message and the final text reply collapse into ONE box per run:
+//   - run in progress:  "Working on: <latest move>" (one line)
+//   - run finished:     "Work done" — click to expand and audit the details
 
-/** key → open state (thinking/args/result toggles) */
-const openBlocks = ref<Record<string, boolean>>({});
+export interface WorkMove {
+  key: string;
+  kind: 'thinking' | 'tool' | 'bash';
+  done: boolean;
+  isError?: boolean;
+  thinking?: string;
+  name?: string;
+  args?: string;
+  result?: string;
+  text?: string;
+}
 
-function toggle(key: string) {
-  openBlocks.value = { ...openBlocks.value, [key]: !openBlocks.value[key] };
+export type ChatItem =
+  | { kind: 'user' | 'system' | 'summary' | 'reply' | 'custom'; msg: DisplayMessage }
+  | { kind: 'work'; id: string; moves: WorkMove[]; wip: boolean };
+
+function moveLabel(mv: WorkMove): string {
+  if (mv.kind === 'thinking') return 'thinking';
+  if (mv.kind === 'bash') return mv.done ? 'bash ✓' : 'bash';
+  if (mv.isError) return `${mv.name} ✗`;
+  return mv.done ? `${mv.name} ✓` : `calling ${mv.name}`;
+}
+
+function latestMoveLabel(moves: WorkMove[]): string {
+  const last = moves[moves.length - 1];
+  return last ? moveLabel(last) : '';
+}
+
+/** The conversation as render items: work runs collapsed into one box each. */
+const items = computed<ChatItem[]>(() => {
+  const msgs = session.value?.messages ?? [];
+  const out: ChatItem[] = [];
+  let work: WorkMove[] = [];
+  let workId = '';
+
+  const flush = (wip: boolean) => {
+    if (work.length === 0) return;
+    out.push({ kind: 'work', id: workId, moves: work, wip });
+    work = [];
+    workId = '';
+  };
+
+  const addMove = (msgId: string, mv: Omit<WorkMove, 'key' | 'done'>) => {
+    if (!workId) workId = 'work-' + msgId;
+    work.push({
+      ...mv,
+      key: `${workId}:${work.length}`,
+      done: mv.kind === 'tool' ? mv.result !== undefined : true,
+    });
+  };
+
+  for (const m of msgs) {
+    if (m.role === 'user' || m.role === 'system' || m.role === 'summary') {
+      flush(false);
+      out.push({ kind: m.role, msg: m });
+      continue;
+    }
+    if (m.role === 'bash') {
+      addMove(m.id, { kind: 'bash', text: m.text });
+      continue;
+    }
+    if (m.role === 'assistant') {
+      if (m.thinking) addMove(m.id, { kind: 'thinking', thinking: m.thinking });
+      for (const tc of m.toolCalls ?? []) {
+        addMove(m.id, { kind: 'tool', name: tc.name, args: tc.args, result: tc.result, isError: tc.isError });
+      }
+      if (m.text) {
+        // The official reply ends the work phase.
+        flush(false);
+        out.push({ kind: 'reply', msg: m });
+      }
+      continue;
+    }
+    flush(false);
+    out.push({ kind: 'custom', msg: m });
+  }
+  // A trailing work run is still in progress while the agent is working.
+  flush(session.value?.status === 'running');
+  return out;
+});
+
+/** work-group id → expanded (audit view) */
+const workOpen = ref<Record<string, boolean>>({});
+function toggleWork(id: string) {
+  workOpen.value = { ...workOpen.value, [id]: !workOpen.value[id] };
 }
 
 // ── Slash commands: autocomplete ───────────────────────────────────────────
@@ -325,75 +409,82 @@ onMounted(() => {
         >↑ older messages</div>
         <div v-if="session.loadingOlder" class="chat-load-older chat-load-older--loading">loading older messages…</div>
         <div
-          v-for="m in session.messages"
-          :key="m.id"
+          v-for="item in items"
+          :key="item.kind === 'work' ? item.id : item.msg.id"
           class="chat-msg"
           :class="[
-            'chat-msg--' + m.role,
-            { 'chat-msg--error': (m.role === 'assistant' && m.error) || (m.role === 'system' && m.isError) },
+            'chat-msg--' + item.kind,
+            { 'chat-msg--error': item.kind === 'system' && item.msg.isError },
           ]"
         >
-          <div class="chat-msg-role">{{ roleLabel(m) }}</div>
-
-          <!-- System (slash command output) -->
-          <pre v-if="m.role === 'system'" class="chat-system">{{ m.text }}</pre>
-
-          <!-- Thinking (collapsible) -->
-          <div
-            v-else-if="m.role === 'assistant' && m.thinking"
-            class="chat-thinking"
-            @click="toggle('t-' + m.id)"
-          >
-            <span class="chat-thinking-toggle">{{ openBlocks['t-' + m.id] ? '▾' : '▸' }}</span>
-            <span class="chat-thinking-label">thinking</span>
-            <pre v-if="openBlocks['t-' + m.id]" class="chat-thinking-body">{{ m.thinking }}</pre>
-          </div>
-
-          <!-- Text -->
-          <div v-if="m.text && m.role !== 'system'" class="chat-msg-text">
-            <div v-if="renderMd" class="chat-msg-md" v-html="md(m)" />
-            <template v-else>{{ m.text }}</template>
-            <span v-if="streaming && m.id === lastMessage?.id" class="chat-cursor">▌</span>
-          </div>
-
-          <!-- Tool calls -->
-          <div v-if="m.role === 'assistant' && m.toolCalls?.length" class="chat-tools">
-            <div v-for="tc in m.toolCalls" :key="tc.id" class="chat-tool">
-              <div class="chat-tool-head" @click="toggle('a-' + tc.id)">
-                <span class="chat-tool-icon">🔧</span>
-                <span class="chat-tool-name">{{ tc.name }}</span>
-                <span class="chat-tool-toggle">{{ openBlocks['a-' + tc.id] ? '▾' : '▸' }}</span>
-                <span v-if="tc.result !== undefined" class="chat-tool-done" :class="{ 'chat-tool-done--error': tc.isError }">
-                  {{ tc.isError ? '✗' : '✓' }}
-                </span>
-                <span v-else class="chat-tool-done chat-tool-done--pending">…</span>
-              </div>
-              <pre v-if="openBlocks['a-' + tc.id]" class="chat-tool-args">{{ tc.args || '{}' }}</pre>
-              <div v-if="tc.result !== undefined" class="chat-tool-result" :class="{ 'chat-tool-result--error': tc.isError }">
-                <div class="chat-tool-result-head" @click="toggle('r-' + tc.id)">
-                  <span class="chat-tool-toggle">{{ openBlocks['r-' + tc.id] ? '▾' : '▸' }}</span>
-                  <span class="chat-tool-result-label">{{ tc.isError ? 'error' : 'result' }}</span>
+          <!-- Unofficial work run: one collapsible box per run -->
+          <div v-if="item.kind === 'work'" class="chat-work" :class="{ 'chat-work--open': workOpen[item.id] }">
+            <div class="chat-work-head" @click="toggleWork(item.id)">
+              <span class="chat-work-toggle">{{ workOpen[item.id] ? '▾' : '▸' }}</span>
+              <span v-if="item.wip" class="chat-work-title">Working on: <span class="chat-work-latest">{{ latestMoveLabel(item.moves) }}</span></span>
+              <span v-else class="chat-work-title">Work done</span>
+            </div>
+            <div v-if="workOpen[item.id]" class="chat-work-body">
+              <template v-for="mv in item.moves" :key="mv.key">
+                <div v-if="mv.kind === 'thinking'" class="chat-work-move">
+                  <div class="chat-work-move-label">💭 thinking</div>
+                  <pre class="chat-work-code">{{ mv.thinking }}</pre>
                 </div>
-                <pre v-if="openBlocks['r-' + tc.id]" class="chat-tool-result-body">{{ tc.result }}</pre>
-              </div>
+                <div v-else-if="mv.kind === 'tool'" class="chat-work-move">
+                  <div class="chat-work-move-label">
+                    <span>🔧 {{ mv.name }}</span>
+                    <span v-if="mv.isError" class="chat-work-status chat-work-status--error">✗</span>
+                    <span v-else-if="mv.done" class="chat-work-status">✓</span>
+                    <span v-else class="chat-work-status chat-work-status--pending">…</span>
+                  </div>
+                  <pre v-if="mv.args" class="chat-work-code">{{ mv.args }}</pre>
+                  <div v-if="mv.done" class="chat-work-result" :class="{ 'chat-work-result--error': mv.isError }">
+                    <pre class="chat-work-code chat-work-result-body">{{ mv.result }}</pre>
+                  </div>
+                </div>
+                <div v-else class="chat-work-move">
+                  <div class="chat-work-move-label">bash</div>
+                  <pre class="chat-work-code chat-work-bash">{{ mv.text }}</pre>
+                </div>
+              </template>
             </div>
           </div>
 
-          <!-- Bash / summary / custom -->
-          <pre v-else-if="m.role === 'bash'" class="chat-bash">{{ m.text }}</pre>
-          <div v-else-if="m.role === 'summary'" class="chat-summary">{{ m.text }}</div>
+          <!-- User: boxed, full width -->
+          <template v-else-if="item.kind === 'user'">
+            <div class="chat-msg-role">{{ roleLabel(item.msg) }}</div>
+            <div v-if="renderMd" class="chat-msg-md" v-html="md(item.msg)" />
+            <template v-else>{{ item.msg.text }}</template>
+            <div class="chat-msg-time">{{ fmtTime(item.msg.ts) }}</div>
+          </template>
 
-          <div v-if="m.role === 'assistant' && m.stopReason === 'aborted'" class="chat-aborted">
-            ⏹ generation aborted
-          </div>
-          <div v-if="m.role === 'assistant' && m.error" class="chat-aborted chat-aborted--error">
-            ⚠ {{ m.error }}
-          </div>
+          <!-- Assistant official reply: full width, no box -->
+          <template v-else-if="item.kind === 'reply'">
+            <div class="chat-msg-role">{{ roleLabel(item.msg) }}</div>
+            <div v-if="renderMd" class="chat-msg-md" v-html="md(item.msg)" />
+            <template v-else>{{ item.msg.text }}</template>
+            <span v-if="streaming && item.msg.id === lastMessage?.id" class="chat-cursor">▌</span>
+            <div v-if="item.msg.stopReason === 'aborted'" class="chat-aborted">⏹ generation aborted</div>
+            <div v-if="item.msg.error" class="chat-aborted chat-aborted--error">⚠ {{ item.msg.error }}</div>
+            <div class="chat-msg-time">
+              {{ fmtTime(item.msg.ts) }}
+              <template v-if="item.msg.model">· {{ item.msg.model }}</template>
+            </div>
+          </template>
 
-          <div v-if="m.role !== 'system'" class="chat-msg-time">
-            {{ fmtTime(m.ts) }}
-            <template v-if="m.role === 'assistant' && m.model">· {{ m.model }}</template>
-          </div>
+          <!-- System (slash command output) -->
+          <pre v-else-if="item.kind === 'system'" class="chat-system">{{ item.msg.text }}</pre>
+
+          <!-- Summary -->
+          <div v-else-if="item.kind === 'summary'" class="chat-summary">{{ item.msg.text }}</div>
+
+          <!-- Custom (unrecognized roles) -->
+          <template v-else>
+            <div class="chat-msg-role">{{ roleLabel(item.msg) }}</div>
+            <div v-if="renderMd" class="chat-msg-md" v-html="md(item.msg)" />
+            <template v-else>{{ item.msg.text }}</template>
+            <div class="chat-msg-time">{{ fmtTime(item.msg.ts) }}</div>
+          </template>
         </div>
         <div v-if="streaming" class="chat-streaming-hint">pi is working…</div>
       </template>

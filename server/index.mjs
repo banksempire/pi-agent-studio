@@ -1,71 +1,45 @@
 /**
- * pi-agent-studio backend — a small HTTP/SSE server that exposes the real
- * pi agent to the browser.
+ * pi-agent-studio backend — HTTP/SSE gateway to pi-nest.
  *
- * - Session listing/messages are read from ~/.pi/agent/sessions (real files)
- * - Chatting runs the real agent in-process via the pi SDK
- *   (@earendil-works/pi-coding-agent: createAgentSession + SessionManager)
- * - Live streaming is pushed to browsers over Server-Sent Events
+ * This process does NOT own any pi agent. It:
+ *   - parses session files (~/.pi/agent/sessions) for the list + messages
+ *   - relays pi-nest's agent event stream to browsers over Server-Sent Events
+ *   - proxies chat / abort / slash / new-chat / catalog to pi-nest over gRPC
  *
- * The SDK is imported from the global pi install (no local copy needed).
- * Override with PI_SDK_DIR. The server is dependency-free Node (ESM).
+ * Because the agents and their per-agent queues live in pi-nest (a separate
+ * daemon), restarting this server never interrupts a running agent: a prompt
+ * keeps streaming, queued messages keep executing, and the frontend simply
+ * reconnects (SSE re-open + file tail re-sync).
+ *
+ * No SDK import here — pi-nest owns the SDK. The only SDK-derived logic that
+ * survives is the (stateless) session-file parser below.
  */
 import { createServer } from 'node:http';
-import { randomUUID } from 'node:crypto';
-import { execSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, readlinkSync } from 'node:fs';
-import { readFile, readdir, stat, mkdir, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { createClient, waitForNest } from '../../pi-nest/src/client.mjs';
 
 const PORT = Number(process.env.PI_STUDIO_PORT ?? 7493);
 /** Working directory for newly created chats. */
 const NEW_CHAT_CWD = process.env.PI_STUDIO_CWD ?? '/workspace/sf';
 const SESSIONS_ROOT = path.join(os.homedir(), '.pi', 'agent', 'sessions');
 
-// ── SDK discovery (global pi install) ─────────────────────────────────────
+const client = createClient();
 
-function findSdkDir() {
-  if (process.env.PI_SDK_DIR && existsSync(process.env.PI_SDK_DIR)) return process.env.PI_SDK_DIR;
-  try {
-    const root = execSync('npm root -g', { encoding: 'utf8' }).trim();
-    const p = path.join(root, '@earendil-works', 'pi-coding-agent');
-    if (existsSync(path.join(p, 'dist', 'index.js'))) return p;
-  } catch { /* fall through */ }
-  return null;
-}
+// ── Session file parsing (stateless; pi-nest owns the live agents) ────────
 
-const sdkDir = findSdkDir();
-if (!sdkDir) {
-  console.error('pi SDK not found (set PI_SDK_DIR)');
-  process.exit(1);
-}
-const sdk = await import(pathToFileURL(path.join(sdkDir, 'dist', 'index.js')).href);
-const slashCommandsModule = await import(pathToFileURL(path.join(sdkDir, 'dist', 'core', 'slash-commands.js')).href);
-const { BUILTIN_SLASH_COMMANDS } = slashCommandsModule;
-
-// ── Live agent sessions (one per session file, in-process) ────────────────
-
-/** file → { session: AgentSession, status: 'idle' | 'running', runningSince, lastEventAt } */
-const liveSessions = new Map();
-
-/**
- * Lazy-start new chats: /api/new-chat only RESERVES a future session file
- * path (matching the SDK's naming) and remembers it here — the real SDK
- * agent session is created on the first message (/api/chat → ensureSession),
- * pinned to that exact path. Nothing is created until the user actually
- * chats: no AgentSession instance, no file on disk.
- */
-const pendingSessions = new Map(); // file → { cwd, dir }
-
-/** Mirror the SDK's session-file naming so a lazy session lands on its path. */
-function newSessionPath(cwd) {
-  const resolved = path.resolve(cwd);
-  const safe = `--${resolved.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`;
-  const dir = path.join(SESSIONS_ROOT, safe);
-  const ts = new Date().toISOString().replace(/[:.]/g, '-');
-  return path.join(dir, `${ts}_${randomUUID()}.jsonl`);
+/** Split a session file's lines into entries (mirrors the SDK's parser:
+ *  malformed lines are skipped, so a torn write never breaks the list). */
+function parseEntries(content) {
+  const out = [];
+  for (const line of content.split('\n')) {
+    const t = line.trim();
+    if (!t) continue;
+    try { out.push(JSON.parse(t)); } catch { /* skip malformed line */ }
+  }
+  return out;
 }
 
 /** Stable id for compaction/branch summaries: derived from the text, so the
@@ -75,18 +49,6 @@ function hashId(text) {
   for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) | 0;
   return (h >>> 0).toString(36);
 }
-
-/** SSE clients: Set<http.ServerResponse> */
-const clients = new Set();
-
-function emit(event) {
-  const data = `data: ${JSON.stringify(event)}\n\n`;
-  for (const res of clients) {
-    try { res.write(data); } catch { /* client gone */ }
-  }
-}
-
-// ── Session file parsing (real pi session files) ──────────────────────────
 
 function textOf(content) {
   if (typeof content === 'string') return content;
@@ -104,7 +66,7 @@ function textOf(content) {
   return '';
 }
 
-/** Convert an AgentMessage into the wire/display shape. */
+/** Convert an entry's message into the wire/display shape (file-parse side). */
 function toDisplayMessage(message) {
   const d = { role: message.role, text: '', ts: message.timestamp ?? Date.now() };
   if (message.role === 'assistant') {
@@ -190,8 +152,9 @@ const sessionParseCache = new Map();
 
 /**
  * Parse a session file: header, name, stats, and display messages. The
- * expensive parse is cached per (mtime, size); `running` and the requested
- * message slice are overlaid fresh on every call.
+ * expensive parse is cached per (mtime, size); `running` (overlaid from the
+ * pi-nest state map passed in opts.states) and the requested message slice
+ * are overlaid fresh on every call.
  */
 async function analyzeSession(file, opts = {}) {
   const st = await stat(file).catch(() => null);
@@ -203,7 +166,7 @@ async function analyzeSession(file, opts = {}) {
   if (!base) {
     const content = await readFile(file, 'utf8').catch(() => null);
     if (content === null) return null;
-    const entries = sdk.parseSessionEntries(content);
+    const entries = parseEntries(content);
     const chain = leafChain(entries);
     const header = entries.find((e) => e.type === 'session');
     let name;
@@ -234,39 +197,39 @@ async function analyzeSession(file, opts = {}) {
       if (entry.type !== 'message') continue;
       const msg = entry.message;
       if (!msg) continue;
-    if (msg.usage) {
-      tokensIn += msg.usage.input ?? 0;
-      tokensOut += msg.usage.output ?? 0;
-      if (msg.usage.cost?.total) cost += msg.usage.cost.total;
-    }
-    if (msg.role === 'user') {
-      userMessages += 1;
-      if (!firstMessage) firstMessage = textOf(msg.content);
-      lastText = textOf(msg.content);
-    }
-    if (msg.role === 'assistant') {
-      if (msg.model) model = msg.model;
-      const t = textOf(msg.content);
-      if (t) lastText = t;
-    }
-    const dm = toDisplayMessage(msg);
-    dm.id = entry.id;
-    messages.push(dm);
-    if (dm.role === 'assistant' && dm.toolCalls) {
-      for (const tc of dm.toolCalls) toolCallIndex.set(tc.id, messages.length - 1);
-    }
-  }
-  // Merge tool results into their assistant tool call.
-  for (const dm of messages) {
-    if (dm.role === 'toolResult' && dm.toolCallId) {
-      const idx = toolCallIndex.get(dm.toolCallId);
-      if (idx !== undefined) {
-        const tc = messages[idx].toolCalls?.find((t) => t.id === dm.toolCallId);
-        if (tc) { tc.result = dm.text; tc.isError = dm.isError; }
-        dm.merged = true;
+      if (msg.usage) {
+        tokensIn += msg.usage.input ?? 0;
+        tokensOut += msg.usage.output ?? 0;
+        if (msg.usage.cost?.total) cost += msg.usage.cost.total;
+      }
+      if (msg.role === 'user') {
+        userMessages += 1;
+        if (!firstMessage) firstMessage = textOf(msg.content);
+        lastText = textOf(msg.content);
+      }
+      if (msg.role === 'assistant') {
+        if (msg.model) model = msg.model;
+        const t = textOf(msg.content);
+        if (t) lastText = t;
+      }
+      const dm = toDisplayMessage(msg);
+      dm.id = entry.id;
+      messages.push(dm);
+      if (dm.role === 'assistant' && dm.toolCalls) {
+        for (const tc of dm.toolCalls) toolCallIndex.set(tc.id, messages.length - 1);
       }
     }
-  }
+    // Merge tool results into their assistant tool call.
+    for (const dm of messages) {
+      if (dm.role === 'toolResult' && dm.toolCallId) {
+        const idx = toolCallIndex.get(dm.toolCallId);
+        if (idx !== undefined) {
+          const tc = messages[idx].toolCalls?.find((t) => t.id === dm.toolCallId);
+          if (tc) { tc.result = dm.text; tc.isError = dm.isError; }
+          dm.merged = true;
+        }
+      }
+    }
     let merged = messages.filter((m) => m.role !== 'toolResult' || !m.merged);
     if (st) {
       sessionParseCache.set(file, {
@@ -318,8 +281,9 @@ async function analyzeSession(file, opts = {}) {
   }
 
   const modified = st ? st.mtimeMs : Date.now();
-  const running = liveSessions.get(file)?.status === 'running';
-  const runningSince = liveSessions.get(file)?.runningSince ?? null;
+  const live = opts.states?.get(file);
+  const running = live?.status === 'running';
+  const runningSince = live?.runningSinceMs ?? null;
 
   const info = {
     file,
@@ -345,438 +309,46 @@ async function analyzeSession(file, opts = {}) {
   return info;
 }
 
-// ── Agent session lifecycle ───────────────────────────────────────────────
+// ── SSE hub ───────────────────────────────────────────────────────────────
 
-function emitMsg(file, message) {
-  const dm = toDisplayMessage(message);
-  // Stable identity across streaming updates: the assistant partial keeps
-  // one timestamp for its whole life; user messages get their own too.
-  if (message.role === 'assistant') dm.id = `asst-${message.timestamp ?? Date.now()}`;
-  else if (message.role === 'user') dm.id = `user-${message.timestamp ?? Date.now()}`;
-  else if (message.role === 'toolResult') dm.id = `toolresult-${message.toolCallId ?? message.timestamp ?? Date.now()}`;
-  else if (message.role === 'compactionSummary' || message.role === 'branchSummary') dm.id = `summary-${hashId(message.summary ?? '')}`;
-  else dm.id = `msg-${message.timestamp ?? Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-  emit({ type: 'message', file, message: dm });
-}
+/** SSE clients: Set<http.ServerResponse> */
+const clients = new Set();
 
-function extractText(result) {
-  if (!result) return '';
-  const content = result.content;
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) return content.map((b) => (b.type === 'text' ? b.text : '')).join('\n');
-  return '';
-}
-
-/** Register an AgentSession as a live session and wire its events to SSE. */
-function registerLive(file, session) {
-  const live = {
-    session,
-    status: 'idle',
-    runningSince: null,
-    lastEventAt: Date.now(),
-    // Per-session FIFO: concurrent /api/chat calls (e.g. two chat windows
-    // on the same session) run strictly one after another instead of being
-    // rejected or racing the SDK's append path.
-    opChain: Promise.resolve(),
-  };
-  liveSessions.set(file, live);
-  attachSession(file, live);
-  return live;
-}
-
-/** Queue an async op so it runs only after all previously queued ops finished. */
-function enqueueOp(live, op) {
-  const next = live.opChain.then(op);
-  live.opChain = next.catch(() => {}); // chain survives a rejected op
-  return next;
-}
-
-async function ensureSession(file) {
-  let live = liveSessions.get(file);
-  if (live) return live;
-  if (pendingSessions.has(file)) {
-    // Lazy start: the reserved virtual new-chat becomes real here, pinned
-    // to the exact file path the frontend already holds as its session id.
-    const { cwd, dir } = pendingSessions.get(file);
-    pendingSessions.delete(file);
-    const sessionManager = new sdk.SessionManager(cwd, dir, file, true);
-    const { session } = await sdk.createAgentSession({ sessionManager });
-    return registerLive(file, session);
+function emit(event) {
+  const data = `data: ${JSON.stringify(event)}\n\n`;
+  for (const res of clients) {
+    try { res.write(data); } catch { /* client gone */ }
   }
-  const { session } = await sdk.createAgentSession({
-    sessionManager: sdk.SessionManager.open(file),
-  });
-  return registerLive(file, session);
 }
 
 /**
- * Stale-run watchdog: the SDK has no LLM timeout, so a hung agent run (dead
- * stream, never-resolving prompt) leaves a session stuck 'running' forever,
- * blocking /compact and new messages. Any 'running' live session that emits
- * NO agent events for STALE_RUN_MS is force-settled to idle. A live run
- * streams events continuously (message_start/update/end, tool_*, etc.), so a
- * genuinely active run can never trip this.
+ * Relay pi-nest's event stream to SSE, reconnecting forever. While this
+ * server is down, pi-nest keeps running the agents; on reconnect the relay
+ * resumes and the frontend re-syncs via the file-based messages endpoint.
  */
-const STALE_RUN_MS = 20 * 60 * 1000;
-const WATCHDOG_INTERVAL_MS = 30 * 1000;
-function scanStaleRuns() {
-  const now = Date.now();
-  for (const [file, live] of liveSessions) {
-    if (live.status !== 'running') continue;
-    if (now - (live.lastEventAt ?? now) <= STALE_RUN_MS) continue;
-    console.log(
-      `[watchdog] force-settling stale run ${file.split('/').pop()} (no events for ${Math.round((now - (live.lastEventAt ?? now)) / 60000)}m)`
-    );
-    live.status = 'idle';
-    live.runningSince = null;
-    emit({ type: 'session_status', file, status: 'idle' });
-    emit({ type: 'refresh', file });
+async function relayNestEvents() {
+  for (;;) {
+    try {
+      await waitForNest(client, { timeoutMs: 5000, log: () => {} });
+      const stream = client.subscribe('');
+      await new Promise((resolve) => {
+        stream.on('data', (ev) => {
+          let payload = {};
+          try { payload = ev.json ? JSON.parse(ev.json) : {}; } catch { /* ignore */ }
+          // Preserve the SSE vocabulary the frontend expects: message events
+          // carry the display message under `message`; everything else is
+          // spread at top level (status, tool info, ...).
+          if (ev.type === 'message') emit({ type: 'message', file: ev.file, message: payload });
+          else emit({ type: ev.type, file: ev.file, ...payload });
+        });
+        stream.once('error', resolve);
+        stream.once('end', resolve);
+      });
+    } catch { /* keepalive retry */ }
+    await new Promise((r) => setTimeout(r, 1000));
   }
 }
-
-/** Subscribe an AgentSession's events to the SSE hub. */
-function attachSession(file, live) {
-  live.session.subscribe((ev) => {
-    // Liveness tick — every event counts as activity for the stale watchdog.
-    live.lastEventAt = Date.now();
-    switch (ev.type) {
-      case 'agent_start':
-        live.status = 'running';
-        live.runningSince = Date.now();
-        emit({ type: 'session_status', file, status: 'running', runningSince: live.runningSince });
-        break;
-      case 'agent_settled':
-        live.status = 'idle';
-        live.runningSince = null;
-        emit({ type: 'session_status', file, status: 'idle' });
-        emit({ type: 'refresh', file });
-        break;
-      case 'message_start':
-      case 'message_update':
-      case 'message_end':
-        emitMsg(file, ev.message);
-        break;
-      case 'turn_end': {
-        emitMsg(file, ev.message);
-        for (const tr of ev.toolResults ?? []) {
-          emit({
-            type: 'tool_result',
-            file,
-            toolCallId: tr.toolCallId,
-            toolName: tr.toolName,
-            text: extractText(tr),
-            isError: !!tr.isError,
-          });
-        }
-        break;
-      }
-      case 'tool_execution_start':
-        emit({ type: 'tool_start', file, toolCallId: ev.toolCallId, toolName: ev.toolName, args: ev.args });
-        break;
-      case 'tool_execution_update':
-        emit({ type: 'tool_partial', file, toolCallId: ev.toolCallId, text: extractText(ev.partialResult) });
-        break;
-      case 'tool_execution_end':
-        emit({ type: 'tool_result', file, toolCallId: ev.toolCallId, toolName: ev.toolName, text: extractText(ev.result), isError: !!ev.isError });
-        break;
-      case 'entry_appended':
-        emit({ type: 'refresh', file });
-        break;
-      case 'compaction_start':
-        emit({ type: 'compaction_status', file, status: 'started' });
-        break;
-      case 'compaction_end': {
-        // The SDK reports "Already compacted" as an error, but for the user the
-        // outcome is positive — the summary exists in the conversation, so show
-        // the done box (click-to-audit) instead of a misleading failed one.
-        const already = !!ev.errorMessage && /already compacted/i.test(ev.errorMessage);
-        emit({ type: 'compaction_status', file, status: !ev.errorMessage || already ? 'done' : 'failed' });
-        if (!ev.errorMessage && ev.result?.summary) {
-          emitMsg(file, { role: 'compactionSummary', summary: ev.result.summary, timestamp: Date.now() });
-        }
-        break;
-      }
-      default:
-        break;
-    }
-  });
-}
-
-// ── Slash commands (the pi TUI command set, web-adapted) ───────────────────
-
-/** Builtin commands that only make sense in the pi TUI — answered with a reason. */
-const NA_COMMANDS = {
-  settings: 'Settings are configured in the pi TUI (/settings there).',
-  login: 'Provider authentication requires the pi TUI (opens OAuth in the terminal).',
-  logout: 'Provider logout requires the pi TUI.',
-  trust: 'Project trust decisions are made in the pi TUI.',
-  share: 'Gist sharing requires GitHub auth in the pi TUI.',
-  quit: 'Nothing to quit in a browser tab — close the tab instead.',
-};
-
-function serializeModel(m) {
-  if (!m) return null;
-  return {
-    id: m.id,
-    provider: m.provider,
-    name: m.name,
-    reasoning: !!m.reasoning,
-    contextWindow: m.contextWindow ?? 0,
-  };
-}
-
-function treeToJson(nodes) {
-  return (nodes ?? []).map((n) => ({
-    id: n.entry?.id,
-    type: n.entry?.type,
-    label: n.label ?? n.entry?.id,
-    children: treeToJson(n.children),
-  }));
-}
-
-/**
- * Execute one slash command against a session (or globally). Returns
- * { ok, notice?, error?, data? } — the frontend renders the outcome.
- */
-async function handleSlashCommand({ file, command, args, extra }) {
-  const name = String(command ?? '').replace(/^\/+/, '').trim();
-  if (!name) return { ok: false, error: 'empty slash command' };
-  if (NA_COMMANDS[name]) return { ok: true, notice: NA_COMMANDS[name] };
-
-  switch (name) {
-    case 'new': {
-      // Same as the ➕ New Chat button: fresh session + window (frontend opens it).
-      const cwd = args?.trim() || NEW_CHAT_CWD;
-      const sessionManager = sdk.SessionManager.create(cwd);
-      const { session } = await sdk.createAgentSession({ sessionManager });
-      const f = session.sessionFile;
-      const live = { session, status: 'idle' };
-      liveSessions.set(f, live);
-      attachSession(f, live);
-      return { ok: true, data: { file: f } };
-    }
-
-    case 'session': {
-      const live = await ensureSession(file);
-      const stats = live.session.getSessionStats();
-      const sm = live.session.sessionManager;
-      const t = stats.tokens;
-      const lines = [
-        'Session Info',
-        ...(sm.getSessionName() ? [`Name: ${sm.getSessionName()}`] : []),
-        `File: ${stats.sessionFile ?? 'In-memory'}`,
-        `ID: ${stats.sessionId}`,
-        '',
-        'Messages',
-        `Total: ${stats.totalMessages}`,
-        `User: ${stats.userMessages}`,
-        `Assistant: ${stats.assistantMessages}`,
-        `Tools: ${stats.toolCalls} calls, ${stats.toolResults} results`,
-        '',
-        'Tokens',
-        `Input: ${(t.input + t.cacheRead + t.cacheWrite).toLocaleString()}`,
-        `Output: ${t.output.toLocaleString()}`,
-        `Cache: ${t.cacheRead.toLocaleString()} read, ${t.cacheWrite.toLocaleString()} written`,
-        `Total: ${t.total.toLocaleString()}`,
-        `Cost: $${(stats.cost ?? 0).toFixed(4)}`,
-      ];
-      const model = live.session.model;
-      if (model) lines.push('', `Model: ${model.provider}/${model.id}`);
-      lines.push('', 'The right panel shows live session stats at all times.');
-      return { ok: true, data: { text: lines.join('\n') } };
-    }
-
-    case 'name': {
-      const live = await ensureSession(file);
-      const requested = args?.trim() ?? '';
-      if (!requested) {
-        const current = live.session.sessionManager.getSessionName();
-        return { ok: true, notice: current ? `Session name: ${current}` : 'Usage: /name <name>' };
-      }
-      live.session.setSessionName(requested);
-      const normalized = live.session.sessionManager.getSessionName();
-      emit({ type: 'refresh', file });
-      return { ok: true, notice: normalized ? `Session name set: ${normalized}` : `Session name set: ${requested}` };
-    }
-
-    case 'compact': {
-      const live = await ensureSession(file);
-      if (live.status === 'running') {
-        return { ok: false, error: 'Wait for the current response to finish before compacting.' };
-      }
-      try {
-        await live.session.compact(args?.trim() || undefined);
-        return { ok: true, notice: 'Compaction complete — the conversation was summarized.' };
-      } catch (e) {
-        // The SDK throws "Already compacted" when the last entry is already a
-        // compaction. That's a fine outcome — the summary is in the chat, and
-        // compaction_end was mapped to the done box, so the user can audit it.
-        if (e instanceof Error && /already compacted/i.test(e.message)) {
-          return { ok: true, notice: 'The conversation is already compacted — the latest summary is in the chat.' };
-        }
-        throw e;
-      }
-    }
-
-    case 'copy': {
-      const live = await ensureSession(file);
-      const text = live.session.getLastAssistantText();
-      if (!text) return { ok: true, notice: 'No agent messages to copy yet.' };
-      return { ok: true, data: { text } };
-    }
-
-    case 'model': {
-      const live = await ensureSession(file);
-      const rt = live.session.modelRuntime;
-      const current = live.session.model;
-      const requested = args?.trim() ?? '';
-      if (requested) {
-        const models = await rt.getAvailable().catch(() => []);
-        const term = requested.toLowerCase();
-        const hit = models.find((m) =>
-          m.id.toLowerCase() === term || `${m.provider}/${m.id}`.toLowerCase() === term || m.name.toLowerCase() === term,
-        );
-        if (!hit) return { ok: false, error: `No model matches "${requested}"` };
-        await live.session.setModel(hit);
-        emit({ type: 'refresh', file });
-        return { ok: true, notice: `Model: ${hit.provider}/${hit.id}` };
-      }
-      const models = await rt.getAvailable().catch(() => []);
-      return { ok: true, data: { models: models.map(serializeModel), current: serializeModel(current) } };
-    }
-
-    case 'scoped-models': {
-      const live = await ensureSession(file);
-      const rt = live.session.modelRuntime;
-      const models = await rt.getAvailable().catch(() => []);
-      const scoped = live.session.scopedModels;
-      if (extra?.modelIds) {
-        const ids = new Set(extra.modelIds);
-        const picked = models.filter((m) => ids.has(`${m.provider}/${m.id}`));
-        live.session.setScopedModels(picked.map((m) => ({ model: m })));
-        return { ok: true, notice: picked.length > 0
-          ? `Scoped models: ${picked.map((m) => m.id).join(', ')}`
-          : 'Scoped models cleared (all models available)' };
-      }
-      return {
-        ok: true,
-        data: {
-          models: models.map(serializeModel),
-          scoped: scoped.map((s) => `${s.model.provider}/${s.model.id}`),
-        },
-      };
-    }
-
-    case 'tree': {
-      const live = await ensureSession(file);
-      const sm = live.session.sessionManager;
-      if (extra?.entryId) {
-        const target = sm.getEntry(extra.entryId);
-        if (!target) return { ok: false, error: 'Entry not found in this session.' };
-        await live.session.navigateTree(extra.entryId);
-        emit({ type: 'refresh', file });
-        return { ok: true, notice: `Switched to ${target.type === 'message' ? target.message?.role ?? 'entry' : target.type} at ${extra.entryId.slice(0, 8)}…` };
-      }
-      return {
-        ok: true,
-        data: {
-          tree: treeToJson(sm.getTree()),
-          leafId: sm.getLeafId(),
-          currentLabel: sm.getLeafEntry()?.id,
-        },
-      };
-    }
-
-    case 'fork': {
-      const live = await ensureSession(file);
-      if (extra?.entryId) {
-        const entry = live.session.sessionManager.getEntry(extra.entryId);
-        if (!entry || entry.type !== 'message' || entry.message?.role !== 'user') {
-          return { ok: false, error: 'Pick a user message to fork from.' };
-        }
-        if (!entry.parentId) return { ok: false, error: 'Cannot fork from the first message.' };
-        const forked = await forkSession(live, entry.parentId);
-        return { ok: true, data: { file: forked } };
-      }
-      return { ok: true, data: { userMessages: live.session.getUserMessagesForForking() } };
-    }
-
-    case 'clone': {
-      const live = await ensureSession(file);
-      const leafId = live.session.sessionManager.getLeafId();
-      if (!leafId) return { ok: false, error: 'Nothing to clone yet.' };
-      const forked = await forkSession(live, leafId);
-      return { ok: true, data: { file: forked } };
-    }
-
-    case 'export': {
-      const live = await ensureSession(file);
-      const outPath = args?.trim() || undefined;
-      let filePath, mime, filename;
-      if (outPath?.endsWith('.jsonl')) {
-        filePath = live.session.exportToJsonl(outPath);
-        mime = 'application/x-ndjson';
-      } else {
-        filePath = await live.session.exportToHtml(outPath);
-        mime = 'text/html';
-      }
-      filename = path.basename(filePath);
-      const content = await readFile(filePath, 'utf8');
-      return { ok: true, data: { content, filename, mime, path: filePath } };
-    }
-
-    case 'import': {
-      const inputPath = args?.trim();
-      if (!inputPath) return { ok: false, error: 'Usage: /import <path.jsonl>' };
-      const abs = path.resolve(inputPath);
-      const raw = await readFile(abs, 'utf8').catch(() => null);
-      if (raw === null) return { ok: false, error: `Cannot read ${abs}` };
-      const entries = sdk.parseSessionEntries(raw);
-      if (!entries.some((e) => e.type === 'session')) {
-        return { ok: false, error: `${abs} is not a valid pi session file` };
-      }
-      const header = entries.find((e) => e.type === 'session');
-      const cwd = header?.cwd || NEW_CHAT_CWD;
-      const dir = path.join(SESSIONS_ROOT, '--' + cwd.replace(/^\//, '').replaceAll('/', '-') + '--');
-      const id = header?.id ?? `imported-${Date.now().toString(36)}`;
-      const ts = new Date().toISOString().replace(/[:.]/g, '-');
-      const dest = path.join(dir, `${ts}_${id}.jsonl`);
-      await mkdir(dir, { recursive: true });
-      await writeFile(dest, raw, 'utf8');
-      emit({ type: 'refresh', file: dest });
-      return { ok: true, data: { file: dest } };
-    }
-
-    case 'reload': {
-      const live = await ensureSession(file);
-      await live.session.reload().catch(() => {});
-      emit({ type: 'refresh', file });
-      return { ok: true, notice: 'Reloaded resources (skills, prompts, context files).' };
-    }
-
-    case 'changelog': {
-      const changelogPath = path.join(sdkDir, 'CHANGELOG.md');
-      const text = await readFile(changelogPath, 'utf8').catch(() => 'No CHANGELOG.md found.');
-      return { ok: true, data: { text: text.slice(0, 12000) } };
-    }
-
-    default:
-      return { ok: false, error: `Unknown slash command /${name}` };
-  }
-}
-
-/** Create a new session file branched from `targetLeafId` and register it live. */
-async function forkSession(live, targetLeafId) {
-  const sm = live.session.sessionManager;
-  const file = live.session.sessionFile;
-  if (!file || !existsSync(file)) {
-    throw new Error('This session has not been saved yet — send a message first.');
-  }
-  const forkedPath = sm.createBranchedSession(targetLeafId);
-  if (!forkedPath) throw new Error('Failed to create forked session');
-  const { session } = await sdk.createAgentSession({ sessionManager: sdk.SessionManager.open(forkedPath) });
-  return registerLive(forkedPath, session);
-}
+relayNestEvents();
 
 // ── HTTP handlers ──────────────────────────────────────────────────────────
 
@@ -828,8 +400,13 @@ const server = createServer(async (req, res) => {
           if (f.endsWith('.jsonl')) files.push(path.join(dir, f));
         }
       }
+      // Live-state overlay comes from pi-nest (the agent owner), not from this
+      // process — so `running` survives any restart of this server.
+      const states = new Map(
+        (await client.listStates().catch(() => ({ states: [] }))).states.map((s) => [s.agentId, s])
+      );
       // Parallel parse (cache makes re-reads cheap; cold starts split across cores).
-      const sessions = (await Promise.all(files.map((f) => analyzeSession(f)))).filter(Boolean);
+      const sessions = (await Promise.all(files.map((f) => analyzeSession(f, { states })))).filter(Boolean);
       sessions.sort((a, b) => b.modified - a.modified);
       sendJson(res, 200, { sessions });
       return;
@@ -843,11 +420,15 @@ const server = createServer(async (req, res) => {
       const before = url.searchParams.get('before') || undefined;
       const after = url.searchParams.get('after') || undefined;
       // Brand-new sessions (created via /api/new-chat) have no file until
-      // their first message is appended — serve them as empty (live AND
-      // still-pending lazy sessions).
-      if (!existsSync(file) && (liveSessions.has(file) || pendingSessions.has(file))) {
-        sendJson(res, 200, { file, name: null, cwd: NEW_CHAT_CWD, created: Date.now(), modified: Date.now(), messageCount: 0, userMessages: 0, firstMessage: '', preview: '', model: null, tokens: { input: 0, output: 0, total: 0 }, cost: 0, running: false, messages: [], oldestId: null, hasMore: false });
-        return;
+      // their first message is appended — pi-nest knows them as pending/open
+      // agents, so serve them as empty.
+      if (!existsSync(file)) {
+        const st = await client.getAgentState({ agentId: file }).catch(() => null);
+        if (st?.state?.status) {
+          sendJson(res, 200, { file, name: null, cwd: NEW_CHAT_CWD, created: Date.now(), modified: Date.now(), messageCount: 0, userMessages: 0, firstMessage: '', preview: '', model: null, tokens: { input: 0, output: 0, total: 0 }, cost: 0, running: st.state.status === 'running', messages: [], oldestId: null, hasMore: false });
+          return;
+        }
+        return sendJson(res, 404, { error: 'session file not found' });
       }
       const info = await analyzeSession(file, { withMessages: true, limit, before, after });
       if (!info) return sendJson(res, 404, { error: 'session file not found' });
@@ -861,89 +442,72 @@ const server = createServer(async (req, res) => {
       if (!file || typeof message !== 'string' || !message.trim()) {
         return sendJson(res, 400, { error: 'file and message required' });
       }
-      // Files we created/opened ourselves may not exist on disk yet
-      // (session files are written on the first appended entry); pending
-      // lazy new-chats don't exist until their first message arrives.
-      if (!liveSessions.has(file) && !existsSync(file) && !pendingSessions.has(file)) {
+      // Files we created/opened ourselves may not exist on disk yet (session
+      // files are written on the first appended entry; lazy new-chats don't
+      // exist until their first message). pi-nest knows them as agents.
+      const st = await client.getAgentState({ agentId: file }).catch(() => null);
+      if (!st?.state?.status && !existsSync(file)) {
         return sendJson(res, 404, { error: 'session file not found' });
       }
-      const live = await ensureSession(file);
-      // Queue, don't reject: a second chat window sending to the same session
-      // waits for the current turn, then runs. (The frontend's optimistic
-      // message covers the wait; the real user message is emitted when the
-      // op starts.)
-      await enqueueOp(live, async () => {
-        // Fire the user message immediately (snappy UI), then prompt.
-        const ts = Date.now();
-        emit({
-          type: 'message',
-          file,
-          message: { id: `pending-${ts}`, role: 'user', text: message, ts },
-        });
-        await live.session.prompt(message);
-      });
+      // Queue, don't reject: pi-nest serializes concurrent sends per agent.
+      // (The frontend's optimistic message covers the wait; the real user
+      // message is emitted by pi-nest when the op starts.) This call resolves
+      // when the queued turn completes — a restart of THIS server mid-run
+      // leaves the agent untouched.
+      await client.prompt({ agentId: file, message });
       sendJson(res, 200, { ok: true });
       return;
     }
 
     // ── Slash command catalog (builtins + skills for autocomplete) ──
     if (p === '/api/slash-commands' && req.method === 'GET') {
-      const commands = BUILTIN_SLASH_COMMANDS.map((c) => ({
-        name: c.name,
-        description: c.description,
-        argumentHint: c.argumentHint,
-        available: !NA_COMMANDS[c.name],
-        naReason: NA_COMMANDS[c.name],
-      }));
-      let skills = [];
-      try {
-        const result = sdk.loadSkills({
-          cwd: NEW_CHAT_CWD,
-          agentDir: sdk.getAgentDir(),
-          skillPaths: [],
-          includeDefaults: true,
-        });
-        skills = (result.skills ?? []).map((s) => ({ name: s.name, description: s.description ?? '' }));
-      } catch { /* skills unavailable — autocomplete just omits them */ }
+      const r = await client.getSlashCatalog({});
+      const commands = r.commandsJson ? JSON.parse(r.commandsJson) : [];
+      const skills = r.skillsJson ? JSON.parse(r.skillsJson) : [];
       sendJson(res, 200, { commands, skills });
       return;
     }
 
-    // ── Execute a slash command ──
+    // ── Execute a slash command (pi-nest owns the agents) ──
     if (p === '/api/slash' && req.method === 'POST') {
       const body = await readBody(req);
       try {
-        const result = await handleSlashCommand(body);
-        sendJson(res, result.ok ? 200 : 400, result);
+        const r = await client.slash({
+          agentId: body.file ?? '',
+          command: body.command,
+          args: body.args ?? '',
+          extra: body.extra ?? {},
+        });
+        const out = { ok: r.ok, notice: r.notice || undefined, error: r.error || undefined };
+        if (r.dataJson) out.data = JSON.parse(r.dataJson);
+        sendJson(res, r.ok ? 200 : 400, out);
       } catch (e) {
         sendJson(res, 400, { ok: false, error: String(e?.message ?? e) });
       }
       return;
     }
 
-    // ── New chat ──
+    // ── New chat (pi-nest reserves the future session file lazily) ──
     if (p === '/api/new-chat' && req.method === 'POST') {
       const { cwd } = await readBody(req);
       const targetCwd = cwd || NEW_CHAT_CWD;
-      // Lazy start: only reserve the future session file path. The real
-      // agent session is created on the first message (see ensureSession).
-      const file = newSessionPath(targetCwd);
-      pendingSessions.set(file, { cwd: targetCwd, dir: path.dirname(file) });
+      const { file } = await client.createSession({ cwd: targetCwd });
       sendJson(res, 200, { file, cwd: targetCwd, virtual: true });
       return;
     }
 
-    // ── Abort a running session ──
+    // ── Abort a running session (pi-nest) ──
     if (p === '/api/abort' && req.method === 'POST') {
       const { file } = await readBody(req);
-      const live = liveSessions.get(file);
-      if (live) await live.session.abort();
+      await client.abort({ agentId: file });
       sendJson(res, 200, { ok: true });
       return;
     }
 
     if (p === '/api/health') {
-      sendJson(res, 200, { ok: true, sdkDir });
+      let nest = false;
+      try { nest = (await client.ping()).ok; } catch { /* nest down */ }
+      sendJson(res, 200, { ok: true, nest });
       return;
     }
 
@@ -963,8 +527,8 @@ const heartbeat = setInterval(() => {
 
 // ── External session file watcher ─────────────────────────────────────────
 // Sessions written by OTHER processes (e.g. the pi TUI) produce no agent
-// events here — poll file mtimes and emit refresh so open chat windows
-// auto-update as entries land on disk.
+// events through pi-nest — poll file mtimes and emit refresh so open chat
+// windows auto-update as entries land on disk.
 
 const fileMtimes = new Map();
 
@@ -997,21 +561,7 @@ void watchSessionFiles().then(() => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`pi-agent-studio backend on 0.0.0.0:${PORT} (sdk: ${sdkDir})`);
+  console.log(`pi-agent-studio backend on 0.0.0.0:${PORT} (gateway → pi-nest)`);
   console.log(`sessions: ${SESSIONS_ROOT}`);
   console.log(`new chats cwd: ${NEW_CHAT_CWD}`);
 });
-
-// Stale-run watchdog — force-settle hung runs so they stop blocking /compact
-// and new messages (the SDK has no LLM timeout of its own).
-setInterval(scanStaleRuns, WATCHDOG_INTERVAL_MS).unref();
-
-for (const sig of ['SIGINT', 'SIGTERM']) {
-  process.on(sig, () => {
-    clearInterval(heartbeat);
-    for (const { session } of liveSessions.values()) {
-      try { session.dispose(); } catch { /* ignore */ }
-    }
-    process.exit(0);
-  });
-}

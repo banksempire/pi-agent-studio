@@ -123,7 +123,8 @@ export interface WorkMove {
 }
 
 export type ChatItem =
-  | { kind: 'user' | 'system' | 'summary' | 'reply' | 'custom'; msg: DisplayMessage }
+  | { kind: 'user' | 'system' | 'summary' | 'custom'; msg: DisplayMessage }
+  | { kind: 'reply'; msg: DisplayMessage; timeUsedMs: number }
   | { kind: 'work'; id: string; moves: WorkMove[]; wip: boolean; startTs: number; durMs: number };
 
 function moveLabel(mv: WorkMove): string {
@@ -143,6 +144,25 @@ function moveClass(mv: WorkMove): string {
   if (mv.status === 'fail') return 'chat-work-move--fail';
   if (mv.status === 'ok') return 'chat-work-move--ok';
   return '';
+}
+
+/** Chat timestamp: HH:MM today, "Mon D, HH:MM" for older messages. */
+function fmtMsgTime(ts: number): string {
+  const d = new Date(ts);
+  const now = new Date();
+  const hhmm = fmtTime(ts);
+  const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  if (sameDay) return hhmm;
+  const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()];
+  return `${mon} ${d.getDate()}, ${hhmm}`;
+}
+
+/** Agent reply footer: "pi · model[ · thinking] · time[ · time used]". */
+function agentMeta(item: Extract<ChatItem, { kind: 'reply' }>): string {
+  const m = item.msg;
+  const thinking = m.thinking ? ' · thinking' : '';
+  const used = item.timeUsedMs > 0 ? ` · ${fmtSec(item.timeUsedMs)}` : '';
+  return `${roleLabel(m)} · ${m.model ?? '—'}${thinking} · ${fmtMsgTime(m.ts)}${used}`;
 }
 
 /** Short duration: "<1s" / "12.3s" / "1m 30s". */
@@ -224,7 +244,7 @@ const items = computed<ChatItem[]>(() => {
         // contributed moves, the run ends at the next message's step
         // boundary (this message's own ts would measure 0).
         flush(added ? (msgs[i + 1]?.ts ?? m.ts) : m.ts, false);
-        out.push({ kind: 'reply', msg: m });
+        out.push({ kind: 'reply', msg: m, timeUsedMs: i > 0 ? Math.max(0, m.ts - msgs[i - 1].ts) : 0 });
       }
       continue;
     }
@@ -573,26 +593,21 @@ onMounted(() => {
             </div>
           </div>
 
-          <!-- User: boxed, full width -->
+          <!-- User: boxed, full width; meta on top -->
           <template v-else-if="item.kind === 'user'">
-            <div class="chat-msg-role">{{ roleLabel(item.msg) }}</div>
+            <div class="chat-msg-meta">{{ roleLabel(item.msg) }} · {{ fmtMsgTime(item.msg.ts) }}</div>
             <div v-if="renderMd" class="chat-msg-md" v-html="md(item.msg)" />
             <template v-else>{{ item.msg.text }}</template>
-            <div class="chat-msg-time">{{ fmtTime(item.msg.ts) }}</div>
           </template>
 
-          <!-- Assistant official reply: full width, no box -->
+          <!-- Assistant official reply: full width, no box; meta footer -->
           <template v-else-if="item.kind === 'reply'">
-            <div class="chat-msg-role">{{ roleLabel(item.msg) }}</div>
             <div v-if="renderMd" class="chat-msg-md" v-html="md(item.msg)" />
             <template v-else>{{ item.msg.text }}</template>
             <span v-if="streaming && item.msg.id === lastMessage?.id" class="chat-cursor">▌</span>
             <div v-if="item.msg.stopReason === 'aborted'" class="chat-aborted">⏹ generation aborted</div>
             <div v-if="item.msg.error" class="chat-aborted chat-aborted--error">⚠ {{ item.msg.error }}</div>
-            <div class="chat-msg-time">
-              {{ fmtTime(item.msg.ts) }}
-              <template v-if="item.msg.model">· {{ item.msg.model }}</template>
-            </div>
+            <div class="chat-msg-meta chat-msg-meta--agent">{{ agentMeta(item) }}</div>
           </template>
 
           <!-- System (slash command output) -->
@@ -603,7 +618,7 @@ onMounted(() => {
 
           <!-- Custom (unrecognized roles) -->
           <template v-else>
-            <div class="chat-msg-role">{{ roleLabel(item.msg) }}</div>
+            <div class="chat-msg-meta">{{ roleLabel(item.msg) }} · {{ fmtMsgTime(item.msg.ts) }}</div>
             <div v-if="renderMd" class="chat-msg-md" v-html="md(item.msg)" />
             <template v-else>{{ item.msg.text }}</template>
             <div class="chat-msg-time">{{ fmtTime(item.msg.ts) }}</div>

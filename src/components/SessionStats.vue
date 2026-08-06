@@ -49,7 +49,7 @@ const rows = computed<StatRow[]>(() => {
     { key: 'Started', value: fmtTime(s.stats.startedAt) },
     { key: 'Last activity', value: fmtTime(s.stats.lastActivity) },
     { key: 'Messages', value: String(s.stats.messageCount) },
-    { key: 'View', value: s.tuiActive ? 'TUI (read-only)' : store.isViewOpen(s.id) ? 'open' : 'closed', kind: 'view' },
+    { key: 'View', value: store.isViewOpen(s.id) ? 'open' : 'closed', kind: 'view' },
   ];
 });
 </script>
@@ -85,7 +85,7 @@ const rows = computed<StatRow[]>(() => {
           <span
             v-else-if="r.kind === 'view'"
             class="session-stats-pill"
-            :class="session.tuiActive ? 'session-stats-pill--tui' : (r.value === 'open' ? 'session-stats-pill--view' : 'session-stats-pill--bg')"
+            :class="r.value === 'open' ? 'session-stats-pill--view' : 'session-stats-pill--bg'"
           >{{ r.value }}</span>
           <span v-else class="session-stats-val">{{ r.value }}</span>
         </div>

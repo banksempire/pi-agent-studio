@@ -37,7 +37,7 @@ function preview(s: ChatSession): string {
       </div>
       <div class="chat-list-row2">
         <span class="chat-list-status" :class="'chat-list-status--' + s.status">
-          {{ s.status === 'running' ? '⏳' : s.tuiActive ? '🔒' : '' }}
+          {{ s.status === 'running' ? '⏳' : '' }}
         </span>
         <span class="chat-list-preview">{{ preview(s) }}</span>
       </div>

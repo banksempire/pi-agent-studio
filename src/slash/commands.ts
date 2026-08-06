@@ -178,9 +178,6 @@ export async function runSlash(sessionId: string, text: string): Promise<SlashRe
     if (!file) {
       return { kind: 'error', text: `/${command} needs an open chat window — open one first.` };
     }
-    if (session?.tuiActive) {
-      return { kind: 'error', text: `/${command} cannot run on a session that is live in the pi TUI.` };
-    }
   }
 
   // ── Backend commands ──

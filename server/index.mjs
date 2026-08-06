@@ -21,14 +21,6 @@ import { pathToFileURL } from 'node:url';
 const PORT = Number(process.env.PI_STUDIO_PORT ?? 7493);
 /** Working directory for newly created chats. */
 const NEW_CHAT_CWD = process.env.PI_STUDIO_CWD ?? '/workspace/sf';
-/** Session file of a pi TUI session that is live right now (never prompt it). */
-const LIVE_TUI_FILE = process.env.PI_SESSION_FILE ?? null;
-/** Pin the TUI process to this PID (test/CI); default: scan for `pi`. */
-const TUI_PID = Number(process.env.PI_TUI_PID || 0) || null;
-
-/** Mutable: released automatically when the TUI process exits. */
-let tuiLockFile = LIVE_TUI_FILE;
-
 const SESSIONS_ROOT = path.join(os.homedir(), '.pi', 'agent', 'sessions');
 
 // ── SDK discovery (global pi install) ─────────────────────────────────────
@@ -270,7 +262,6 @@ async function analyzeSession(file, opts = {}) {
     tokens: { input: tokensIn, output: tokensOut, total: tokensIn + tokensOut },
     cost,
     running,
-    tuiActive: file === tuiLockFile,
   };
   if (opts.withMessages) {
     info.messages = merged;
@@ -713,7 +704,7 @@ const server = createServer(async (req, res) => {
       // Brand-new sessions (created via /api/new-chat) have no file until
       // their first message is appended — serve them as empty.
       if (!existsSync(file) && liveSessions.has(file)) {
-        sendJson(res, 200, { file, name: null, cwd: NEW_CHAT_CWD, created: Date.now(), modified: Date.now(), messageCount: 0, userMessages: 0, firstMessage: '', preview: '', model: null, tokens: { input: 0, output: 0, total: 0 }, cost: 0, running: false, tuiActive: false, messages: [], oldestId: null, hasMore: false });
+        sendJson(res, 200, { file, name: null, cwd: NEW_CHAT_CWD, created: Date.now(), modified: Date.now(), messageCount: 0, userMessages: 0, firstMessage: '', preview: '', model: null, tokens: { input: 0, output: 0, total: 0 }, cost: 0, running: false, messages: [], oldestId: null, hasMore: false });
         return;
       }
       const info = await analyzeSession(file, { withMessages: true, limit, before, after });
@@ -727,9 +718,6 @@ const server = createServer(async (req, res) => {
       const { file, message } = await readBody(req);
       if (!file || typeof message !== 'string' || !message.trim()) {
         return sendJson(res, 400, { error: 'file and message required' });
-      }
-      if (file === tuiLockFile) {
-        return sendJson(res, 409, { error: 'This session is live in the pi TUI — open another chat.' });
       }
       // Files we created/opened ourselves may not exist on disk yet
       // (session files are written on the first appended entry).
@@ -854,15 +842,6 @@ async function watchSessionFiles() {
         const known = fileMtimes.has(file);
         fileMtimes.set(file, m);
         emit({ type: 'refresh', file });
-        // A TUI is present and nothing is locked: the writer of this file
-        // is almost certainly the TUI (our own sessions are in
-        // liveSessions) — engage the lock on it. Covers a TUI that
-        // resumed an existing session (first write identifies the file).
-        // Old files seen for the first time (e.g. after a partial prime)
-        // must NOT be locked — only rewritten files or brand-new ones.
-        if (!tuiLockFile && !liveSessions.has(file) && findPiProcesses().length > 0) {
-          if (known || Date.now() - m < 60_000) relock(file);
-        }
       }
     }
   }
@@ -872,133 +851,6 @@ async function watchSessionFiles() {
 void watchSessionFiles().then(() => {
   setInterval(watchSessionFiles, 2000);
 });
-
-// ── TUI liveness + auto lock/unlock ───────────────────────────────────────
-// The read-only lock follows the pi TUI lifecycle:
-//   - TUI running → its session file is locked (read-only in the web UI)
-//   - TUI exits   → lock released automatically
-//   - a (new) TUI starts → the lock re-engages on that TUI's session
-// Detection: a pinned PID (PI_TUI_PID) or a scan for a live process whose
-// command is the `pi` binary.
-
-let tuiSeen = false; // a TUI process was present at the last poll
-
-function isAlive(pid) {
-  let s = '';
-  try { s = readFileSync(`/proc/${pid}/stat`, 'utf8'); } catch { return false; }
-  const close = s.lastIndexOf(')');
-  if (close < 0) return false;
-  // field 3 after the comm in parens: skip zombies
-  return s[close + 2] !== 'Z';
-}
-
-function findPiProcesses() {
-  if (TUI_PID !== null) return isAlive(TUI_PID) ? [TUI_PID] : [];
-  const out = [];
-  try {
-    for (const p of readdirSync('/proc')) {
-      if (!/^\d+$/.test(p)) continue;
-      const pid = Number(p);
-      if (pid === process.pid || !isAlive(pid)) continue;
-      let cmd = '';
-      try { cmd = readFileSync(`/proc/${pid}/cmdline`, 'utf8'); } catch { continue; }
-      const first = cmd.split('\0')[0] ?? '';
-      if (first.split('/').pop() === 'pi') out.push(pid);
-    }
-  } catch { /* on error return what we have */ }
-  return out;
-}
-
-function piProcessAlive() {
-  return findPiProcesses().length > 0;
-}
-
-async function newestFileIn(dir) {
-  try {
-    let newest = null;
-    let newestM = -1;
-    for (const f of await readdir(dir)) {
-      if (!f.endsWith('.jsonl')) continue;
-      const st = await stat(path.join(dir, f)).catch(() => null);
-      if (st && st.mtimeMs > newestM) { newestM = st.mtimeMs; newest = path.join(dir, f); }
-    }
-    return newest;
-  } catch { return null; }
-}
-
-async function newestSessionFileOverall() {
-  let newest = null;
-  let newestM = -1;
-  for (const dirEntry of await readdir(SESSIONS_ROOT, { withFileTypes: true })) {
-    if (!dirEntry.isDirectory()) continue;
-    const f = await newestFileIn(path.join(SESSIONS_ROOT, dirEntry.name));
-    if (f) {
-      const st = await stat(f).catch(() => null);
-      if (st && st.mtimeMs > newestM) { newestM = st.mtimeMs; newest = f; }
-    }
-  }
-  return newest;
-}
-
-/** Guess which session file a fresh TUI process is using. */
-async function detectTuiSessionFile(pids) {
-  // 1) the TUI's cwd encodes its sessions directory (--<cwd>--); the newest
-  //    file there is its session (freshly created, or the one it resumed)
-  for (const pid of pids) {
-    try {
-      const cwd = readlinkSync(`/proc/${pid}/cwd`);
-      // pi encodes the cwd as --<path>-- with '/' → '-', dropping the root
-      // slash: /workspace/sf → --workspace-sf--
-      const dir = path.join(SESSIONS_ROOT, '--' + cwd.replace(/^\//, '').replaceAll('/', '-') + '--');
-      const newest = await newestFileIn(dir);
-      if (newest) return newest;
-    } catch { /* try the next pid */ }
-  }
-  // 2) fallback: a session file created just now (a fresh TUI writes its
-  //    header + settings entries at startup)
-  const newest = await newestSessionFileOverall();
-  if (newest) {
-    const st = await stat(newest).catch(() => null);
-    if (st && Date.now() - st.mtimeMs < 60_000) return newest;
-  }
-  return null;
-}
-
-function relock(file) {
-  if (!file || tuiLockFile === file) return;
-  tuiLockFile = file;
-  console.log(`pi TUI detected — locking session ${file}`);
-  emit({ type: 'refresh', file });
-  emit({ type: 'refresh' });
-}
-
-function checkTuiLock() {
-  const pids = findPiProcesses();
-  if (pids.length === 0) {
-    tuiSeen = false;
-    if (tuiLockFile) {
-      console.log(`pi TUI process gone — auto-unlocking session ${tuiLockFile}`);
-      tuiLockFile = null;
-      emit({ type: 'refresh', file: LIVE_TUI_FILE });
-      emit({ type: 'refresh' });
-    }
-    return;
-  }
-  if (!tuiSeen) {
-    tuiSeen = true;
-    if (!tuiLockFile) {
-      // A TUI process appeared (or we started while one was running) and
-      // nothing is locked yet — engage the lock on its session.
-      if (TUI_PID !== null) {
-        relock(LIVE_TUI_FILE);
-      } else {
-        void detectTuiSessionFile(pids).then((file) => relock(file));
-      }
-    }
-  }
-}
-
-setInterval(checkTuiLock, 3000);
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`pi-agent-studio backend on 0.0.0.0:${PORT} (sdk: ${sdkDir})`);

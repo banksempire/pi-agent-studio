@@ -617,7 +617,6 @@ let anchorBottom = 0;
         <span class="chat-title-text">{{ session?.title ?? 'Chat' }}</span>
       </div>
       <div class="chat-header-right">
-        <span v-if="session?.tuiActive" class="chat-lock" title="This session is live in the pi TUI — read-only here">🔒 TUI</span>
         <span v-if="session?.stats.model" class="chat-model">{{ session.stats.model }}</span>
         <button
           v-if="session?.status === 'running'"
@@ -734,20 +733,17 @@ let anchorBottom = 0;
       </template>
     </div>
 
-    <!-- Composer (hidden entirely when the session is locked by the TUI) -->
     <div class="chat-composer">
       <div
-        v-if="!session?.tuiActive"
         class="chat-composer-handle"
         title="Drag to resize the input · double-click to reset"
         @mousedown="startResize"
         @dblclick="resetResize"
       ><span class="chat-composer-grip" /></div>
-      <div v-if="session?.tuiActive" class="chat-banner chat-banner--tui" title="Click to recheck lock status" @click="store.refreshList()">🔒 Live in the pi TUI — this window is read-only. (click to recheck)</div>
-      <div v-else-if="store.lastError" class="chat-banner chat-banner--error" @click="store.clearLastError()">
+      <div v-if="store.lastError" class="chat-banner chat-banner--error" @click="store.clearLastError()">
         ⚠ {{ store.lastError }} (click to dismiss)
       </div>
-      <template v-if="!session?.tuiActive">
+      <template>
         <!-- Slash command autocomplete -->
         <div v-if="completionOpen && !picker" class="chat-completions">
           <div

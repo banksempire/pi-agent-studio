@@ -61,8 +61,6 @@ export interface ChatSession {
   status: 'idle' | 'running';
   /** a manual /compact is running on the backend (LLM summarization) */
   compacting: boolean;
-  /** session is live in the pi TUI right now (read-only here) */
-  tuiActive: boolean;
   preview: string;
   stats: SessionStatsView;
   messages: DisplayMessage[];
@@ -151,7 +149,6 @@ interface SessionInfo {
   tokens: { input: number; output: number; total: number };
   cost: number;
   running: boolean;
-  tuiActive: boolean;
 }
 
 function toSession(raw: SessionInfo): ChatSession {
@@ -167,7 +164,6 @@ function toSession(raw: SessionInfo): ChatSession {
     createdAt: raw.created,
     lastActivity: raw.modified,
     status: raw.running ? 'running' : 'idle',
-    tuiActive: raw.tuiActive,
     preview: raw.preview || raw.firstMessage,
     stats: {
       model: raw.model,
@@ -454,7 +450,7 @@ export async function newChat(): Promise<void> {
       state.sessions.unshift({
         id, file, title: 'New Chat', cwd: NEW_CHAT_CWD,
         createdAt: now, lastActivity: now,
-        status: 'idle', compacting: false, tuiActive: false, preview: '',
+        status: 'idle', compacting: false, preview: '',
         stats: {
           model: null, tokensIn: 0, tokensOut: 0, costUsd: 0,
           startedAt: now, lastActivity: now, messageCount: 0, userMessages: 0,
@@ -508,10 +504,6 @@ export async function sendMessage(sessionId: string, text: string) {
   const trimmed = text.trim();
   if (!s || !trimmed) return;
   if (s.status === 'running') return;
-  if (s.tuiActive) {
-    state.lastError = 'This session is live in the pi TUI — open another chat to send messages.';
-    return;
-  }
   state.lastError = '';
 
   // Optimistic append (the backend confirms with the same text shortly).

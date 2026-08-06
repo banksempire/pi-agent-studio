@@ -7,13 +7,11 @@ const store = useChatStore();
 const active = computed(() => store.activeSessions());
 
 function badge(s: ChatSession): string {
-  if (s.tuiActive) return 'TUI';
   if (s.status === 'running') return store.isViewOpen(s.id) ? 'running' : 'running · bg';
   return store.isViewOpen(s.id) ? 'open' : 'idle';
 }
 
 function badgeClass(s: ChatSession): string {
-  if (s.tuiActive) return 'tui';
   if (s.status === 'running') return 'running';
   return 'open';
 }
@@ -39,7 +37,7 @@ function badgeClass(s: ChatSession): string {
       </div>
       <div class="chat-list-row2">
         <span class="chat-list-badge" :class="'chat-list-badge--' + badgeClass(s)">{{ badge(s) }}</span>
-        <span class="chat-list-preview">{{ s.tuiActive ? 'live in the pi TUI' : (s.preview || s.title) }}</span>
+        <span class="chat-list-preview">{{ s.preview || s.title }}</span>
       </div>
     </div>
   </div>

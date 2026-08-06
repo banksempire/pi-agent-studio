@@ -503,7 +503,19 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
-/** Composer height set by dragging the handle (null = default fixed height). */
+function autoGrow() {
+  const el = inputEl.value;
+  if (!el) return;
+  if (manualHeight.value !== null) {
+    // Drag-set height: fixed, no auto-grow.
+    el.style.height = manualHeight.value + 'px';
+    return;
+  }
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 160) + 'px';
+}
+
+/** Composer height set by dragging the handle (null = auto-grow). */
 const manualHeight = ref<number | null>(null);
 const MIN_INPUT_H = 60;
 const MAX_INPUT_H = 320;
@@ -532,9 +544,10 @@ function startResize(e: MouseEvent) {
   window.addEventListener('mouseup', onUp);
 }
 
-/** Reset to the default height on double-click of the handle. */
+/** Reset to auto-grow on double-click of the handle. */
 function resetResize() {
   manualHeight.value = null;
+  nextTick(autoGrow);
 }
 
 onMounted(() => {
@@ -700,8 +713,8 @@ onUnmounted(() => { resizeCleanup?.(); });
           class="chat-input"
           rows="1"
           :style="manualHeight !== null ? { height: manualHeight + 'px', maxHeight: manualHeight + 'px' } : {}"
-          placeholder="Message the pi agent…  (/ for commands, Enter to send, Shift+Enter for a new line)"
           @keydown="onKeydown"
+          @input="autoGrow"
         />
         <button
           class="chat-send-btn"

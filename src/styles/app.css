@@ -526,8 +526,7 @@
 .chat-input {
   flex: 1;
   resize: none;
-  /* Fixed default height — long text scrolls inside (no auto-grow). */
-  height: 80px;
+  max-height: 160px;   /* auto-grows with content, scrolls past this cap */
   overflow-y: auto;
   padding: 7px 10px;
   background: var(--sf-bg);

@@ -128,7 +128,7 @@ export interface WorkMove {
 
 export type ChatItem =
   | { kind: 'user' | 'system' | 'summary' | 'custom'; msg: DisplayMessage }
-  | { kind: 'reply'; msg: DisplayMessage; timeUsedMs: number; lastInTurn: boolean }
+  | { kind: 'reply'; msg: DisplayMessage; timeUsedMs: number; endTs: number; lastInTurn: boolean; trailing: boolean }
   | { kind: 'work'; id: string; moves: WorkMove[]; wip: boolean; startTs: number; durMs: number };
 
 function moveLabel(mv: WorkMove): string {
@@ -166,7 +166,7 @@ function agentMeta(item: Extract<ChatItem, { kind: 'reply' }>): string {
   const m = item.msg;
   const thinking = m.thinking ? ' · thinking' : '';
   const used = item.timeUsedMs > 0 ? ` · ${fmtSec(item.timeUsedMs)}` : '';
-  return `${roleLabel(m)} · ${m.model ?? '—'}${thinking} · ${fmtMsgTime(m.ts)}${used}`;
+  return `${roleLabel(m)} · ${m.model ?? '—'}${thinking} · ${fmtMsgTime(item.endTs)}${used}`;
 }
 
 /** Short duration: "<1s" / "12.3s" / "1m 30s". */
@@ -249,14 +249,29 @@ const items = computed<ChatItem[]>(() => {
         // boundary (this message's own ts would measure 0).
         flush(added ? (msgs[i + 1]?.ts ?? m.ts) : m.ts, false);
         // The agent may emit several text replies per turn — the status
-        // footer shows only after the LAST one (next user message).
+        // footer shows only after the LAST one (next user message), with the
+        // whole-job timing: time = when the turn finished (last message of
+        // the turn), time used = from the user's input until then.
         let lastInTurn = true;
+        let endTs = m.ts;
+        let startTs = 0;
+        let trailing = true;
+        for (let j = i - 1; j >= 0; j--) {
+          if (msgs[j].role === 'user') { startTs = msgs[j].ts; break; }
+        }
         for (let j = i + 1; j < msgs.length; j++) {
           const n = msgs[j];
-          if (n.role === 'user') break;
-          if (n.role === 'assistant' && n.text) { lastInTurn = false; break; }
+          if (n.role === 'user') { trailing = false; break; }
+          endTs = n.ts;
+          if (n.role === 'assistant' && n.text) lastInTurn = false;
         }
-        out.push({ kind: 'reply', msg: m, timeUsedMs: i > 0 ? Math.max(0, m.ts - msgs[i - 1].ts) : 0, lastInTurn });
+        out.push({
+          kind: 'reply', msg: m,
+          timeUsedMs: lastInTurn && startTs > 0 ? Math.max(0, endTs - startTs) : 0,
+          endTs,
+          lastInTurn,
+          trailing,
+        });
       }
       continue;
     }
@@ -687,7 +702,7 @@ let anchorBottom = 0;
             <span v-if="streaming && item.msg.id === lastMessage?.id" class="chat-cursor">▌</span>
             <div v-if="item.msg.stopReason === 'aborted'" class="chat-aborted">⏹ generation aborted</div>
             <div v-if="item.msg.error" class="chat-aborted chat-aborted--error">⚠ {{ item.msg.error }}</div>
-            <div v-if="item.lastInTurn" class="chat-msg-meta chat-msg-meta--agent">{{ agentMeta(item) }}</div>
+            <div v-if="item.lastInTurn && !(item.trailing && streaming)" class="chat-msg-meta chat-msg-meta--agent">{{ agentMeta(item) }}</div>
           </template>
 
           <!-- System (slash command output) -->

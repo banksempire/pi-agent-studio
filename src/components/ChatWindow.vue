@@ -349,7 +349,9 @@ function auditCompaction() {
   const s = session.value;
   if (!s || !s.compactResult) return;
   if (s.compactResult === 'done') {
-    const summary = s.messages.find(m => m.role === 'summary');
+    // The most recent summary is the one this compaction produced (a session
+    // can contain several from earlier compacts).
+    const summary = [...s.messages].reverse().find(m => m.role === 'summary');
     if (!summary) return;
     s.compactResult = null; // box disappears — the summary itself is the record
     nextTick(() => {

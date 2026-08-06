@@ -403,8 +403,8 @@ async function ensureSession(file) {
  */
 const STALE_RUN_MS = 20 * 60 * 1000;
 const WATCHDOG_INTERVAL_MS = 30 * 1000;
-/** Compact guard: refuse to rewrite a session file written within this window. */
-const EXTERNAL_WRITE_GRACE_MS = 15_000;
+/** Compact guard: skip a whole-file rewrite within this window of the last write. */
+const EXTERNAL_WRITE_GRACE_MS = 2_000;
 function scanStaleRuns() {
   const now = Date.now();
   for (const [file, live] of liveSessions) {
@@ -471,12 +471,17 @@ function attachSession(file, live) {
       case 'compaction_start':
         emit({ type: 'compaction_status', file, status: 'started' });
         break;
-      case 'compaction_end':
-        emit({ type: 'compaction_status', file, status: ev.errorMessage ? 'failed' : 'done' });
+      case 'compaction_end': {
+        // The SDK reports "Already compacted" as an error, but for the user the
+        // outcome is positive — the summary exists in the conversation, so show
+        // the done box (click-to-audit) instead of a misleading failed one.
+        const already = !!ev.errorMessage && /already compacted/i.test(ev.errorMessage);
+        emit({ type: 'compaction_status', file, status: !ev.errorMessage || already ? 'done' : 'failed' });
         if (!ev.errorMessage && ev.result?.summary) {
           emitMsg(file, { role: 'compactionSummary', summary: ev.result.summary, timestamp: Date.now() });
         }
         break;
+      }
       default:
         break;
     }
@@ -585,19 +590,33 @@ async function handleSlashCommand({ file, command, args, extra }) {
       if (live.status === 'running') {
         return { ok: false, error: 'Wait for the current response to finish before compacting.' };
       }
-      // Compaction rewrites the whole session file. If another client (e.g. the
-      // pi TUI) appended entries within the last few seconds, a rewrite here
-      // would race it and silently drop entries — guard with a clear message.
+      // Compaction rewrites the whole session file. The SDK reconciles
+      // concurrent appends (it re-reads the file before writing), but avoid a
+      // same-millisecond race with an external writer by skipping compacts
+      // within a tiny window of the last write. The window is small because
+      // the backend's OWN just-finished response also updates the mtime — a
+      // long window would block the user's normal "compact right after a
+      // reply" flow with a misleading "another client" error.
       try {
         const { mtimeMs } = statSync(file);
         if (Date.now() - mtimeMs < EXTERNAL_WRITE_GRACE_MS) {
-          return { ok: false, error: 'The session is being actively written by another client (e.g. the pi TUI) right now — try again in a moment.' };
+          return { ok: false, error: 'The session file was just modified — retry in a moment.' };
         }
       } catch {
         // file vanished — let the SDK surface the real error
       }
-      await live.session.compact(args?.trim() || undefined);
-      return { ok: true, notice: 'Compaction complete — the conversation was summarized.' };
+      try {
+        await live.session.compact(args?.trim() || undefined);
+        return { ok: true, notice: 'Compaction complete — the conversation was summarized.' };
+      } catch (e) {
+        // The SDK throws "Already compacted" when the last entry is already a
+        // compaction. That's a fine outcome — the summary is in the chat, and
+        // compaction_end was mapped to the done box, so the user can audit it.
+        if (e instanceof Error && /already compacted/i.test(e.message)) {
+          return { ok: true, notice: 'The conversation is already compacted — the latest summary is in the chat.' };
+        }
+        throw e;
+      }
     }
 
     case 'copy': {

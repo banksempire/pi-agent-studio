@@ -1216,16 +1216,6 @@
 .mm-item--cur {
   color: var(--sf-accent, #4f9cf7);
 }
-.mm-dot {
-  flex-shrink: 0;
-  font-size: 9px;
-  width: 10px;
-  text-align: center;
-  color: var(--sf-text-muted);
-}
-.mm-item--cur .mm-dot {
-  color: var(--sf-accent, #4f9cf7);
-}
 .mm-label {
   flex: 1;
   min-width: 0;

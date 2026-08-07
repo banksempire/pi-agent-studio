@@ -250,7 +250,6 @@ function thinkLabel(l: string) {
             :class="{ 'mm-item--on': hoveredProvider === p }"
             @mouseenter="onProviderEnter($event, p)"
           >
-            <span class="mm-dot">{{ catalog?.current?.provider === p ? '●' : '○' }}</span>
             <span class="mm-label">{{ p }}</span>
             <span class="mm-caret">▶</span>
           </div>
@@ -267,7 +266,6 @@ function thinkLabel(l: string) {
             :class="{ 'mm-item--on': hoveredModel === m }"
             @mouseenter="onModelEnter($event, m)"
           >
-            <span class="mm-dot">{{ isCurrentModel(m) ? '●' : '○' }}</span>
             <span class="mm-label" :title="`${m.provider}/${m.id}`">{{ m.name || m.id }}</span>
             <span class="mm-tag" :class="m.reasoning ? 'mm-tag--thinking' : 'mm-tag--plain'">
               {{ m.reasoning ? 'thinking' : 'plain' }}
@@ -288,7 +286,6 @@ function thinkLabel(l: string) {
             :title="LEVEL_DESCRIPTIONS[l] ?? ''"
             @click.stop="commit(hoveredModel, l)"
           >
-            <span class="mm-dot">{{ isCurrentModel(hoveredModel) && currentLevelFor(hoveredModel) === l ? '●' : '○' }}</span>
             <span class="mm-label">{{ thinkLabel(l) }}</span>
           </div>
         </div>

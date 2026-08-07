@@ -896,63 +896,6 @@
   white-space: nowrap;
 }
 
-.session-stats-rows {
-  padding: 0 8px;
-}
-
-.session-stats-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  padding: 3px 0;
-  font-size: 12px;
-}
-
-.session-stats-key {
-  color: var(--sf-text-muted);
-  flex-shrink: 0;
-}
-
-.session-stats-val {
-  color: var(--sf-text);
-  text-align: right;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--sf-mono);
-  font-size: 11px;
-}
-
-.session-stats-pill {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  padding: 1px 7px;
-  border-radius: 8px;
-  flex-shrink: 0;
-}
-
-.session-stats-pill--running {
-  background: rgba(78, 201, 176, 0.18);
-  color: #4ec9b0;
-}
-
-.session-stats-pill--idle {
-  background: var(--sf-bg-lighter);
-  color: var(--sf-text-muted);
-}
-
-.session-stats-pill--view {
-  background: var(--sf-accent-soft);
-  color: var(--sf-accent-dim);
-}
-
-.session-stats-pill--bg {
-  background: rgba(215, 186, 125, 0.12);
-  color: #d7ba7d;
-}
-
 .session-stats-empty {
   color: var(--sf-text-muted);
   font-size: 12px;
@@ -1118,30 +1061,6 @@
   font-size: 12px;
 }
 
-/* Current selection: Provider / Model / Thinking */
-.model-menu-cur {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-.model-menu-cur-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.model-menu-cur-key {
-  color: var(--sf-text-muted);
-  width: 56px;
-  flex-shrink: 0;
-}
-.model-menu-cur-val {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* [Change Model] — opens the unified Menu flyout */
 .model-menu-btn {
   display: flex;
@@ -1189,3 +1108,23 @@
   background: var(--sf-border, rgba(128, 128, 128, 0.25));
   margin: 2px 0 6px;
 }
+
+/* App-specific kv-pill tones (base + generic tones live in the framework). */
+.kv-pill--running {
+  background: rgba(78, 201, 176, 0.18);
+  color: #4ec9b0;
+}
+.kv-pill--idle {
+  background: var(--sf-bg-lighter);
+  color: var(--sf-text-muted);
+}
+.kv-pill--view {
+  background: var(--sf-accent-soft);
+  color: var(--sf-accent-dim);
+}
+.kv-pill--bg {
+  background: rgba(215, 186, 125, 0.12);
+  color: #d7ba7d;
+}
+
+/* The model block sits inside the stats sub-section: same side padding. */

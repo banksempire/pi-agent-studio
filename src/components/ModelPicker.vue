@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import Menu from '@sf/components/Menu.vue';
+import KeyValueList from '@sf/components/KeyValueList.vue';
+import type { KeyValueItem } from '@sf/types/panel';
 import type { MenuNodeDef } from '@sf/types/layout';
 import { useChatStore } from '../store/chat';
 
@@ -126,6 +128,12 @@ const thinkingLabel = computed(() => {
   return lvl && lvl !== 'off' ? lvl : '(None)';
 });
 
+const modelRows = computed<KeyValueItem[]>(() => [
+  { key: 'Provider', value: current.value?.provider ?? '—' },
+  { key: 'Model', value: current.value?.name || current.value?.id || '—' },
+  { key: 'Thinking', value: thinkingLabel.value },
+]);
+
 async function commit(m: ModelInfo, thinkLevel: string) {
   const s = active.value;
   if (!s?.file || busy.value) return;
@@ -164,23 +172,9 @@ async function commit(m: ModelInfo, thinkLevel: string) {
 
 <template>
   <div class="model-menu">
-    <!-- Current selection: Provider / Model / Thinking -->
-    <div class="model-menu-cur">
-      <div class="model-menu-cur-row">
-        <span class="model-menu-cur-key">Provider</span>
-        <span class="model-menu-cur-val" :title="current?.provider ?? ''">{{ current?.provider ?? '—' }}</span>
-      </div>
-      <div class="model-menu-cur-row">
-        <span class="model-menu-cur-key">Model</span>
-        <span class="model-menu-cur-val" :title="current ? `${current.provider}/${current.id}` : ''">
-          {{ current?.name || current?.id || '—' }}
-        </span>
-      </div>
-      <div class="model-menu-cur-row">
-        <span class="model-menu-cur-key">Thinking</span>
-        <span class="model-menu-cur-val">{{ thinkingLabel }}</span>
-      </div>
-    </div>
+    <!-- Current selection: Provider / Model / Thinking (same key-value
+         layout as the stats rows above — the unified KeyValueList). -->
+    <KeyValueList :items="modelRows" />
 
     <Menu :items="menuItems" :open="open" @update:open="(v) => (open = v)" @select="onSelect">
       <template #trigger="{ toggle, open: isOpen }">

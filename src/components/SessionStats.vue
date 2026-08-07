@@ -5,6 +5,8 @@ import {
   type ChatSession,
 } from '../store/chat';
 import ModelPicker from './ModelPicker.vue';
+import KeyValueList from '@sf/components/KeyValueList.vue';
+import type { KeyValueItem } from '@sf/types/panel';
 
 const store = useChatStore();
 
@@ -27,19 +29,18 @@ watch(
 );
 onUnmounted(() => { if (timer !== null) window.clearInterval(timer); });
 
-interface StatRow { key: string; value: string; kind?: 'status' | 'view' }
-
 function shortFile(file: string): string {
   return file.split('/').pop() ?? file;
 }
 
-const rows = computed<StatRow[]>(() => {
+const rows = computed<KeyValueItem[]>(() => {
   const s = session.value;
   if (!s) return [];
   const end = s.status === 'running' ? now.value : Math.max(s.stats.lastActivity, s.stats.startedAt);
   const dur = Math.max(0, (end - s.stats.startedAt) / 1000);
+  const viewOpen = store.isViewOpen(s.id);
   return [
-    { key: 'Status', value: s.status, kind: 'status' },
+    { key: 'Status', value: s.status, pill: true },
     { key: 'Working dir', value: s.cwd || '—' },
     { key: 'Tokens in', value: fmtTokens(s.stats.tokensIn) },
     { key: 'Tokens out', value: fmtTokens(s.stats.tokensOut) },
@@ -49,7 +50,7 @@ const rows = computed<StatRow[]>(() => {
     { key: 'Started', value: fmtTime(s.stats.startedAt) },
     { key: 'Last activity', value: fmtTime(s.stats.lastActivity) },
     { key: 'Messages', value: String(s.stats.messageCount) },
-    { key: 'View', value: store.isViewOpen(s.id) ? 'open' : 'closed', kind: 'view' },
+    { key: 'View', value: viewOpen ? 'open' : 'closed', pill: true, tone: viewOpen ? 'view' : 'bg' },
   ];
 });
 </script>
@@ -63,20 +64,7 @@ const rows = computed<StatRow[]>(() => {
       </div>
       <div class="session-stats-file" :title="session.file">{{ shortFile(session.file) }}</div>
       <div class="session-stats-rows">
-        <div v-for="r in rows" :key="r.key" class="session-stats-row">
-          <span class="session-stats-key">{{ r.key }}</span>
-          <span
-            v-if="r.kind === 'status'"
-            class="session-stats-pill"
-            :class="'session-stats-pill--' + r.value"
-          >{{ r.value }}</span>
-          <span
-            v-else-if="r.kind === 'view'"
-            class="session-stats-pill"
-            :class="r.value === 'open' ? 'session-stats-pill--view' : 'session-stats-pill--bg'"
-          >{{ r.value }}</span>
-          <span v-else class="session-stats-val">{{ r.value }}</span>
-        </div>
+        <KeyValueList :items="rows" />
       </div>
       <div class="session-stats-divider" />
       <ModelPicker />

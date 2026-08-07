@@ -1108,3 +1108,162 @@
 .chat-msg-md th { background: var(--sf-bg-hover); }
 .chat-msg-md hr { border: none; border-top: 1px solid var(--sf-border); margin: 0.6em 0; }
 .chat-msg-md img { max-width: 100%; border-radius: 4px; }
+
+/* ── Model picker (right panel: Provider → Model → Think level) ──────────── */
+
+.model-menu {
+  padding: 4px 8px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 12px;
+  user-select: none;
+}
+
+/* Current selection summary */
+.model-menu-current {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 2px 5px;
+  border-bottom: 1px solid var(--sf-border, rgba(128, 128, 128, 0.25));
+  margin-bottom: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.model-menu-cur-prov {
+  color: var(--sf-accent, #4f9cf7);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.model-menu-cur-model {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+  min-width: 0;
+}
+.model-menu-cur-level {
+  color: var(--sf-text-muted);
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: 10px;
+}
+.model-menu-hint {
+  color: var(--sf-text-muted);
+  font-size: 11px;
+}
+
+/* Breadcrumb */
+.model-menu-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 2px 4px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.model-menu-crumb {
+  background: none;
+  border: none;
+  padding: 1px 4px;
+  font-size: 11px;
+  color: var(--sf-text-muted);
+  cursor: pointer;
+  border-radius: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 110px;
+}
+.model-menu-crumb:hover:not(:disabled) {
+  background: rgba(128, 128, 128, 0.15);
+  color: var(--sf-text);
+}
+.model-menu-crumb--on {
+  color: var(--sf-accent, #4f9cf7);
+  font-weight: 600;
+}
+.model-menu-crumb:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.model-menu-crumb-sep {
+  color: var(--sf-text-muted);
+  font-size: 9px;
+  opacity: 0.6;
+}
+
+/* Rows */
+.model-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.model-menu-row:hover {
+  background: rgba(128, 128, 128, 0.14);
+}
+.model-menu-row--current {
+  color: var(--sf-accent, #4f9cf7);
+}
+.model-menu-dot {
+  flex-shrink: 0;
+  font-size: 9px;
+  width: 10px;
+  text-align: center;
+  color: var(--sf-text-muted);
+}
+.model-menu-row--current .model-menu-dot {
+  color: var(--sf-accent, #4f9cf7);
+}
+.model-menu-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+  min-width: 0;
+}
+.model-menu-count {
+  margin-left: auto;
+  color: var(--sf-text-muted);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.model-menu-tag {
+  margin-left: auto;
+  font-size: 9px;
+  padding: 0 5px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+.model-menu-tag--thinking {
+  background: rgba(79, 156, 247, 0.18);
+  color: var(--sf-accent, #4f9cf7);
+}
+.model-menu-tag--plain {
+  background: rgba(128, 128, 128, 0.16);
+  color: var(--sf-text-muted);
+}
+.model-menu-desc {
+  margin-left: auto;
+  color: var(--sf-text-muted);
+  font-size: 10px;
+  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 45%;
+}
+.model-menu-muted {
+  color: var(--sf-text-muted);
+  cursor: default;
+}
+.model-menu-error {
+  color: #e5484d;
+  cursor: default;
+}
+.model-menu-notice {
+  color: #46a758;
+  cursor: default;
+}

@@ -1,0 +1,114 @@
+syntax = "proto3";
+
+package pi_nest;
+
+// pi-nest: a standalone host that owns pi agent sessions and their work
+// queues, so that front-end services (pi-agent-studio today, sub-agent
+// tooling later) can restart freely without killing running agents.
+//
+// Extensibility: everything is addressed by agent_id. Today agent_id is a
+// session file path; later it may be any registered agent (a sub-agent with
+// its own role/model/cwd). Future RPCs (DefineAgent, ListAgents, RunTask,
+// SubscribeAll, ...) get added to this service; the event vocabulary stays
+// JSON-payload based so it can grow without a proto bump.
+
+service PiNest {
+  // Health check — clients retry until this succeeds.
+  rpc Ping(PingRequest) returns (PingResponse);
+
+  // Reserve a new session (lazy): returns a path that materializes into a
+  // real agent on the first Prompt. The reservation lives here, so it
+  // survives app restarts.
+  rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse);
+
+  // Idempotent: open the agent for agent_id (or return the live one).
+  rpc OpenAgent(OpenAgentRequest) returns (OpenAgentResponse);
+
+  rpc CloseAgent(CloseAgentRequest) returns (CloseAgentResponse);
+
+  // Long-running unary: enqueues a user message on the agent's FIFO and
+  // resolves when that turn completes. Concurrent calls serialize.
+  rpc Prompt(PromptRequest) returns (PromptResponse);
+
+  rpc Abort(AbortRequest) returns (AbortResponse);
+
+  // Execute a slash command against an agent (or globally).
+  rpc Slash(SlashRequest) returns (SlashResponse);
+
+  // Slash command catalog (builtins + skills) for autocomplete.
+  rpc GetSlashCatalog(GetSlashCatalogRequest) returns (GetSlashCatalogResponse);
+
+  // Live states of every open/pending agent (used by list overlays).
+  rpc ListStates(ListStatesRequest) returns (ListStatesResponse);
+
+  rpc GetAgentState(GetAgentStateRequest) returns (GetAgentStateResponse);
+
+  // Server-stream: agent events, one per message (see AgentEvent.json).
+  rpc Subscribe(SubscribeRequest) returns (stream AgentEvent);
+}
+
+message PingRequest {}
+message PingResponse { bool ok = 1; }
+
+message CreateSessionRequest { string cwd = 1; }
+message CreateSessionResponse { string file = 1; }
+
+message OpenAgentRequest { string agent_id = 1; }
+message OpenAgentResponse { bool ok = 1; AgentState state = 2; }
+
+message CloseAgentRequest { string agent_id = 1; }
+message CloseAgentResponse { bool ok = 1; }
+
+message PromptRequest {
+  string agent_id = 1;
+  string message = 2;
+  // true (default from the app): cut the current turn short and run this
+  // message promptly. false (/wait): queue — run after the current turn
+  // finishes naturally.
+  bool interrupt = 3;
+}
+message PromptResponse { bool ok = 1; string error = 2; }
+
+message AbortRequest { string agent_id = 1; }
+message AbortResponse { bool ok = 1; }
+
+message SlashRequest {
+  string agent_id = 1;   // "" = global command
+  string command = 2;
+  string args = 3;
+  string extra_json = 4; // frontend extras (entryId, modelIds, ...)
+}
+message SlashResponse {
+  bool ok = 1;
+  string notice = 2;
+  string error = 3;
+  string data_json = 4;  // opaque payload the app passes through
+}
+
+message GetSlashCatalogRequest {}
+message GetSlashCatalogResponse {
+  string commands_json = 1;  // [{name, description, argumentHint, available, naReason}]
+  string skills_json = 2;    // [{name, description}]
+}
+
+message ListStatesRequest {}
+message ListStatesResponse { repeated AgentState states = 1; }
+
+message GetAgentStateRequest { string agent_id = 1; }
+message GetAgentStateResponse { AgentState state = 1; }
+
+message AgentState {
+  string agent_id = 1;
+  string status = 2;      // "" | pending | idle | running
+  double running_since_ms = 3;
+  double last_event_at_ms = 4;
+  int32 queue_depth = 5;  // waiting + running ops
+  string last_error = 6;
+}
+
+message SubscribeRequest { string agent_id = 1; }  // "" = all agents
+message AgentEvent {
+  string type = 1;   // message | session_status | refresh | tool_* | compaction_status | ...
+  string file = 2;   // the session file (== agent_id today)
+  string json = 3;   // payload: display message / status / tool info — grows freely
+}

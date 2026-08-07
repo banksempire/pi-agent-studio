@@ -131,6 +131,12 @@ export function createServer({ registry = new AgentRegistry(), onStateChange } =
         } catch { /* client gone */ }
       };
       registry.on('event', handler);
+      // Replay the current per-agent state: a (re)connecting relay must not
+      // lose in-flight transient events (compaction WIP, run status flips)
+      // that were broadcast while its stream was down.
+      for (const snap of registry.snapshot(filter)) {
+        try { call.write(snap); } catch { /* client gone */ }
+      }
       call.on('cancelled', () => registry.off('event', handler));
       call.on('error', () => registry.off('event', handler));
     },

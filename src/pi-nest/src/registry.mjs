@@ -79,6 +79,7 @@ export class AgentRegistry extends EventEmitter {
       session,
       status: 'idle',
       runningSince: null,
+      compacting: false,
       lastEventAt: Date.now(),
       // Per-agent FIFO: concurrent prompts (e.g. two chat windows on the same
       // session) run strictly one after another instead of racing the SDK.
@@ -213,6 +214,30 @@ export class AgentRegistry extends EventEmitter {
     }
   }
 
+  /** Current per-agent state, replayed to a (re)connecting subscriber.
+   *  Transient events (compaction WIP, run status) are lost when a relay
+   *  stream drops mid-run — the snapshot reconstructs them so the frontend
+   *  re-syncs instead of silently missing the in-flight state. */
+  snapshot(agentId) {
+    const out = [];
+    for (const [id, live] of this.#live) {
+      if (agentId && id !== agentId) continue;
+      out.push({
+        type: 'session_status',
+        file: id,
+        json: JSON.stringify({ status: live.status, runningSince: live.runningSince ?? 0 }),
+      });
+      if (live.compacting) {
+        out.push({
+          type: 'compaction_status',
+          file: id,
+          json: JSON.stringify({ status: 'started' }),
+        });
+      }
+    }
+    return out;
+  }
+
   #attach(agentId, live) {
     live.session.subscribe((ev) => {
       live.lastEventAt = Date.now();
@@ -276,9 +301,11 @@ export class AgentRegistry extends EventEmitter {
           this.broadcast('refresh', agentId, {});
           break;
         case 'compaction_start':
+          live.compacting = true;
           this.broadcast('compaction_status', agentId, { status: 'started' });
           break;
         case 'compaction_end': {
+          live.compacting = false;
           // The SDK reports "Already compacted" as an error, but for the user
           // the outcome is positive — the summary exists in the conversation,
           // so show the done box (click-to-audit) instead of a failed one.

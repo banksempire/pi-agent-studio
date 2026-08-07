@@ -347,49 +347,34 @@ watch(
 );
 
 /**
- * Flash the /compact box green (done) / red (failed) when the status flips.
- * The result itself persists on the session so the box stays for auditing.
+ * /compact result handling: the status box exists ONLY while compacting.
+ * On success it vanishes immediately — the compaction summary entry that
+ * lands in the flow is the record. On failure it stays briefly with a red
+ * flash so the failure is visible, then dismisses itself.
  */
-const compactFlash = ref<'ok' | 'fail' | null>(null);
+const compactFlash = ref<'fail' | null>(null);
 watch(
   () => session.value?.compactResult,
-  (res, prev) => {
-    if (!res || res === prev) return;
-    compactFlash.value = res === 'done' ? 'ok' : 'fail';
-    window.setTimeout(() => { compactFlash.value = null; }, 1400);
+  (res) => {
+    if (!res) return;
+    if (res === 'done') {
+      session.value!.compactResult = null;
+    } else {
+      compactFlash.value = 'fail';
+      window.setTimeout(() => {
+        compactFlash.value = null;
+        if (session.value?.compactResult === 'failed') session.value.compactResult = null;
+      }, 1500);
+    }
   },
 );
 
-/** Click-to-audit: reveal the summary (an ActionBubble-style box) in the flow,
- *  highlight it, clear the box. A click on the failed box just dismisses it. */
-function auditCompaction() {
-  const s = session.value;
-  if (!s || !s.compactResult) return;
-  if (s.compactResult === 'done') {
-    // The most recent summary is the one this compaction produced (a session
-    // can contain several from earlier compacts). Expand it, then scroll to it
-    // so the compacted context is actually revealed (not just linked).
-    const summary = [...s.messages].reverse().find(m => m.role === 'summary');
-    if (!summary) return;
-    s.compactResult = null; // box disappears — the summary itself is the record
-    expandedSummaries.value = new Set([...expandedSummaries.value, summary.id]);
-    flashingSummary.value = summary.id;
-    window.setTimeout(() => {
-      if (flashingSummary.value === summary.id) flashingSummary.value = null;
-    }, 1600);
-    nextTick(() => {
-      const target = listEl.value?.querySelector<HTMLElement>(`[data-msg-id="${CSS.escape(summary.id)}"]`);
-      target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    });
-  } else {
-    s.compactResult = null; // failed — dismiss the box
-  }
-}
-
-/** The /compact status rendered as an ActionBubble (one-bubble group). */
+/** The /compact status rendered as an ActionBubble (one-bubble group): the
+ *  WIP box while compacting; on failure a transient red box until the flash
+ *  timer above dismisses it. There is no done box. */
 const compactGroup = computed<ActionGroup | null>(() => {
   const s = session.value;
-  if (!s || (!s.compacting && !s.compactResult)) return null;
+  if (!s || (!s.compacting && s.compactResult !== 'failed')) return null;
   const started = s.compactStartedAt || Date.now();
   const g = new ActionGroup('compact', started);
   const b = new ActionBubble('compaction', 'compact:0', 'Compaction', started);
@@ -397,9 +382,6 @@ const compactGroup = computed<ActionGroup | null>(() => {
     g.wip = true;
     b.live = true;
     b.status = 'pending';
-  } else if (s.compactResult === 'done') {
-    b.status = 'ok';
-    b.durMs = Math.max(0, (s.compactEndedAt || started) - started);
   } else {
     b.status = 'fail';
     b.durMs = Math.max(0, (s.compactEndedAt || started) - started);
@@ -883,30 +865,27 @@ let anchorBottom = 0;
 
         </div>
 
-        <!-- /compact status as an ActionBubble: WIP shows [Compaction|ani|time],
-             done/failed show [Compaction done/failed|total time] with a green/
-             red flash; clicking a done box audits the summary. -->
+        <!-- /compact status as an ActionBubble: WIP shows [Compaction|ani|time]
+             while compacting; on failure it flashes red briefly and dismisses.
+             There is no done box — the compaction summary entry in the flow
+             is the record. -->
         <div
           v-if="compactGroup"
           class="chat-work chat-work--wip chat-compacting"
           :class="[
-            !compactGroup.wip && compactGroup.bubbles[0].status === 'ok' ? 'chat-compacting--done' : '',
             !compactGroup.wip && compactGroup.bubbles[0].status === 'fail' ? 'chat-compacting--failed' : '',
-            compactFlash === 'ok' ? 'chat-work--flash-ok' : '',
             compactFlash === 'fail' ? 'chat-work--flash-fail' : '',
           ]"
-          :title="!compactGroup.wip && compactGroup.bubbles[0].status === 'ok' ? 'Click to view the summary' : ''"
-          @click="auditCompaction()"
         >
           <div class="chat-work-head">
-            <span class="chat-work-toggle">{{ compactGroup.wip ? '▸' : (compactGroup.bubbles[0].status === 'ok' ? '✓' : '✕') }}</span>
+            <span class="chat-work-toggle">{{ compactGroup.wip ? '▸' : '✕' }}</span>
             <template v-if="compactGroup.wip">
               <span class="chat-ab-name">Compaction</span>
               <span class="chat-ab-dots">{{ '.'.repeat(dots) }}</span>
               <span class="chat-ab-time">{{ fmtSec(now - compactGroup.startTs) }}</span>
             </template>
             <template v-else>
-              <span class="chat-ab-name">{{ compactGroup.bubbles[0].status === 'ok' ? 'Compaction done' : 'Compaction failed' }}</span>
+              <span class="chat-ab-name">Compaction failed</span>
               <span class="chat-ab-time">{{ fmtSec(compactGroup.bubbles[0].durMs) }}</span>
             </template>
           </div>

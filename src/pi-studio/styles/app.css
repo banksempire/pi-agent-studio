@@ -308,20 +308,7 @@
   color: var(--sf-text);
 }
 
-/* /compact done/failed states. */
-.chat-compacting--done {
-  border-color: rgba(78, 201, 176, 0.45);
-  cursor: pointer;
-}
-.chat-compacting--done:hover {
-  background: rgba(78, 201, 176, 0.08);
-}
-.chat-compacting--done .chat-work-toggle {
-  color: var(--sf-ok, #4ec9b0);
-}
-.chat-compacting--done .chat-ab-name {
-  color: #4ec9b0;
-}
+/* /compact failed state: a transient red box (the flash dismisses it). */
 .chat-compacting--failed .chat-ab-name {
   color: #f87171;
 }

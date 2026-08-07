@@ -186,6 +186,11 @@ export async function runSlash(sessionId: string, text: string): Promise<SlashRe
   try {
     const r = await postSlash({ file, command, args, extra: {} });
 
+    // /compact: no system line — the WIP action-bubble shows progress, the
+    // summary entry in the flow is the result record, and a failed compaction
+    // flashes the bubble red. A text line here was unwanted noise.
+    if (command === 'compact') return { kind: 'none' };
+
     if (!r.ok) return { kind: 'error', text: r.error ?? `/${command} failed` };
     if (r.data?.file) {
       // clone / fork / import / new: open the resulting session window.

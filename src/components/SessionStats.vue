@@ -4,6 +4,7 @@ import {
   useChatStore, fmtCost, fmtDuration, fmtTime, fmtTokens,
   type ChatSession,
 } from '../store/chat';
+import ModelPicker from './ModelPicker.vue';
 
 const store = useChatStore();
 
@@ -39,7 +40,6 @@ const rows = computed<StatRow[]>(() => {
   const dur = Math.max(0, (end - s.stats.startedAt) / 1000);
   return [
     { key: 'Status', value: s.status, kind: 'status' },
-    { key: 'Model', value: s.stats.model ?? '—' },
     { key: 'Working dir', value: s.cwd || '—' },
     { key: 'Tokens in', value: fmtTokens(s.stats.tokensIn) },
     { key: 'Tokens out', value: fmtTokens(s.stats.tokensOut) },
@@ -78,6 +78,8 @@ const rows = computed<StatRow[]>(() => {
           <span v-else class="session-stats-val">{{ r.value }}</span>
         </div>
       </div>
+      <div class="session-stats-divider" />
+      <ModelPicker />
     </template>
     <div v-else class="session-stats-empty">
       No chat window activated.<br />

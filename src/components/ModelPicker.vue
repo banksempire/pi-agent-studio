@@ -114,18 +114,17 @@ const menuItems = computed<MenuNodeDef[]>(() =>
   })),
 );
 
-const currentSummary = computed(() => {
-  const cur = catalog.value?.current;
-  if (!cur) return '—';
-  const lvl = catalog.value?.currentThinkingLevel;
-  const levelLabel = lvl && lvl !== 'off' ? lvl : '(None)';
-  return `${cur.provider}/${cur.name || cur.id} · ${levelLabel}`;
-});
-
 function onSelect(item: MenuNodeDef) {
   const d = item.data as { model: ModelInfo; level: string } | undefined;
   if (d) void commit(d.model, d.level);
 }
+
+/** Current model's display values for the Provider / Model / Thinking lines. */
+const current = computed(() => catalog.value?.current ?? null);
+const thinkingLabel = computed(() => {
+  const lvl = catalog.value?.currentThinkingLevel;
+  return lvl && lvl !== 'off' ? lvl : '(None)';
+});
 
 async function commit(m: ModelInfo, thinkLevel: string) {
   const s = active.value;
@@ -165,12 +164,28 @@ async function commit(m: ModelInfo, thinkLevel: string) {
 
 <template>
   <div class="model-menu">
+    <!-- Current selection: Provider / Model / Thinking -->
+    <div class="model-menu-cur">
+      <div class="model-menu-cur-row">
+        <span class="model-menu-cur-key">Provider</span>
+        <span class="model-menu-cur-val" :title="current?.provider ?? ''">{{ current?.provider ?? '—' }}</span>
+      </div>
+      <div class="model-menu-cur-row">
+        <span class="model-menu-cur-key">Model</span>
+        <span class="model-menu-cur-val" :title="current ? `${current.provider}/${current.id}` : ''">
+          {{ current?.name || current?.id || '—' }}
+        </span>
+      </div>
+      <div class="model-menu-cur-row">
+        <span class="model-menu-cur-key">Thinking</span>
+        <span class="model-menu-cur-val">{{ thinkingLabel }}</span>
+      </div>
+    </div>
+
     <Menu :items="menuItems" :open="open" @update:open="(v) => (open = v)" @select="onSelect">
       <template #trigger="{ toggle, open: isOpen }">
-        <button class="model-menu-trigger" :disabled="busy" @click="toggle">
-          <span class="model-menu-trigger-label">Model</span>
-          <span class="model-menu-trigger-cur" :title="currentSummary">{{ currentSummary }}</span>
-          <span class="model-menu-trigger-caret">{{ isOpen ? '▲' : '▾' }}</span>
+        <button class="model-menu-btn" :disabled="busy" @click="toggle">
+          Change Model<span class="model-menu-btn-caret">{{ isOpen ? '▲' : '▾' }}</span>
         </button>
       </template>
     </Menu>
@@ -179,6 +194,6 @@ async function commit(m: ModelInfo, thinkLevel: string) {
     <div v-if="notice" class="model-menu-note model-menu-note--ok">{{ notice }}</div>
     <div v-else-if="error" class="model-menu-note model-menu-note--err">{{ error }}</div>
     <div v-else-if="loading" class="model-menu-note">Loading models…</div>
-    <div v-else-if="!active && !catalog" class="model-menu-note">Open a chat window to change its model.</div>
+    <div v-else-if="!active" class="model-menu-note">Open a chat window to change its model.</div>
   </div>
 </template>

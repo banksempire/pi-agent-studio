@@ -1108,21 +1108,46 @@
 .chat-msg-md th { background: var(--sf-bg-hover); }
 .chat-msg-md hr { border: none; border-top: 1px solid var(--sf-border); margin: 0.6em 0; }
 .chat-msg-md img { max-width: 100%; border-radius: 4px; }
-/* ── Model menu (right panel — unified Menu flyout) ─────────────────────── */
+/* ── Model menu (Stats sub-section — unified Menu flyout) ───────────────── */
 
 .model-menu {
-  padding: 6px 8px;
+  padding: 0 8px 6px;
   display: flex;
   flex-direction: column;
   gap: 4px;
   font-size: 12px;
 }
 
-/* Menu-bar-style trigger */
-.model-menu-trigger {
+/* Current selection: Provider / Model / Thinking */
+.model-menu-cur {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.model-menu-cur-row {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.model-menu-cur-key {
+  color: var(--sf-text-muted);
+  width: 56px;
+  flex-shrink: 0;
+}
+.model-menu-cur-val {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* [Change Model] — opens the unified Menu flyout */
+.model-menu-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   width: 100%;
   background: rgba(128, 128, 128, 0.12);
   border: 1px solid rgba(128, 128, 128, 0.25);
@@ -1131,32 +1156,17 @@
   font: inherit;
   color: inherit;
   cursor: pointer;
-  text-align: left;
 }
-.model-menu-trigger:hover:not(:disabled) {
+.model-menu-btn:hover:not(:disabled) {
   background: rgba(128, 128, 128, 0.2);
 }
-.model-menu-trigger:disabled {
+.model-menu-btn:disabled {
   opacity: 0.6;
   cursor: default;
 }
-.model-menu-trigger-label {
-  font-weight: 600;
-  flex-shrink: 0;
-}
-.model-menu-trigger-cur {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
-  min-width: 0;
-  color: var(--sf-text-muted);
-  font-size: 11px;
-}
-.model-menu-trigger-caret {
+.model-menu-btn-caret {
   color: var(--sf-text-muted);
   font-size: 9px;
-  flex-shrink: 0;
 }
 
 .model-menu-note {
@@ -1171,4 +1181,11 @@
 }
 .model-menu-note--err {
   color: #e5484d;
+}
+
+/* Segregation line between the stats rows and the model block */
+.session-stats-divider {
+  height: 1px;
+  background: var(--sf-border, rgba(128, 128, 128, 0.25));
+  margin: 2px 0 6px;
 }

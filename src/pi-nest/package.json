@@ -1,0 +1,14 @@
+{
+  "name": "pi-nest",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone host for pi agent sessions: owns the live agents and their per-agent work queues so front-end services can restart freely. gRPC service, designed to grow into a swamp of (sub-)agents.",
+  "scripts": {
+    "start": "node src/index.mjs"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.10.0",
+    "@grpc/proto-loader": "^0.7.13"
+  }
+}

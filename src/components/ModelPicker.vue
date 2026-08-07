@@ -177,9 +177,9 @@ async function commit(m: ModelInfo, thinkLevel: string) {
     <KeyValueList :items="modelRows" />
 
     <Menu :items="menuItems" :open="open" @update:open="(v) => (open = v)" @select="onSelect">
-      <template #trigger="{ toggle, open: isOpen }">
+      <template #trigger="{ toggle }">
         <button class="model-menu-btn" :disabled="busy" @click="toggle">
-          Change Model<span class="model-menu-btn-caret">{{ isOpen ? '▲' : '▾' }}</span>
+          Change Model
         </button>
       </template>
     </Menu>

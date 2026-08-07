@@ -1108,7 +1108,7 @@
 .chat-msg-md th { background: var(--sf-bg-hover); }
 .chat-msg-md hr { border: none; border-top: 1px solid var(--sf-border); margin: 0.6em 0; }
 .chat-msg-md img { max-width: 100%; border-radius: 4px; }
-/* ── Model menu (right panel — traditional flyout, menu-bar style) ───────── */
+/* ── Model menu (right panel — unified Menu flyout) ─────────────────────── */
 
 .model-menu {
   padding: 6px 8px;
@@ -1116,10 +1116,9 @@
   flex-direction: column;
   gap: 4px;
   font-size: 12px;
-  user-select: none;
 }
 
-/* Trigger button, menu-bar style */
+/* Menu-bar-style trigger */
 .model-menu-trigger {
   display: flex;
   align-items: center;
@@ -1172,78 +1171,4 @@
 }
 .model-menu-note--err {
   color: #e5484d;
-}
-
-/* The flyout popup + submenus — all position: fixed so no ancestor overflow
-   can clip them (the right panel sits at the viewport edge; submenus open
-   LEFT of their parent item). Scrolling lives in the inner .mm-scroll. */
-.model-menu-pop,
-.mm-sub {
-  position: fixed;
-  z-index: 1000;
-  min-width: var(--mm-w, 190px);
-  background: var(--sf-surface, #1e1f24);
-  border: 1px solid rgba(128, 128, 128, 0.35);
-  border-radius: 4px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
-  padding: 3px;
-  font-size: 12px;
-}
-.mm-sub {
-  z-index: 1001;
-  min-width: 210px;
-}
-.mm-scroll {
-  max-height: 62vh;
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-
-/* One item row in any level */
-.mm-item {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 2px 6px;
-  border-radius: 3px;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.mm-item:hover,
-.mm-item--on {
-  background: rgba(79, 156, 247, 0.22);
-}
-.mm-item--cur {
-  color: var(--sf-accent, #4f9cf7);
-}
-.mm-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.mm-tag {
-  font-size: 9px;
-  padding: 0 5px;
-  border-radius: 6px;
-  flex-shrink: 0;
-}
-.mm-tag--thinking {
-  background: rgba(79, 156, 247, 0.18);
-  color: var(--sf-accent, #4f9cf7);
-}
-.mm-tag--plain {
-  background: rgba(128, 128, 128, 0.16);
-  color: var(--sf-text-muted);
-}
-.mm-caret {
-  color: var(--sf-text-muted);
-  font-size: 9px;
-  flex-shrink: 0;
-}
-
-/* The flyout region: the popup + submenus are fixed-positioned siblings;
-   the (zero-size) region owns the mouseleave that closes the whole menu. */
-.model-menu-region {
-  position: static;
 }

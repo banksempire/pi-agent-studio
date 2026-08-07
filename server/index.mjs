@@ -15,7 +15,7 @@
  * survives is the (stateless) session-file parser below.
  */
 import { createServer } from 'node:http';
-import { existsSync } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -144,123 +144,186 @@ function leafChain(entries) {
   return chain;
 }
 
-/** Cache of parsed session bases, invalidated by (mtime, size). Re-parsing
- *  every session file on each /api/sessions call (15s frontend poll + every
- *  SSE refresh event) is the dominant backend cost — this keeps repeated
- *  reads near-free while staying correct on any actual file change. */
+/** Parsed session cache. Session files are append-only (the SDK appends
+ *  whole JSON lines; a torn write leaves a partial final line), so once a
+ *  file has been read we reuse its parsed entries and on growth read + parse
+ *  ONLY the appended bytes — a busy run that appends entries no longer
+ *  re-JSON-parses the whole file (the dominant backend cost). Shrinks,
+ *  rewrites, and vanished files fall back to a full re-parse. Invalidated by
+ *  (mtime, size). */
 const sessionParseCache = new Map();
+
+/** Derive stats + display messages from parsed entries (the cacheable part). */
+function deriveSession(entries, st) {
+  const chain = leafChain(entries);
+  const header = entries.find((e) => e.type === 'session');
+  let name;
+  let model = null;
+  let tokensIn = 0, tokensOut = 0, cost = 0;
+  let firstMessage = '';
+  let lastText = '';
+  let userMessages = 0;
+  let messageCount = 0;
+  const messages = [];
+
+  const toolCallIndex = new Map(); // toolCallId → display message index
+  for (const entry of chain) {
+    if (entry.type === 'session') continue;
+    if (entry.type === 'session_info' && entry.name !== undefined) name = entry.name;
+    if (entry.type === 'model_change') {
+      if (!model) model = entry.modelId ?? null;
+      continue;
+    }
+    if (entry.type === 'compaction') {
+      messages.push({
+        role: 'summary',
+        text: entry.summary ?? '',
+        ts: Date.parse(entry.timestamp) || Date.now(),
+        id: `summary-${hashId(entry.summary ?? '')}`,
+      });
+      continue;
+    }
+    if (entry.type !== 'message') continue;
+    const msg = entry.message;
+    if (!msg) continue;
+    messageCount += 1;
+    if (msg.usage) {
+      tokensIn += msg.usage.input ?? 0;
+      tokensOut += msg.usage.output ?? 0;
+      if (msg.usage.cost?.total) cost += msg.usage.cost.total;
+    }
+    if (msg.role === 'user') {
+      userMessages += 1;
+      if (!firstMessage) firstMessage = textOf(msg.content);
+      lastText = textOf(msg.content);
+    }
+    if (msg.role === 'assistant') {
+      if (msg.model) model = msg.model;
+      const t = textOf(msg.content);
+      if (t) lastText = t;
+    }
+    const dm = toDisplayMessage(msg);
+    dm.id = entry.id;
+    messages.push(dm);
+    if (dm.role === 'assistant' && dm.toolCalls) {
+      for (const tc of dm.toolCalls) toolCallIndex.set(tc.id, messages.length - 1);
+    }
+  }
+  // Merge tool results into their assistant tool call.
+  for (const dm of messages) {
+    if (dm.role === 'toolResult' && dm.toolCallId) {
+      const idx = toolCallIndex.get(dm.toolCallId);
+      if (idx !== undefined) {
+        const tc = messages[idx].toolCalls?.find((t) => t.id === dm.toolCallId);
+        if (tc) { tc.result = dm.text; tc.isError = dm.isError; }
+        dm.merged = true;
+      }
+    }
+  }
+  return {
+    base: {
+      header,
+      name,
+      cwd: header?.cwd ?? '',
+      created: header?.timestamp ? new Date(header.timestamp).getTime() : st.mtimeMs,
+      messageCount,
+      userMessages,
+      firstMessage: firstMessage.slice(0, 200),
+      preview: lastText.slice(0, 200),
+      model,
+      tokens: { input: tokensIn, output: tokensOut, total: tokensIn + tokensOut },
+      cost,
+    },
+    merged: messages.filter((m) => m.role !== 'toolResult' || !m.merged),
+  };
+}
+
+/** Read exactly [start, EOF) — readFile's `start` option is silently
+ *  ignored by node, so a tail read must use a stream. */
+function readTail(file, start) {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    const rs = createReadStream(file, { start, encoding: 'utf8' });
+    rs.on('data', (c) => { data += c; });
+    rs.on('end', () => resolve(data));
+    rs.on('error', reject);
+  });
+}
+
+/** (Re)load a session file into the cache. On append-only growth reads just
+ *  the appended bytes and reuses the parsed entries; `pendingRaw` carries a
+ *  torn/partial final line across reads so no complete line is ever lost. */
+async function reloadSessionCache(file, st, cached) {
+  if (cached && st.size > cached.size) {
+    const appended = await readTail(file, cached.size).catch(() => null);
+    if (appended !== null) {
+      let chunk = (cached.pendingRaw ?? '') + appended;
+      let pendingRaw = '';
+      if (chunk && !chunk.endsWith('\n')) {
+        const nl = chunk.lastIndexOf('\n');
+        if (nl < 0) { pendingRaw = chunk; chunk = ''; }
+        else { pendingRaw = chunk.slice(nl + 1); chunk = chunk.slice(0, nl + 1); }
+      }
+      const newEntries = [];
+      for (const line of chunk.split('\n')) {
+        const t = line.trim();
+        if (!t) continue;
+        try { newEntries.push(JSON.parse(t)); } catch { /* skip malformed */ }
+      }
+      // Boundary sanity: with no pending line the appended chunk starts at a
+      // fresh entry, so it must contain one. A weird boundary (rewrite) →
+      // full re-parse.
+      const plausible = pendingRaw !== '' || newEntries.length > 0 || chunk.trim() === '';
+      if (plausible) {
+        const entries = [...cached.entries, ...newEntries];
+        return {
+          mtime: st.mtimeMs,
+          size: st.size, // partial-line bytes are held in pendingRaw, not re-read
+          pendingRaw,
+          entries,
+          ...deriveSession(entries, st),
+        };
+      }
+    }
+  }
+  const content = await readFile(file, 'utf8').catch(() => null);
+  if (content === null) return null;
+  const entries = parseEntries(content);
+  return {
+    mtime: st.mtimeMs,
+    size: st.size,
+    pendingRaw: '',
+    entries,
+    ...deriveSession(entries, st),
+  };
+}
 
 /**
  * Parse a session file: header, name, stats, and display messages. The
- * expensive parse is cached per (mtime, size); `running` (overlaid from the
- * pi-nest state map passed in opts.states) and the requested message slice
- * are overlaid fresh on every call.
+ * expensive parse is cached (incrementally, see reloadSessionCache);
+ * `running` (overlaid from the pi-nest state map passed in opts.states) and
+ * the requested message slice are overlaid fresh on every call.
  */
 async function analyzeSession(file, opts = {}) {
   const st = await stat(file).catch(() => null);
-  let base = null;
-  if (st) {
-    const hit = sessionParseCache.get(file);
-    if (hit && hit.mtime === st.mtimeMs && hit.size === st.size) base = hit.base;
+  if (!st) {
+    sessionParseCache.delete(file);
+    return null; // file vanished
   }
-  if (!base) {
-    const content = await readFile(file, 'utf8').catch(() => null);
-    if (content === null) return null;
-    const entries = parseEntries(content);
-    const chain = leafChain(entries);
-    const header = entries.find((e) => e.type === 'session');
-    let name;
-    let model = null;
-    let tokensIn = 0, tokensOut = 0, cost = 0;
-    let firstMessage = '';
-    let lastText = '';
-    let userMessages = 0;
-    const messages = [];
-
-    const toolCallIndex = new Map(); // toolCallId → display message index
-    for (const entry of chain) {
-      if (entry.type === 'session') continue;
-      if (entry.type === 'session_info' && entry.name !== undefined) name = entry.name;
-      if (entry.type === 'model_change') {
-        if (!model) model = entry.modelId ?? null;
-        continue;
-      }
-      if (entry.type === 'compaction') {
-        messages.push({
-          role: 'summary',
-          text: entry.summary ?? '',
-          ts: Date.parse(entry.timestamp) || Date.now(),
-          id: `summary-${hashId(entry.summary ?? '')}`,
-        });
-        continue;
-      }
-      if (entry.type !== 'message') continue;
-      const msg = entry.message;
-      if (!msg) continue;
-      if (msg.usage) {
-        tokensIn += msg.usage.input ?? 0;
-        tokensOut += msg.usage.output ?? 0;
-        if (msg.usage.cost?.total) cost += msg.usage.cost.total;
-      }
-      if (msg.role === 'user') {
-        userMessages += 1;
-        if (!firstMessage) firstMessage = textOf(msg.content);
-        lastText = textOf(msg.content);
-      }
-      if (msg.role === 'assistant') {
-        if (msg.model) model = msg.model;
-        const t = textOf(msg.content);
-        if (t) lastText = t;
-      }
-      const dm = toDisplayMessage(msg);
-      dm.id = entry.id;
-      messages.push(dm);
-      if (dm.role === 'assistant' && dm.toolCalls) {
-        for (const tc of dm.toolCalls) toolCallIndex.set(tc.id, messages.length - 1);
-      }
-    }
-    // Merge tool results into their assistant tool call.
-    for (const dm of messages) {
-      if (dm.role === 'toolResult' && dm.toolCallId) {
-        const idx = toolCallIndex.get(dm.toolCallId);
-        if (idx !== undefined) {
-          const tc = messages[idx].toolCalls?.find((t) => t.id === dm.toolCallId);
-          if (tc) { tc.result = dm.text; tc.isError = dm.isError; }
-          dm.merged = true;
-        }
-      }
-    }
-    let merged = messages.filter((m) => m.role !== 'toolResult' || !m.merged);
-    if (st) {
-      sessionParseCache.set(file, {
-        mtime: st.mtimeMs,
-        size: st.size,
-        base: {
-          header,
-          name,
-          cwd: header?.cwd ?? '',
-          created: header?.timestamp ? new Date(header.timestamp).getTime() : st.mtimeMs,
-          messageCount: chain.filter((e) => e.type === 'message').length,
-          userMessages,
-          firstMessage: firstMessage.slice(0, 200),
-          preview: lastText.slice(0, 200),
-          model,
-          tokens: { input: tokensIn, output: tokensOut, total: tokensIn + tokensOut },
-          cost,
-          merged,
-        },
-      });
-      base = sessionParseCache.get(file).base;
-    }
+  let cached = sessionParseCache.get(file);
+  if (!cached || cached.mtime !== st.mtimeMs || cached.size !== st.size) {
+    cached = await reloadSessionCache(file, st, cached);
+    if (!cached) return null;
+    sessionParseCache.set(file, cached);
   }
-  if (!base) return null;  // file vanished between stat and read
+  const { base, merged: baseMerged } = cached;
 
   // Per-request overlay: pagination slices the cached message list.
   // By default (or with `before`) only the newest slice is returned;
   // `oldestId` + `hasMore` let the client page upward. With `after`,
   // return the unbounded tail newer than that entry (used by clients to
   // sync live appends without re-reading what they have).
-  let merged = base.merged;
+  let merged = baseMerged;
   let oldestId = null;
   let hasMore = false;
   if (opts.after) {
@@ -321,6 +384,21 @@ function emit(event) {
   }
 }
 
+/** Trailing-edge coalescing for refresh events. A busy turn appends many
+ *  entries (each broadcast as a refresh), and every refresh makes the
+ *  frontend re-sync list + open tails — which re-parses session files on
+ *  the backend. One refresh per file per quiet window carries the same
+ *  final state at a fraction of the churn. */
+const refreshTimers = new Map();
+function emitRefresh(file) {
+  const existing = refreshTimers.get(file);
+  if (existing) clearTimeout(existing);
+  refreshTimers.set(file, setTimeout(() => {
+    refreshTimers.delete(file);
+    emit({ type: 'refresh', file });
+  }, 250));
+}
+
 /**
  * Relay pi-nest's event stream to SSE, reconnecting forever. While this
  * server is down, pi-nest keeps running the agents; on reconnect the relay
@@ -339,6 +417,7 @@ async function relayNestEvents() {
           // carry the display message under `message`; everything else is
           // spread at top level (status, tool info, ...).
           if (ev.type === 'message') emit({ type: 'message', file: ev.file, message: payload });
+          else if (ev.type === 'refresh') emitRefresh(ev.file);
           else emit({ type: ev.type, file: ev.file, ...payload });
         });
         stream.once('error', resolve);
@@ -558,7 +637,7 @@ async function watchSessionFiles() {
       if (fileMtimes.get(file) !== m) {
         const known = fileMtimes.has(file);
         fileMtimes.set(file, m);
-        emit({ type: 'refresh', file });
+        emitRefresh(file);
       }
     }
   }

@@ -856,7 +856,6 @@ let anchorBottom = 0;
             <div class="chat-work-head">
               <span class="chat-work-toggle">{{ expandedSummaries.has(item.msg.id) ? '▾' : '▸' }}</span>
               <span class="chat-ab-name">Compaction summary</span>
-              <span v-if="item.msg.elapsedMs != null" class="chat-ab-time">{{ fmtSec(item.msg.elapsedMs) }}</span>
             </div>
             <div v-if="expandedSummaries.has(item.msg.id)" class="chat-work-body">
               <pre class="chat-ab-code chat-summary-ab-body">{{ item.msg.text }}</pre>

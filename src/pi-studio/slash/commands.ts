@@ -188,8 +188,11 @@ export async function runSlash(sessionId: string, text: string): Promise<SlashRe
 
     // /compact: no system line — the WIP action-bubble shows progress, the
     // summary entry in the flow is the result record, and a failed compaction
-    // flashes the bubble red. A text line here was unwanted noise.
-    if (command === 'compact') return { kind: 'none' };
+    // flashes the bubble red (with the reason in the error banner).
+    if (command === 'compact') {
+      if (!r.ok) store.markCompactFailed(sessionId, r.error ?? null);
+      return { kind: 'none' };
+    }
 
     if (!r.ok) return { kind: 'error', text: r.error ?? `/${command} failed` };
     if (r.data?.file) {
@@ -297,6 +300,12 @@ export async function runSlash(sessionId: string, text: string): Promise<SlashRe
     if (r.notice) return { kind: 'notice', text: r.notice };
     return { kind: 'none' };
   } catch (e) {
+    // A transport/HTTP failure of /compact is a failed compaction: flash the
+    // bubble (no line). Other commands surface the error as a line.
+    if (command === 'compact') {
+      store.markCompactFailed(sessionId, `/${command} failed: ${e instanceof Error ? e.message : String(e)}`);
+      return { kind: 'none' };
+    }
     return { kind: 'error', text: `/${command} failed: ${e instanceof Error ? e.message : String(e)}` };
   }
 }

@@ -32,6 +32,9 @@ export interface DisplayMessage {
   stopReason?: string | null;
   error?: string | null;
   ts: number;
+  /** The optimistic user row failed to reach the backend — render a ↻ resend
+   *  affordance. Cleared when the message is accepted (ack) or re-sent. */
+  sendFailed?: boolean;
   command?: string;
   exitCode?: number;
   isError?: boolean;
@@ -267,6 +270,12 @@ function byFile(file: string): ChatSession | undefined {
   return state.sessions.find((s) => s.file === file);
 }
 
+/** In-flight sends awaiting the backend's 'ack' event (keyed by reqId).
+ *  `acked` flips the moment pi-nest confirms receipt, so an HTTP failure
+ *  after that point must NOT mark the message as failed — the turn is
+ *  running and its real entry will replace the optimistic row. */
+const pendingSends = new Map<string, { sessionId: string; mid: string; acked: boolean }>();
+
 function upsert(s: ChatSession, m: DisplayMessage) {
   const i = s.messages.findIndex((x) => x.id === m.id);
   if (i >= 0) s.messages[i] = m;
@@ -292,6 +301,23 @@ function handleEvent(ev: any) {
     case 'session_status': {
       const s = byFile(ev.file);
       if (s) s.status = ev.status;
+      break;
+    }
+    case 'ack': {
+      // Backend receipt confirmation (echoes the reqId the sender attached).
+      // Drives: (a) the compaction WIP bubble — it lights the moment pi-nest
+      // accepts /compact instead of waiting for compaction_status started;
+      // (b) send-failure disambiguation — an HTTP error after the ack means
+      // the message is running, not lost.
+      const p = pendingSends.get(ev.reqId);
+      if (p) p.acked = true;
+      if (ev.kind === 'slash' && ev.command === 'compact') {
+        const s = byFile(ev.file);
+        if (s) {
+          s.compacting = true;
+          s.compactStartedAt = Date.now();
+        }
+      }
       break;
     }
     case 'compaction_status': {
@@ -561,18 +587,53 @@ export async function sendMessage(sessionId: string, text: string, opts: { wait?
   // plain message INTERRUPTS a busy turn; `wait: true` (/wait) queues it
   // until the current turn finishes.
   const mid = `pending-${Date.now()}`;
+  const reqId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  pendingSends.set(reqId, { sessionId, mid, acked: false });
   s.messages.push({ id: mid, role: 'user', text: trimmed, ts: Date.now() });
   try {
     await api('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file: s.file, message: trimmed, ...(opts.wait ? { wait: true } : {}) }),
+      body: JSON.stringify({ file: s.file, message: trimmed, reqId, ...(opts.wait ? { wait: true } : {}) }),
     });
+    pendingSends.delete(reqId);
   } catch (e) {
+    const acked = pendingSends.get(reqId)?.acked;
+    pendingSends.delete(reqId);
+    if (acked) return; // pi-nest confirmed receipt — the turn is running; its
+    // real entry will replace the optimistic row. The HTTP error was a
+    // transport hiccup after acceptance.
     const i = s.messages.findIndex((m) => m.id === mid);
-    if (i >= 0) s.messages.splice(i, 1);
+    if (i >= 0) {
+      // Keep the row and mark it failed so the user can resend in place
+      // instead of retyping (only if it's still the optimistic copy — a real
+      // entry replacing it means the backend took it after all).
+      s.messages[i] = { ...s.messages[i], sendFailed: true };
+    }
     state.lastError = e instanceof Error ? e.message : String(e);
   }
+}
+
+/** Resend a message whose optimistic row was marked sendFailed. */
+export async function resendMessage(sessionId: string, mid: string) {
+  const s = findSession(sessionId);
+  if (!s) return;
+  const i = s.messages.findIndex((m) => m.id === mid);
+  if (i < 0) return;
+  const text = s.messages[i].text;
+  s.messages.splice(i, 1); // drop the failed copy; sendMessage re-appends it
+  await sendMessage(sessionId, text);
+}
+
+/** Mark the last /compact as failed (busy session, rejected command, ...).
+ *  Lights the transient red flash; the reason goes to the error banner. */
+export function markCompactFailed(sessionId: string, reason?: string | null) {
+  const s = findSession(sessionId);
+  if (!s) return;
+  s.compacting = false;
+  s.compactResult = 'failed';
+  s.compactEndedAt = Date.now();
+  if (reason) state.lastError = reason;
 }
 
 /** Abort the running agent (the conversation stays; generation halts). */
@@ -717,6 +778,8 @@ export const store = {
   newChat,
   openChat,
   sendMessage,
+  resendMessage,
+  markCompactFailed,
   stopSession,
   closeChatView,
   get prefs() { return state.prefs; },

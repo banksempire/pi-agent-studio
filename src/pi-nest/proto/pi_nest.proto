@@ -66,6 +66,9 @@ message PromptRequest {
   // message promptly. false (/wait): queue — run after the current turn
   // finishes naturally.
   bool interrupt = 3;
+  // Client-generated request id — echoed in the 'ack' event so the frontend
+  // can match "backend received this" before the long-running op completes.
+  string req_id = 4;
 }
 message PromptResponse { bool ok = 1; string error = 2; }
 
@@ -77,6 +80,7 @@ message SlashRequest {
   string command = 2;
   string args = 3;
   string extra_json = 4; // frontend extras (entryId, modelIds, ...)
+  string req_id = 5;     // echoed in the 'ack' event (same contract as Prompt)
 }
 message SlashResponse {
   bool ok = 1;

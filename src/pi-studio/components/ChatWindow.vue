@@ -825,6 +825,10 @@ let anchorBottom = 0;
             <div class="chat-msg-meta">{{ roleLabel(item.msg) }} · {{ fmtMsgTime(item.msg.ts) }}</div>
             <div v-if="renderMd" class="chat-msg-md" v-html="md(item.msg)" />
             <template v-else>{{ item.msg.text }}</template>
+            <div v-if="item.msg.sendFailed" class="chat-resend" title="The backend did not accept this message — send it again">
+              <span class="chat-resend-mark">⚠</span> not sent
+              <button class="chat-resend-btn" @click="store.resendMessage(props.sessionId, item.msg.id)">↻ Resend</button>
+            </div>
             <div v-if="item.kind === 'custom'" class="chat-msg-time">{{ fmtTime(item.msg.ts) }}</div>
           </template>
 

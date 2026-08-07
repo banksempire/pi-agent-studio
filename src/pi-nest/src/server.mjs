@@ -55,6 +55,12 @@ export function createServer({ registry = new AgentRegistry(), onStateChange } =
 
     Prompt: async (call, cb) => {
       try {
+        // Acknowledge receipt immediately: the frontend lights its pending
+        // UI (optimistic row / WIP bubble) on this event, not on completion.
+        registry.broadcast('ack', call.request.agentId, {
+          reqId: call.request.reqId ?? '',
+          kind: 'message',
+        });
         await registry.prompt(call.request.agentId, call.request.message, {
           interrupt: call.request.interrupt !== false,
         });
@@ -75,6 +81,13 @@ export function createServer({ registry = new AgentRegistry(), onStateChange } =
 
     Slash: async (call, cb) => {
       try {
+        // Acknowledge receipt right away (the call resolves only when the
+        // command completes — compaction can take tens of seconds).
+        registry.broadcast('ack', call.request.agentId ?? '', {
+          reqId: call.request.reqId ?? '',
+          kind: 'slash',
+          command: call.request.command ?? '',
+        });
         let extra = {};
         try { extra = call.request.extraJson ? JSON.parse(call.request.extraJson) : {}; } catch { /* ignore */ }
         const r = await execSlash(registry, {

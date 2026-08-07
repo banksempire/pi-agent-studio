@@ -517,7 +517,7 @@ const server = createServer(async (req, res) => {
 
     // ── Send a message to a session ──
     if (p === '/api/chat' && req.method === 'POST') {
-      const { file, message, wait } = await readBody(req);
+      const { file, message, wait, reqId } = await readBody(req);
       if (!file || typeof message !== 'string' || !message.trim()) {
         return sendJson(res, 400, { error: 'file and message required' });
       }
@@ -541,8 +541,10 @@ const server = createServer(async (req, res) => {
       }
       // pi-nest serializes concurrent sends per agent (interrupt or queue);
       // this call resolves when the queued turn completes — a restart of THIS
-      // server mid-run leaves the agent untouched.
-      await client.prompt({ agentId: file, message: text, interrupt });
+      // server mid-run leaves the agent untouched. pi-nest broadcasts an
+      // 'ack' event (echoing reqId) the moment it accepts the message, so the
+      // frontend doesn't wait on this response to light its pending UI.
+      await client.prompt({ agentId: file, message: text, interrupt, reqId: reqId ?? '' });
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -565,6 +567,7 @@ const server = createServer(async (req, res) => {
           command: body.command,
           args: body.args ?? '',
           extra: body.extra ?? {},
+          reqId: body.reqId ?? '',
         });
         const out = { ok: r.ok, notice: r.notice || undefined, error: r.error || undefined };
         if (r.dataJson) out.data = JSON.parse(r.dataJson);

@@ -420,8 +420,8 @@ async function relayNestEvents() {
           else if (ev.type === 'refresh') emitRefresh(ev.file);
           else emit({ type: ev.type, file: ev.file, ...payload });
         });
-        stream.once('error', resolve);
-        stream.once('end', resolve);
+        stream.once('error', () => { console.log('[gateway] relay stream dropped — reconnecting'); resolve(); });
+        stream.once('end', () => { console.log('[gateway] relay stream ended — reconnecting'); resolve(); });
       });
     } catch { /* keepalive retry */ }
     await new Promise((r) => setTimeout(r, 1000));

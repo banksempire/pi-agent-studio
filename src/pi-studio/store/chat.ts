@@ -32,6 +32,10 @@ export interface DisplayMessage {
   stopReason?: string | null;
   error?: string | null;
   ts: number;
+  /** Compaction duration in ms — set when the summary arrived while the
+   *  page session had the compaction context (start/end status events);
+   *  preserved across file-refresh upserts so it survives syncTail. */
+  elapsedMs?: number;
   command?: string;
   exitCode?: number;
   isError?: boolean;
@@ -269,8 +273,12 @@ function byFile(file: string): ChatSession | undefined {
 
 function upsert(s: ChatSession, m: DisplayMessage) {
   const i = s.messages.findIndex((x) => x.id === m.id);
-  if (i >= 0) s.messages[i] = m;
-  else s.messages.push(m);
+  if (i >= 0) {
+    // A file-refresh copy of a summary (same hashId) has no elapsed data —
+    // keep the one computed when the live event arrived.
+    if (m.elapsedMs === undefined) m.elapsedMs = s.messages[i].elapsedMs;
+    s.messages[i] = m;
+  } else s.messages.push(m);
 }
 
 function lastAssistant(s: ChatSession): DisplayMessage | undefined {
@@ -334,6 +342,13 @@ function handleEvent(ev: any) {
       } else if (m.role === 'toolResult') {
         mergeToolResult(s, m.toolCallId ?? '', m.text, !!m.isError);
       } else {
+        // The summary message follows compaction_status 'done' in the same
+        // broadcast, so the start/end context is already on the session —
+        // stamp the duration onto the message (the box shows elapsed, not
+        // the absolute timestamp).
+        if (m.role === 'summary' && s.compactEndedAt > s.compactStartedAt) {
+          m.elapsedMs = s.compactEndedAt - s.compactStartedAt;
+        }
         upsert(s, m);
       }
       break;

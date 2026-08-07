@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useChatStore } from '../store/chat';
 
 interface ModelInfo {
@@ -28,6 +28,12 @@ const LEVEL_DESCRIPTIONS: Record<string, string> = {
   max: 'Maximum reasoning',
 };
 
+/** Width of a flyout level. Submenus open LEFT of their parent item with a
+ *  small OVERLAP (6px) so the mouse can cross from a row into its submenu
+ *  without leaving the menu region (a gap would close the flyout mid-hover). */
+const SUB_WIDTH = 210;
+const SUB_OVERLAP = 6;
+
 const store = useChatStore();
 
 const catalog = ref<ModelCatalog | null>(null);
@@ -36,10 +42,16 @@ const busy = ref(false);
 const error = ref('');
 const notice = ref('');
 
-// Cascade state: 0 = providers, 1 = models, 2 = think levels.
-const level = ref(0);
-const provider = ref<string | null>(null);
-const model = ref<ModelInfo | null>(null);
+// Menu state
+const open = ref(false);
+const popStyle = ref({ left: '0px', top: '0px' });
+const hoveredProvider = ref<string | null>(null);
+const hoveredModel = ref<ModelInfo | null>(null);
+// Fixed-positioned submenus (escape any ancestor overflow clipping).
+const modelsSubStyle = ref({ left: '0px', top: '0px' });
+const levelsSubStyle = ref({ left: '0px', top: '0px' });
+const triggerEl = ref<HTMLButtonElement | null>(null);
+const regionEl = ref<HTMLDivElement | null>(null);
 
 const active = computed(() =>
   store.activeChatId ? store.findSession(store.activeChatId) ?? null : null,
@@ -74,22 +86,19 @@ async function load() {
   }
 }
 
-// A new chat window (or none) resets the cascade and reloads the catalog.
-// Watch the FILE PATH, not the session object: a refresh re-syncs the session
-// list (new object identities) and would otherwise clear the notice / reset
-// the cascade on every model change.
+// A new chat window (or none) resets and reloads. Watch the FILE PATH, not
+// the session object: a refresh re-syncs the session list (new object
+// identities) and would otherwise churn on every model change.
 const activeFile = computed(() => active.value?.file ?? null);
 watch(activeFile, () => {
-  level.value = 0;
-  provider.value = null;
-  model.value = null;
-  notice.value = '';
+  closeMenu();
   void load();
 });
-// The model can also change from outside the menu (e.g. /model in the chat
-// composer) — reload the catalog then, keeping the summary in sync.
+// The model can also change from outside the menu (e.g. /model in chat).
 watch(() => active.value?.stats.model ?? null, () => void load());
 onMounted(() => void load());
+
+// ── Traditional flyout menu ────────────────────────────────────────────────
 
 const providers = computed(() => {
   if (!catalog.value) return [];
@@ -98,51 +107,85 @@ const providers = computed(() => {
   return [...seen].sort();
 });
 
-const modelsOf = computed(
-  () => catalog.value?.models.filter((m) => m.provider === provider.value) ?? [],
-);
+const modelsOf = (p: string) =>
+  catalog.value?.models.filter((m) => m.provider === p) ?? [];
 
-const levelsOf = computed(() => model.value?.thinkingLevels ?? []);
+const isCurrentModel = (m: ModelInfo | null) =>
+  !!m &&
+  !!catalog.value?.current &&
+  catalog.value.current.provider === m.provider &&
+  catalog.value.current.id === m.id;
 
-/** A model that offers only 'off' shows a single "(None)" row. */
-const noneOnly = computed(() => levelsOf.value.length === 1 && levelsOf.value[0] === 'off');
-
-const isCurrentModel = (m: ModelInfo | null) => {
-  if (!m || !catalog.value?.current) return false;
-  return catalog.value.current.provider === m.provider && catalog.value.current.id === m.id;
-};
-
-/** The active thinking level — only meaningful on the session's current model. */
 const currentLevelFor = (m: ModelInfo | null) =>
   isCurrentModel(m) ? catalog.value?.currentThinkingLevel ?? null : null;
 
-const current = computed(() => catalog.value?.current ?? null);
-const currentLevel = computed(() => catalog.value?.currentThinkingLevel ?? null);
+const currentSummary = computed(() => {
+  const cur = catalog.value?.current;
+  if (!cur) return '—';
+  const lvl = catalog.value?.currentThinkingLevel;
+  const levelLabel = lvl && lvl !== 'off' ? lvl : '(None)';
+  return `${cur.provider}/${cur.name || cur.id} · ${levelLabel}`;
+});
 
-function pickProvider(p: string) {
-  provider.value = p;
-  model.value = null;
-  level.value = 1;
+function toggle() {
+  if (open.value) closeMenu();
+  else openMenu();
 }
 
-function pickModel(m: ModelInfo) {
-  model.value = m;
-  level.value = 2;
+function openMenu() {
+  if (!triggerEl.value) return;
+  const r = triggerEl.value.getBoundingClientRect();
+  popStyle.value = { left: `${r.left}px`, top: `${r.bottom + 2}px` };
+  hoveredProvider.value = null;
+  hoveredModel.value = null;
+  open.value = true;
 }
 
-function back() {
-  if (level.value === 2) {
-    model.value = null;
-    level.value = 1;
-  } else if (level.value === 1) {
-    provider.value = null;
-    level.value = 0;
-  }
+function closeMenu() {
+  open.value = false;
+  hoveredProvider.value = null;
+  hoveredModel.value = null;
 }
 
-async function commit(thinkLevel: string) {
+/** Open the models submenu to the LEFT of the hovered provider item. */
+function onProviderEnter(e: MouseEvent, p: string) {
+  hoveredProvider.value = p;
+  hoveredModel.value = null;
+  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  modelsSubStyle.value = { left: `${r.left - SUB_WIDTH + SUB_OVERLAP}px`, top: `${r.top - 3}px` };
+}
+
+/** Open the think-levels submenu to the LEFT of the hovered model item. */
+function onModelEnter(e: MouseEvent, m: ModelInfo) {
+  hoveredModel.value = m;
+  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  levelsSubStyle.value = { left: `${r.left - SUB_WIDTH + SUB_OVERLAP}px`, top: `${r.top - 3}px` };
+}
+
+function onDocDown(e: MouseEvent) {
+  if (!open.value) return;
+  const t = e.target as Node;
+  // Inside the trigger or the flyout region: let the normal click flow run
+  // (the trigger toggles; a level row commits). Closing here would unmount
+  // the row before its click fires.
+  if (triggerEl.value?.contains(t) || regionEl.value?.contains(t)) return;
+  closeMenu();
+}
+function onDocKey(e: KeyboardEvent) {
+  if (e.key === 'Escape') closeMenu();
+}
+onMounted(() => {
+  document.addEventListener('mousedown', onDocDown);
+  document.addEventListener('keydown', onDocKey);
+});
+onBeforeUnmount(() => {
+  document.removeEventListener('mousedown', onDocDown);
+  document.removeEventListener('keydown', onDocKey);
+});
+
+async function commit(m: ModelInfo, thinkLevel: string) {
   const s = active.value;
-  if (!s?.file || !model.value || busy.value) return;
+  if (!s?.file || busy.value) return;
   busy.value = true;
   notice.value = '';
   error.value = '';
@@ -153,7 +196,7 @@ async function commit(thinkLevel: string) {
       body: JSON.stringify({
         file: s.file,
         command: 'model',
-        args: model.value.id,
+        args: m.id,
         extra: { thinkLevel },
       }),
     });
@@ -162,13 +205,11 @@ async function commit(thinkLevel: string) {
       error.value = j.error || 'Failed to apply model';
     } else {
       const label =
-        thinkLevel === 'off' && !model.value.reasoning
-          ? `${model.value.provider}/${model.value.id} · no thinking`
-          : `${model.value.provider}/${model.value.id} · ${thinkLevel}`;
+        thinkLevel === 'off' && !m.reasoning
+          ? `${m.provider}/${m.name || m.id} · no thinking`
+          : `${m.provider}/${m.name || m.id} · ${thinkLevel}`;
       notice.value = label;
-      level.value = 0;
-      provider.value = null;
-      model.value = null;
+      closeMenu();
       void load();
     }
   } catch (e) {
@@ -185,100 +226,73 @@ function thinkLabel(l: string) {
 
 <template>
   <div class="model-menu">
-    <!-- Current selection summary -->
-    <div class="model-menu-current" :title="current ? `${current.provider}/${current.id}` : ''">
-      <template v-if="catalog">
-        <span class="model-menu-cur-prov">{{ current?.provider ?? '—' }}</span>
-        <span class="model-menu-cur-model">{{ current?.name ?? current?.id ?? 'no model' }}</span>
-        <span class="model-menu-cur-level">
-          {{ currentLevel && currentLevel !== 'off' ? currentLevel : '(None)' }}
-        </span>
-      </template>
-      <span v-else-if="!active" class="model-menu-hint">Open a chat window to change its model.</span>
-      <span v-else class="model-menu-hint">Loading models…</span>
-    </div>
+    <!-- Menu-bar-style trigger -->
+    <button ref="triggerEl" class="model-menu-trigger" :disabled="busy" @click="toggle">
+      <span class="model-menu-trigger-label">Model</span>
+      <span class="model-menu-trigger-cur" :title="currentSummary">{{ currentSummary }}</span>
+      <span class="model-menu-trigger-caret">{{ open ? '▲' : '▾' }}</span>
+    </button>
 
-    <div v-if="loading" class="model-menu-row model-menu-muted">Loading models…</div>
-    <div v-else-if="error" class="model-menu-row model-menu-error">{{ error }}</div>
-    <div v-else-if="!catalog" class="model-menu-row model-menu-muted">No models available.</div>
-    <template v-else>
-      <!-- Breadcrumb -->
-      <div class="model-menu-crumbs">
-        <button class="model-menu-crumb" :class="{ 'model-menu-crumb--on': level === 0 }" @click="level = 0; provider = null; model = null">
-          Providers
-        </button>
-        <span class="model-menu-crumb-sep">▸</span>
-        <button class="model-menu-crumb" :class="{ 'model-menu-crumb--on': level === 1 }" :disabled="!provider" @click="back()">
-          {{ provider ?? 'Model' }}
-        </button>
-        <span class="model-menu-crumb-sep">▸</span>
-        <button class="model-menu-crumb" :class="{ 'model-menu-crumb--on': level === 2 }" :disabled="!model" @click="back()">
-          {{ model ? (noneOnly ? '(None)' : 'Think level') : 'Think level' }}
-        </button>
+    <div v-if="busy" class="model-menu-note">Applying…</div>
+    <div v-if="notice" class="model-menu-note model-menu-note--ok">{{ notice }}</div>
+    <div v-else-if="error" class="model-menu-note model-menu-note--err">{{ error }}</div>
+    <div v-else-if="loading" class="model-menu-note">Loading models…</div>
+    <div v-else-if="!active && !catalog" class="model-menu-note">Open a chat window to change its model.</div>
+
+    <!-- Providers -->
+    <div v-if="open" ref="regionEl" class="model-menu-region" @mouseleave="closeMenu()">
+      <div class="model-menu-pop" :style="popStyle">
+        <div class="mm-scroll">
+          <div
+            v-for="p in providers"
+            :key="p"
+            class="mm-item"
+            :class="{ 'mm-item--on': hoveredProvider === p }"
+            @mouseenter="onProviderEnter($event, p)"
+          >
+            <span class="mm-dot">{{ catalog?.current?.provider === p ? '●' : '○' }}</span>
+            <span class="mm-label">{{ p }}</span>
+            <span class="mm-caret">▶</span>
+          </div>
+        </div>
       </div>
 
-      <!-- Level 1: providers -->
-      <template v-if="level === 0">
-        <div
-          v-for="p in providers"
-          :key="p"
-          class="model-menu-row"
-          :class="{ 'model-menu-row--current': current?.provider === p }"
-          @click="pickProvider(p)"
-        >
-          <span class="model-menu-dot">{{ current?.provider === p ? '●' : '○' }}</span>
-          <span class="model-menu-name">{{ p }}</span>
-          <span class="model-menu-count">{{ catalog.models.filter((m) => m.provider === p).length }}</span>
-        </div>
-      </template>
-
-      <!-- Level 2: models of the provider -->
-      <template v-else-if="level === 1">
-        <div
-          v-for="m in modelsOf"
-          :key="m.id"
-          class="model-menu-row"
-          :class="{ 'model-menu-row--current': isCurrentModel(m) }"
-          @click="pickModel(m)"
-        >
-          <span class="model-menu-dot">{{ isCurrentModel(m) ? '●' : '○' }}</span>
-          <span class="model-menu-name" :title="`${m.provider}/${m.id}`">{{ m.name || m.id }}</span>
-          <span class="model-menu-tag" :class="m.reasoning ? 'model-menu-tag--thinking' : 'model-menu-tag--plain'">
-            {{ m.reasoning ? 'thinking' : 'plain' }}
-          </span>
-        </div>
-      </template>
-
-      <!-- Level 3: think levels offered by THIS model -->
-      <template v-else>
-        <template v-if="noneOnly">
+      <!-- Models of the hovered provider (fixed-positioned, opens left) -->
+      <div v-if="hoveredProvider" class="mm-sub" :style="modelsSubStyle">
+        <div class="mm-scroll">
           <div
-            class="model-menu-row"
-            :class="{ 'model-menu-row--current': isCurrentModel(model) && currentLevel === 'off' }"
-            @click="commit('off')"
+            v-for="m in modelsOf(hoveredProvider)"
+            :key="m.id"
+            class="mm-item"
+            :class="{ 'mm-item--on': hoveredModel === m }"
+            @mouseenter="onModelEnter($event, m)"
           >
-            <span class="model-menu-dot">{{ isCurrentModel(model) && currentLevel === 'off' ? '●' : '○' }}</span>
-            <span class="model-menu-name">(None)</span>
-            <span class="model-menu-desc">No reasoning</span>
+            <span class="mm-dot">{{ isCurrentModel(m) ? '●' : '○' }}</span>
+            <span class="mm-label" :title="`${m.provider}/${m.id}`">{{ m.name || m.id }}</span>
+            <span class="mm-tag" :class="m.reasoning ? 'mm-tag--thinking' : 'mm-tag--plain'">
+              {{ m.reasoning ? 'thinking' : 'plain' }}
+            </span>
+            <span class="mm-caret">▶</span>
           </div>
-        </template>
-        <template v-else>
+        </div>
+      </div>
+
+      <!-- Think levels THIS model offers (fixed-positioned, opens left) -->
+      <div v-if="hoveredModel" class="mm-sub" :style="levelsSubStyle">
+        <div class="mm-scroll">
           <div
-            v-for="l in levelsOf"
+            v-for="l in hoveredModel.thinkingLevels"
             :key="l"
-            class="model-menu-row"
-            :class="{ 'model-menu-row--current': isCurrentModel(model) && currentLevelFor(model) === l }"
-            @click="commit(l)"
+            class="mm-item"
+            :class="{ 'mm-item--cur': isCurrentModel(hoveredModel) && currentLevelFor(hoveredModel) === l }"
+            :title="LEVEL_DESCRIPTIONS[l] ?? ''"
+            @click.stop="commit(hoveredModel, l)"
           >
-            <span class="model-menu-dot">{{ isCurrentModel(model) && currentLevelFor(model) === l ? '●' : '○' }}</span>
-            <span class="model-menu-name">{{ thinkLabel(l) }}</span>
-            <span class="model-menu-desc">{{ LEVEL_DESCRIPTIONS[l] ?? '' }}</span>
+            <span class="mm-dot">{{ isCurrentModel(hoveredModel) && currentLevelFor(hoveredModel) === l ? '●' : '○' }}</span>
+            <span class="mm-label">{{ thinkLabel(l) }}</span>
           </div>
-        </template>
-      </template>
-
-      <div v-if="busy" class="model-menu-row model-menu-muted">Applying…</div>
-      <div v-if="notice" class="model-menu-row model-menu-notice">{{ notice }}</div>
-    </template>
+        </div>
+      </div>
+    </div>
   </div>
 </template>

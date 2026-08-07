@@ -1,6 +1,6 @@
 /**
  * pi-nest entry point: a standalone daemon owning pi agent sessions.
- * Start it detached (setsid nohup node pi-nest/src/index.mjs ...) — it must
+ * Start it detached (setsid nohup node src/pi-nest/src/index.mjs ...) — it must
  * outlive the front-end services that talk to it.
  */
 import grpc from '@grpc/grpc-js';

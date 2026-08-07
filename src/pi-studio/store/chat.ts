@@ -1,6 +1,6 @@
 /**
  * Chat store — the app-side state for the Chat app, backed by the REAL pi
- * agent through the backend server (server/index.mjs).
+ * agent through the backend server (src/pi-studio/server/index.mjs).
  *
  * - Session list + messages come from real ~/.pi/agent/sessions files
  * - Sending a message runs the real agent (createAgentSession in the

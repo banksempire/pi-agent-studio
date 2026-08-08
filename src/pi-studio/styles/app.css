@@ -452,9 +452,12 @@
 }
 
 /* Compaction summary: an ActionBubble-style box (same look as the /compact
-   status bubble — the old yellow box is gone). Body is a scrollable pre. */
+   status bubble — the old yellow box is gone). Body is a pre that grows to
+   the full text height: the summary is prose the user wants to read in
+   place, so no inner cap/scrollbar — the chat list scrolls instead (the
+   .chat-ab-code default max-height would otherwise truncate it at 220px). */
 .chat-summary-ab-body {
-  max-height: 300px;
+  max-height: none;
   white-space: pre-wrap;
 }
 

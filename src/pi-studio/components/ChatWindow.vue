@@ -868,6 +868,10 @@ let anchorBottom = 0;
             <div class="chat-work-head">
               <span class="chat-work-toggle">{{ expandedSummaries.has(item.msg.id) ? '▾' : '▸' }}</span>
               <span class="chat-ab-name">Compaction summary</span>
+              <!-- Same content slot as the tool bubbles: the collapsed head
+                   carries a preview of the summary (as much text as fits —
+                   ellipsis only when narrow), not an empty box. -->
+              <span v-if="item.msg.text" class="chat-ab-content chat-summary-ab-preview">{{ item.msg.text }}</span>
             </div>
             <div v-if="expandedSummaries.has(item.msg.id)" class="chat-work-body">
               <pre class="chat-ab-code chat-summary-ab-body">{{ item.msg.text }}</pre>

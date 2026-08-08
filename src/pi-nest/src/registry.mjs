@@ -312,6 +312,9 @@ export class AgentRegistry extends EventEmitter {
           const already = !!ev.errorMessage && /already compacted/i.test(ev.errorMessage);
           this.broadcast('compaction_status', agentId, {
             status: !ev.errorMessage || already ? 'done' : 'failed',
+            // the reason the summarizer failed — the frontend shows it in
+            // the transient failed bubble's body (failures were silent).
+            error: !ev.errorMessage || already ? '' : ev.errorMessage,
           });
           if (!ev.errorMessage && ev.result?.summary) {
             this.broadcast('message', agentId, {

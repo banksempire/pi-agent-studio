@@ -313,6 +313,34 @@
   color: #f87171;
 }
 
+/* The /compact bubble is a direct flex child of .chat-messages. Its own
+   overflow:hidden (from .chat-work) disables the flex automatic minimum
+   size, so in an overflowing conversation flex-shrink crushes it to the
+   2px borders — the "line" the user saw. Never shrink it. */
+.chat-compacting {
+  flex-shrink: 0;
+}
+
+/* The /compact bubble's body row — gives the WIP/failed box real height so
+   it reads as a bubble rather than a one-line strip. */
+.chat-compacting-body {
+  padding: 2px 10px 7px 30px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--sf-text-muted);
+  border-top: 1px solid var(--sf-border);
+}
+
+.chat-compacting-status {
+  color: var(--sf-accent);
+}
+
+.chat-compacting-error {
+  color: #f87171;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* Action-completion flash: green on success, red on failure, then settle. */
 @keyframes chat-work-flash-ok {
   0%   { border-color: rgba(78, 201, 176, 0.95); background: rgba(78, 201, 176, 0.18); }

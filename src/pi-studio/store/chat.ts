@@ -70,6 +70,8 @@ export interface ChatSession {
   compactStartedAt: number;
   /** when the last /compact finished (for the done box's total time) */
   compactEndedAt: number;
+  /** summarizer failure reason from the backend (shown in the failed bubble) */
+  compactError: string | null;
   preview: string;
   stats: SessionStatsView;
   messages: DisplayMessage[];
@@ -195,6 +197,7 @@ function toSession(raw: SessionInfo): ChatSession {
     compactResult: null,
     compactStartedAt: 0,
     compactEndedAt: 0,
+    compactError: null,
     createdAt: raw.created,
     lastActivity: raw.modified,
     status: raw.running ? 'running' : 'idle',
@@ -247,6 +250,7 @@ async function fetchList() {
           s.compactResult = old.compactResult;
           s.compactStartedAt = old.compactStartedAt;
           s.compactEndedAt = old.compactEndedAt;
+          s.compactError = old.compactError;
         }
         return s;
       }),
@@ -330,12 +334,14 @@ function handleEvent(ev: any) {
       if (ev.status === 'started') {
         s.compactResult = null;
         s.compactStartedAt = Date.now();
+        s.compactError = null;
       } else if (ev.status === 'done') {
         s.compactResult = 'done';
         s.compactEndedAt = Date.now();
       } else if (ev.status === 'failed') {
         s.compactResult = 'failed';
         s.compactEndedAt = Date.now();
+        s.compactError = ev.error ?? null;
       }
       break;
     }
@@ -528,7 +534,7 @@ export async function newChat(): Promise<void> {
       state.sessions.unshift({
         id, file, title: 'New Chat', cwd: NEW_CHAT_CWD,
         createdAt: now, lastActivity: now,
-        status: 'idle', compacting: false, compactResult: null, compactStartedAt: 0, compactEndedAt: 0, preview: '',
+        status: 'idle', compacting: false, compactResult: null, compactStartedAt: 0, compactEndedAt: 0, compactError: null, preview: '',
         stats: {
           model: null, tokensIn: 0, tokensOut: 0, costUsd: 0,
           startedAt: now, lastActivity: now, messageCount: 0, userMessages: 0,
@@ -633,6 +639,7 @@ export function markCompactFailed(sessionId: string, reason?: string | null) {
   s.compacting = false;
   s.compactResult = 'failed';
   s.compactEndedAt = Date.now();
+  s.compactError = reason ?? null;
   if (reason) state.lastError = reason;
 }
 

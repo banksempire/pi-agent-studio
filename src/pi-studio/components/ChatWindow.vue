@@ -869,9 +869,10 @@ let anchorBottom = 0;
         </div>
 
         <!-- /compact status as an ActionBubble: WIP shows [Compaction|ani|time]
-             while compacting; on failure it flashes red briefly and dismisses.
-             There is no done box — the compaction summary entry in the flow
-             is the record. -->
+             with a status body row so it reads as a bubble, not a thin line;
+             on failure it flashes red briefly (reason in the body) and
+             dismisses. There is no done box — the compaction summary entry in
+             the flow is the record. -->
         <div
           v-if="compactGroup"
           class="chat-work chat-work--wip chat-compacting"
@@ -891,6 +892,12 @@ let anchorBottom = 0;
               <span class="chat-ab-name">Compaction failed</span>
               <span class="chat-ab-time">{{ fmtSec(compactGroup.bubbles[0].durMs) }}</span>
             </template>
+          </div>
+          <div v-if="compactGroup.wip" class="chat-compacting-body">
+            <span class="chat-compacting-status">Summarizing the conversation…</span>
+          </div>
+          <div v-else-if="session?.compactError" class="chat-compacting-body">
+            <span class="chat-compacting-error">{{ session.compactError }}</span>
           </div>
         </div>
       </template>

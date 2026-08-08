@@ -353,6 +353,11 @@ watch(
  * flash so the failure is visible, then dismisses itself.
  */
 const compactFlash = ref<'fail' | null>(null);
+/** /compact bubble body open (same click-to-reveal as the tool bubbles). */
+const compactOpen = ref(false);
+function toggleCompact() {
+  compactOpen.value = !compactOpen.value;
+}
 watch(
   () => session.value?.compactResult,
   (res) => {
@@ -361,6 +366,9 @@ watch(
       session.value!.compactResult = null;
     } else {
       compactFlash.value = 'fail';
+      // Auto-reveal the sub-bubble so the failure reason is visible during
+      // the flash without a click.
+      compactOpen.value = true;
       window.setTimeout(() => {
         compactFlash.value = null;
         if (session.value?.compactResult === 'failed') session.value.compactResult = null;
@@ -868,13 +876,13 @@ let anchorBottom = 0;
 
         </div>
 
-        <!-- /compact status as an ActionBubble: same structure as the
-             thinking/tool work bubbles — wrapped in .chat-msg--work so the
-             flex automatic minimum size protects it from being crushed to a
-             line in overflowing conversations. WIP shows the head row
-             [Compaction|ani|time] plus a status body; on failure it flashes
-             red briefly (reason in the body) and dismisses. There is no done
-             box — the compaction summary entry in the flow is the record. -->
+        <!-- /compact status as an ActionBubble: the SAME anatomy as the
+             thinking/tool work bubbles — head row [name|ani|content|time]
+             with the status as the content slot, click to reveal the
+             sub-bubble body (failure reason inside, red like a tool error).
+             On failure it flashes red briefly and dismisses; there is no
+             done box — the compaction summary entry in the flow is the
+             record. -->
         <div v-if="compactGroup" class="chat-msg chat-msg--work">
           <div
             class="chat-work chat-work--wip chat-compacting"
@@ -883,11 +891,12 @@ let anchorBottom = 0;
               compactFlash === 'fail' ? 'chat-work--flash-fail' : '',
             ]"
           >
-            <div class="chat-work-head">
-              <span class="chat-work-toggle">{{ compactGroup.wip ? '▸' : '✕' }}</span>
+            <div class="chat-work-head" @click="toggleCompact()">
+              <span class="chat-work-toggle">{{ compactGroup.wip ? (compactOpen ? '▾' : '▸') : (compactOpen ? '▾' : '✕') }}</span>
               <template v-if="compactGroup.wip">
                 <span class="chat-ab-name">Compaction</span>
                 <span class="chat-ab-dots">{{ '.'.repeat(dots) }}</span>
+                <span class="chat-ab-content">Summarizing the conversation…</span>
                 <span class="chat-ab-time">{{ fmtSec(now - compactGroup.startTs) }}</span>
               </template>
               <template v-else>
@@ -895,11 +904,19 @@ let anchorBottom = 0;
                 <span class="chat-ab-time">{{ fmtSec(compactGroup.bubbles[0].durMs) }}</span>
               </template>
             </div>
-            <div v-if="compactGroup.wip" class="chat-compacting-body">
-              <span class="chat-compacting-status">Summarizing the conversation…</span>
-            </div>
-            <div v-else-if="session?.compactError" class="chat-compacting-body">
-              <span class="chat-compacting-error">{{ session.compactError }}</span>
+            <div v-if="compactOpen" class="chat-work-body">
+              <div class="chat-ab-sub" :class="{ 'chat-ab-sub--fail': !compactGroup.wip }">
+                <div class="chat-ab-sub-head">
+                  <span class="chat-ab-sub-name">{{ compactGroup.wip ? 'Compaction' : 'Compaction failed' }}</span>
+                  <span class="chat-ab-sub-time">{{ compactGroup.wip ? fmtSec(now - compactGroup.startTs) : fmtSec(compactGroup.bubbles[0].durMs) }}</span>
+                </div>
+                <div class="chat-ab-sub-details">
+                  <pre v-if="compactGroup.wip" class="chat-ab-code">Summarizing the conversation…</pre>
+                  <div v-else-if="session?.compactError" class="chat-ab-result chat-ab-result--error">
+                    <pre class="chat-ab-code chat-ab-result-body">{{ session.compactError }}</pre>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>

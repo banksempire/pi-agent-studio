@@ -868,36 +868,39 @@ let anchorBottom = 0;
 
         </div>
 
-        <!-- /compact status as an ActionBubble: WIP shows [Compaction|ani|time]
-             with a status body row so it reads as a bubble, not a thin line;
-             on failure it flashes red briefly (reason in the body) and
-             dismisses. There is no done box — the compaction summary entry in
-             the flow is the record. -->
-        <div
-          v-if="compactGroup"
-          class="chat-work chat-work--wip chat-compacting"
-          :class="[
-            !compactGroup.wip && compactGroup.bubbles[0].status === 'fail' ? 'chat-compacting--failed' : '',
-            compactFlash === 'fail' ? 'chat-work--flash-fail' : '',
-          ]"
-        >
-          <div class="chat-work-head">
-            <span class="chat-work-toggle">{{ compactGroup.wip ? '▸' : '✕' }}</span>
-            <template v-if="compactGroup.wip">
-              <span class="chat-ab-name">Compaction</span>
-              <span class="chat-ab-dots">{{ '.'.repeat(dots) }}</span>
-              <span class="chat-ab-time">{{ fmtSec(now - compactGroup.startTs) }}</span>
-            </template>
-            <template v-else>
-              <span class="chat-ab-name">Compaction failed</span>
-              <span class="chat-ab-time">{{ fmtSec(compactGroup.bubbles[0].durMs) }}</span>
-            </template>
-          </div>
-          <div v-if="compactGroup.wip" class="chat-compacting-body">
-            <span class="chat-compacting-status">Summarizing the conversation…</span>
-          </div>
-          <div v-else-if="session?.compactError" class="chat-compacting-body">
-            <span class="chat-compacting-error">{{ session.compactError }}</span>
+        <!-- /compact status as an ActionBubble: same structure as the
+             thinking/tool work bubbles — wrapped in .chat-msg--work so the
+             flex automatic minimum size protects it from being crushed to a
+             line in overflowing conversations. WIP shows the head row
+             [Compaction|ani|time] plus a status body; on failure it flashes
+             red briefly (reason in the body) and dismisses. There is no done
+             box — the compaction summary entry in the flow is the record. -->
+        <div v-if="compactGroup" class="chat-msg chat-msg--work">
+          <div
+            class="chat-work chat-work--wip chat-compacting"
+            :class="[
+              !compactGroup.wip && compactGroup.bubbles[0].status === 'fail' ? 'chat-compacting--failed' : '',
+              compactFlash === 'fail' ? 'chat-work--flash-fail' : '',
+            ]"
+          >
+            <div class="chat-work-head">
+              <span class="chat-work-toggle">{{ compactGroup.wip ? '▸' : '✕' }}</span>
+              <template v-if="compactGroup.wip">
+                <span class="chat-ab-name">Compaction</span>
+                <span class="chat-ab-dots">{{ '.'.repeat(dots) }}</span>
+                <span class="chat-ab-time">{{ fmtSec(now - compactGroup.startTs) }}</span>
+              </template>
+              <template v-else>
+                <span class="chat-ab-name">Compaction failed</span>
+                <span class="chat-ab-time">{{ fmtSec(compactGroup.bubbles[0].durMs) }}</span>
+              </template>
+            </div>
+            <div v-if="compactGroup.wip" class="chat-compacting-body">
+              <span class="chat-compacting-status">Summarizing the conversation…</span>
+            </div>
+            <div v-else-if="session?.compactError" class="chat-compacting-body">
+              <span class="chat-compacting-error">{{ session.compactError }}</span>
+            </div>
           </div>
         </div>
       </template>

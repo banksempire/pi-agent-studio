@@ -313,13 +313,10 @@
   color: #f87171;
 }
 
-/* The /compact bubble is a direct flex child of .chat-messages. Its own
-   overflow:hidden (from .chat-work) disables the flex automatic minimum
-   size, so in an overflowing conversation flex-shrink crushes it to the
-   2px borders — the "line" the user saw. Never shrink it. */
-.chat-compacting {
-  flex-shrink: 0;
-}
+/* The /compact bubble rides the same .chat-msg--work wrapper as the
+   thinking/tool bubbles, so it inherits their flex protection (the wrapper
+   has no overflow:hidden, keeping the automatic minimum size). No extra
+   shrink guard needed. */
 
 /* The /compact bubble's body row — gives the WIP/failed box real height so
    it reads as a bubble rather than a one-line strip. */

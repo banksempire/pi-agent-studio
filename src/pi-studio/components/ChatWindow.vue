@@ -166,14 +166,18 @@ interface PendingMove {
 
 function groupDoneLabel(g: ActionGroup): string {
   const n = g.bubbles.length;
+  // A failed compaction is a single failed bubble — say what happened,
+  // not "1 action done".
+  if (n === 1 && g.bubbles[0].kind === 'compaction' && g.bubbles[0].status === 'fail') {
+    return 'Compaction failed';
+  }
   return `${n} action${n === 1 ? '' : 's'} done`;
 }
 
 /** Sub-bubble rows are tinted by outcome: green on success, red on failure. */
 function subClass(b: ActionBubble): string {
-  if (b.kind !== 'tool') return '';
   if (b.status === 'fail') return 'chat-ab-sub--fail';
-  if (b.status === 'ok') return 'chat-ab-sub--ok';
+  if ((b.kind === 'tool' || b.kind === 'compaction') && b.status === 'ok') return 'chat-ab-sub--ok';
   return '';
 }
 
@@ -331,6 +335,31 @@ const items = computed<ChatItem[]>(() => {
   }
   // A trailing work run is still in progress while the agent is working.
   flush(null, session.value?.status === 'running');
+
+  // The /compact status rides the SAME work pipeline as the thinking/tool
+  // bubbles: one compaction ActionBubble in its own ActionGroup, appended as
+  // a regular work item (no separate kind — it IS a work group). WIP while
+  // compacting; on failure the bubble flips to fail and the work-bubble
+  // flash watch + auto-dismiss timer handle the rest.
+  const s = session.value;
+  if (s && (s.compacting || s.compactResult === 'failed')) {
+    const started = s.compactStartedAt || Date.now();
+    const group = new ActionGroup('compact', started);
+    const b = new ActionBubble('compaction', 'compact:0', 'Compaction', started);
+    if (s.compacting) {
+      group.wip = true;
+      b.live = true;
+      b.status = 'pending';
+      b.detail = 'Summarizing the conversation…';
+    } else {
+      b.status = 'fail';
+      b.isError = true;
+      b.durMs = Math.max(0, (s.compactEndedAt || started) - started);
+      b.detail = s.compactError || '';
+    }
+    group.bubbles.push(b);
+    out.push({ kind: 'work', group });
+  }
   return out;
 });
 
@@ -366,10 +395,15 @@ watch(
  * flash so the failure is visible, then dismisses itself.
  */
 const compactFlash = ref<'fail' | null>(null);
-/** /compact bubble body open (same click-to-reveal as the tool bubbles). */
-const compactOpen = ref(false);
-function toggleCompact() {
-  compactOpen.value = !compactOpen.value;
+/** The compaction work group uses a fixed id ('compact'), so its open state
+ *  must not leak into the next run — reset both toggle levels. */
+function resetCompactOpen() {
+  const wo = { ...workOpen.value };
+  delete wo.compact;
+  workOpen.value = wo;
+  const mo = { ...moveOpen.value };
+  delete mo['compact:0'];
+  moveOpen.value = mo;
 }
 watch(
   () => session.value?.compactResult,
@@ -377,39 +411,26 @@ watch(
     if (!res) return;
     if (res === 'done') {
       session.value!.compactResult = null;
+      resetCompactOpen();
     } else {
       compactFlash.value = 'fail';
-      // Auto-reveal the sub-bubble so the failure reason is visible during
-      // the flash without a click.
-      compactOpen.value = true;
+      // Auto-reveal the failed sub-bubble AND its detail so the reason is
+      // visible during the flash without a click.
+      workOpen.value = { ...workOpen.value, compact: true };
+      moveOpen.value = { ...moveOpen.value, 'compact:0': true };
       window.setTimeout(() => {
         compactFlash.value = null;
-        if (session.value?.compactResult === 'failed') session.value.compactResult = null;
+        if (session.value?.compactResult === 'failed') {
+          session.value.compactResult = null;
+          resetCompactOpen();
+        }
       }, 1500);
     }
   },
 );
 
-/** The /compact status rendered as an ActionBubble (one-bubble group): the
- *  WIP box while compacting; on failure a transient red box until the flash
- *  timer above dismisses it. There is no done box. */
-const compactGroup = computed<ActionGroup | null>(() => {
-  const s = session.value;
-  if (!s || (!s.compacting && s.compactResult !== 'failed')) return null;
-  const started = s.compactStartedAt || Date.now();
-  const g = new ActionGroup('compact', started);
-  const b = new ActionBubble('compaction', 'compact:0', 'Compaction', started);
-  if (s.compacting) {
-    g.wip = true;
-    b.live = true;
-    b.status = 'pending';
-  } else {
-    b.status = 'fail';
-    b.durMs = Math.max(0, (s.compactEndedAt || started) - started);
-  }
-  g.bubbles.push(b);
-  return g;
-});
+/** The /compact status is a regular work item (see the items computed) —
+ *  no separate group/kind. */
 onMounted(() => { now.value = Date.now(); });
 
 /**
@@ -796,6 +817,9 @@ let anchorBottom = 0;
               { 'chat-work--open': workOpen[item.group.id] },
               flash[item.group.id] === 'ok' ? 'chat-work--flash-ok' : '',
               flash[item.group.id] === 'fail' ? 'chat-work--flash-fail' : '',
+              compactFlash === 'fail' ? 'chat-work--flash-fail' : '',
+              item.group.id === 'compact' ? 'chat-compacting' : '',
+              item.group.id === 'compact' && !item.group.wip ? 'chat-compacting--failed' : '',
             ]"
           >
             <div class="chat-work-head" @click="toggleWork(item.group.id)">
@@ -829,7 +853,7 @@ let anchorBottom = 0;
                 </div>
                 <div v-if="moveOpen[b.key]" class="chat-ab-sub-details">
                   <pre v-if="b.kind === 'thinking'" class="chat-ab-code">{{ b.detail }}</pre>
-                  <template v-else-if="b.kind === 'tool'">
+                  <template v-else-if="b.kind === 'tool' || b.kind === 'compaction'">
                     <pre v-if="b.args" class="chat-ab-code">{{ b.args }}</pre>
                     <div v-if="b.status !== 'pending'" class="chat-ab-result" :class="{ 'chat-ab-result--error': b.isError }">
                       <pre class="chat-ab-code chat-ab-result-body">{{ b.detail }}</pre>
@@ -891,51 +915,6 @@ let anchorBottom = 0;
             </div>
           </div>
 
-        </div>
-
-        <!-- /compact status as an ActionBubble: the SAME anatomy as the
-             thinking/tool work bubbles — head row [name|ani|content|time]
-             with the status as the content slot, click to reveal the
-             sub-bubble body (failure reason inside, red like a tool error).
-             On failure it flashes red briefly and dismisses; there is no
-             done box — the compaction summary entry in the flow is the
-             record. -->
-        <div v-if="compactGroup" class="chat-msg chat-msg--work">
-          <div
-            class="chat-work chat-work--wip chat-compacting"
-            :class="[
-              !compactGroup.wip && compactGroup.bubbles[0].status === 'fail' ? 'chat-compacting--failed' : '',
-              compactFlash === 'fail' ? 'chat-work--flash-fail' : '',
-            ]"
-          >
-            <div class="chat-work-head" @click="toggleCompact()">
-              <span class="chat-work-toggle">{{ compactGroup.wip ? (compactOpen ? '▾' : '▸') : (compactOpen ? '▾' : '✕') }}</span>
-              <template v-if="compactGroup.wip">
-                <span class="chat-ab-name">Compaction</span>
-                <span class="chat-ab-dots">{{ '.'.repeat(dots) }}</span>
-                <span class="chat-ab-content">Summarizing the conversation…</span>
-                <span class="chat-ab-time">{{ fmtSec(now - compactGroup.startTs) }}</span>
-              </template>
-              <template v-else>
-                <span class="chat-ab-name">Compaction failed</span>
-                <span class="chat-ab-time">{{ fmtSec(compactGroup.bubbles[0].durMs) }}</span>
-              </template>
-            </div>
-            <div v-if="compactOpen" class="chat-work-body">
-              <div class="chat-ab-sub" :class="{ 'chat-ab-sub--fail': !compactGroup.wip }">
-                <div class="chat-ab-sub-head">
-                  <span class="chat-ab-sub-name">{{ compactGroup.wip ? 'Compaction' : 'Compaction failed' }}</span>
-                  <span class="chat-ab-sub-time">{{ compactGroup.wip ? fmtSec(now - compactGroup.startTs) : fmtSec(compactGroup.bubbles[0].durMs) }}</span>
-                </div>
-                <div class="chat-ab-sub-details">
-                  <pre v-if="compactGroup.wip" class="chat-ab-code">Summarizing the conversation…</pre>
-                  <div v-else-if="session?.compactError" class="chat-ab-result chat-ab-result--error">
-                    <pre class="chat-ab-code chat-ab-result-body">{{ session.compactError }}</pre>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
       </template>
     </div>

@@ -7,7 +7,7 @@ import {
 } from '../store/chat';
 import {
   allSlashCommands, parseSlash, runSlash,
-  type SlashCommandInfo, type SlashPicker, type SlashResult,
+  type ParsedSlash, type SlashCommandInfo, type SlashPicker, type SlashResult,
 } from '../slash/commands';
 
 const props = defineProps<{ sessionId: string }>();
@@ -18,19 +18,13 @@ const session = computed<ChatSession | undefined>(() => store.findSession(props.
 const renderMd = computed(() => store.prefs.renderMarkdown);
 
 /**
- * Compacted-context summaries stay collapsed until clicked (a summary can be
- * tens of thousands of characters — showing it inline as a wall of text was
- * the #1 complaint). They render as ActionBubble-style boxes (no yellow box);
- * toggling the header expands/collapses the text.
+ * Boxes are collapsed by default; `open` holds the expanded ones — one map
+ * for all three kinds, ids namespaced: work groups 'work-…', their
+ * sub-bubbles '…:…', compaction summaries 'sum-…'.
  */
-const expandedSummaries = ref<Set<string>>(new Set());
-/** id of the summary box currently glowing after click-to-audit */
-const flashingSummary = ref<string | null>(null);
-function toggleSummary(id: string) {
-  const next = new Set(expandedSummaries.value);
-  if (next.has(id)) next.delete(id);
-  else next.add(id);
-  expandedSummaries.value = next;
+const open = ref<Record<string, boolean>>({});
+function toggle(id: string) {
+  open.value = { ...open.value, [id]: !open.value[id] };
 }
 
 /**
@@ -101,25 +95,20 @@ async function loadOlder() {
 // shows up in the last message or in the count. The DOM must be updated
 // before measuring, so scroll runs after the render flush.
 const keepBottom = () => { if (sticky) nextTick(scrollToBottom); };
-// Re-run on new messages and on streaming text/thinking growth. A cheap
-// O(1) key (count + last message identity/lengths) is enough: messages are
-// append-only except the live tail being streamed, so a change always
-// shows up in the last message or in the count. The DOM must be updated
-// before measuring, so scroll runs after the render flush.
 watch(
   () => {
     const s = session.value;
     if (!s) return '';
     const last = s.messages[s.messages.length - 1];
-    return last
+    const key = last
       ? `${s.messages.length}:${last.id}:${last.text.length}:${(last.thinking ?? '').length}`
       : `${s.messages.length}:`;
+    // The /compact box appears/disappears without messages changing — the
+    // compacting flag is part of the key so it still re-anchors the scroll.
+    return key + (s.compacting ? ':c' : '');
   },
   keepBottom,
 );
-
-// The /compact progress box toggles without changing messages.
-watch(() => session.value?.compacting, keepBottom);
 
 const lastMessage = computed<DisplayMessage | undefined>(() => {
   const msgs = session.value?.messages ?? [];
@@ -371,8 +360,8 @@ let nowTimer: number | null = null;
 watch(
   () => {
     const last = items.value[items.value.length - 1];
-    const workWip = last?.kind === 'work' && last.group.wip;
-    return workWip || session.value?.compacting === true;
+    // The /compact WIP group IS a work item — its presence is covered here.
+    return last?.kind === 'work' && last.group.wip;
   },
   (active) => {
     if (active && nowTimer === null) {
@@ -394,16 +383,13 @@ watch(
  * lands in the flow is the record. On failure it stays briefly with a red
  * flash so the failure is visible, then dismisses itself.
  */
-const compactFlash = ref<'fail' | null>(null);
 /** The compaction work group uses a fixed id ('compact'), so its open state
  *  must not leak into the next run — reset both toggle levels. */
 function resetCompactOpen() {
-  const wo = { ...workOpen.value };
-  delete wo.compact;
-  workOpen.value = wo;
-  const mo = { ...moveOpen.value };
-  delete mo['compact:0'];
-  moveOpen.value = mo;
+  const next = { ...open.value };
+  delete next.compact;
+  delete next['compact:0'];
+  open.value = next;
 }
 watch(
   () => session.value?.compactResult,
@@ -413,13 +399,17 @@ watch(
       session.value!.compactResult = null;
       resetCompactOpen();
     } else {
-      compactFlash.value = 'fail';
+      // Same flash mechanism as bubble completion (flash is defined below):
+      // the instant-fail path has no pending→fail transition for the items
+      // watch to catch, so flash the fixed 'compact' group id directly.
+      flash.value = { ...flash.value, compact: 'fail' };
       // Auto-reveal the failed sub-bubble AND its detail so the reason is
       // visible during the flash without a click.
-      workOpen.value = { ...workOpen.value, compact: true };
-      moveOpen.value = { ...moveOpen.value, 'compact:0': true };
+      open.value = { ...open.value, compact: true, 'compact:0': true };
       window.setTimeout(() => {
-        compactFlash.value = null;
+        const next = { ...flash.value };
+        delete next.compact;
+        flash.value = next;
         if (session.value?.compactResult === 'failed') {
           session.value.compactResult = null;
           resetCompactOpen();
@@ -429,9 +419,6 @@ watch(
   },
 );
 
-/** The /compact status is a regular work item (see the items computed) —
- *  no separate group/kind. */
-onMounted(() => { now.value = Date.now(); });
 
 /**
  * Flash the work box green/red when an action bubble completes (success/
@@ -582,15 +569,11 @@ async function handleSlashResult(r: SlashResult) {
 }
 
 /** Route the composer: slash command → backend, otherwise a normal message. */
-async function runCommand() {
-  const text = input.value.trim();
-  if (!text) return;
-  const parsed = parseSlash(text);
-  if (!parsed) return;
+async function runCommand(parsed: ParsedSlash) {
   store.clearLastError();
   input.value = '';
   completionOpen.value = false;
-  const r = await runSlash(props.sessionId, text);
+  const r = await runSlash(props.sessionId, parsed);
   await handleSlashResult(r);
   sticky = true;
   nextTick(scrollToBottom);
@@ -633,7 +616,7 @@ function send() {
     return;
   }
   if (parsed) {
-    void runCommand();
+    void runCommand(parsed);
     return;
   }
   store.clearLastError();
@@ -730,6 +713,7 @@ function resetResize() {
 }
 
 onMounted(() => {
+  now.value = Date.now();
   scrollToBottom();
   inputEl.value?.focus();
   // When the messages area resizes (e.g. the composer grows/shrinks via its
@@ -816,13 +800,13 @@ let anchorBottom = 0;
             :class="[
               flash[item.group.id] === 'ok' ? 'chat-work--flash-ok' : '',
               flash[item.group.id] === 'fail' ? 'chat-work--flash-fail' : '',
-              compactFlash === 'fail' ? 'chat-work--flash-fail' : '',
+              flash['compact'] === 'fail' ? 'chat-work--flash-fail' : '',
               item.group.id === 'compact' ? 'chat-compacting' : '',
               item.group.id === 'compact' && !item.group.wip ? 'chat-compacting--failed' : '',
             ]"
           >
-            <div class="chat-work-head" @click="toggleWork(item.group.id)">
-              <span class="chat-work-toggle">{{ workOpen[item.group.id] ? '▾' : '▸' }}</span>
+            <div class="chat-work-head" @click="toggle(item.group.id)">
+              <span class="chat-work-toggle">{{ open[item.group.id] ? '▾' : '▸' }}</span>
               <!-- While working the group shows the same thing as the latest bubble:
                    [action name|ani|content|time elapsed] -->
               <template v-if="item.group.wip && item.group.latest">
@@ -837,7 +821,7 @@ let anchorBottom = 0;
                 <span class="chat-ab-time">{{ fmtSec(item.group.durMs) }}</span>
               </template>
             </div>
-            <div v-if="workOpen[item.group.id]" class="chat-work-body">
+            <div v-if="open[item.group.id]" class="chat-work-body">
               <div
                 v-for="b in item.group.bubbles"
                 :key="b.key"
@@ -845,12 +829,12 @@ let anchorBottom = 0;
                 :class="subClass(b)"
               >
                 <!-- Completed bubble: [action name|time elapsed] -->
-                <div class="chat-ab-sub-head" @click="toggleMove(b.key)">
-                  <span class="chat-ab-sub-toggle">{{ moveOpen[b.key] ? '▾' : '▸' }}</span>
+                <div class="chat-ab-sub-head" @click="toggle(b.key)">
+                  <span class="chat-ab-sub-toggle">{{ open[b.key] ? '▾' : '▸' }}</span>
                   <span class="chat-ab-sub-name">{{ b.name }}</span>
                   <span class="chat-ab-sub-time">{{ b.live ? fmtSec(now - b.startTs) : fmtSec(b.durMs) }}</span>
                 </div>
-                <div v-if="moveOpen[b.key]" class="chat-ab-sub-details">
+                <div v-if="open[b.key]" class="chat-ab-sub-details">
                   <pre v-if="b.kind === 'thinking'" class="chat-ab-code">{{ b.detail }}</pre>
                   <template v-else-if="b.kind === 'tool' || b.kind === 'compaction'">
                     <pre v-if="b.args" class="chat-ab-code">{{ b.args }}</pre>
@@ -895,18 +879,17 @@ let anchorBottom = 0;
           <div
             v-else-if="item.kind === 'summary'"
             class="chat-work chat-summary-ab"
-            :class="{ 'chat-msg--flash': flashingSummary === item.msg.id }"
-            @click="toggleSummary(item.msg.id)"
+            @click="toggle('sum-' + item.msg.id)"
           >
             <div class="chat-work-head">
-              <span class="chat-work-toggle">{{ expandedSummaries.has(item.msg.id) ? '▾' : '▸' }}</span>
+              <span class="chat-work-toggle">{{ open['sum-' + item.msg.id] ? '▾' : '▸' }}</span>
               <span class="chat-ab-name">Compaction summary</span>
               <!-- Same content slot as the tool bubbles: the collapsed head
                    carries a capped preview of the summary (as much text as
                    fits — ellipsis only when narrow), not an empty box. -->
               <span class="chat-ab-content chat-summary-ab-preview">{{ summaryPreview(item.msg.text) }}</span>
             </div>
-            <div v-if="expandedSummaries.has(item.msg.id)" class="chat-work-body">
+            <div v-if="open['sum-' + item.msg.id]" class="chat-work-body">
               <pre class="chat-ab-code chat-summary-ab-body">{{ item.msg.text }}</pre>
             </div>
           </div>

@@ -133,9 +133,7 @@ const store = useChatStore();
  * Run a slash command. `sessionId` is the active chat window's session
  * (commands like /clone, /compact, /model apply to it).
  */
-export async function runSlash(sessionId: string, text: string): Promise<SlashResult> {
-  const parsed = parseSlash(text);
-  if (!parsed) return { kind: 'none' };
+export async function runSlash(sessionId: string, parsed: ParsedSlash): Promise<SlashResult> {
   const { command, args } = parsed;
 
   const session = store.findSession(sessionId);

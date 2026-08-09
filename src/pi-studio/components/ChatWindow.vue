@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import {
@@ -814,7 +814,6 @@ let anchorBottom = 0;
             v-if="item.kind === 'work'"
             class="chat-work"
             :class="[
-              { 'chat-work--open': workOpen[item.group.id] },
               flash[item.group.id] === 'ok' ? 'chat-work--flash-ok' : '',
               flash[item.group.id] === 'fail' ? 'chat-work--flash-fail' : '',
               compactFlash === 'fail' ? 'chat-work--flash-fail' : '',
@@ -843,7 +842,7 @@ let anchorBottom = 0;
                 v-for="b in item.group.bubbles"
                 :key="b.key"
                 class="chat-ab-sub"
-                :class="[subClass(b), { 'chat-ab-sub--open': moveOpen[b.key] }]"
+                :class="subClass(b)"
               >
                 <!-- Completed bubble: [action name|time elapsed] -->
                 <div class="chat-ab-sub-head" @click="toggleMove(b.key)">
@@ -896,10 +895,7 @@ let anchorBottom = 0;
           <div
             v-else-if="item.kind === 'summary'"
             class="chat-work chat-summary-ab"
-            :class="{
-              'chat-summary-ab--open': expandedSummaries.has(item.msg.id),
-              'chat-msg--flash': flashingSummary === item.msg.id,
-            }"
+            :class="{ 'chat-msg--flash': flashingSummary === item.msg.id }"
             @click="toggleSummary(item.msg.id)"
           >
             <div class="chat-work-head">

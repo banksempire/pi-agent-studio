@@ -46,6 +46,19 @@ function md(m: DisplayMessage): string {
   mdCache.set(m, { text: m.text, html });
   return html;
 }
+
+/**
+ * Collapsed-head preview of a compaction summary, capped the same way the
+ * tool bubbles cap their preview: rendering the raw summary in the head span
+ * makes the browser lay out the FULL text (tens of KB) as a single nowrap
+ * line on every render (~160k px wide). The expanded body shows it all.
+ */
+function summaryPreview(text: string): string {
+  const t = text.trim();
+  const capped = t.length > 300 ? t.slice(0, 300) : t;
+  const flat = capped.replace(/\s+/g, ' ');
+  return (t.length > 300 ? flat + '…' : flat) || '…';
+}
 const input = ref('');
 const listEl = ref<HTMLElement | null>(null);
 const inputEl = ref<HTMLTextAreaElement | null>(null);
@@ -869,9 +882,9 @@ let anchorBottom = 0;
               <span class="chat-work-toggle">{{ expandedSummaries.has(item.msg.id) ? '▾' : '▸' }}</span>
               <span class="chat-ab-name">Compaction summary</span>
               <!-- Same content slot as the tool bubbles: the collapsed head
-                   carries a preview of the summary (as much text as fits —
-                   ellipsis only when narrow), not an empty box. -->
-              <span v-if="item.msg.text" class="chat-ab-content chat-summary-ab-preview">{{ item.msg.text }}</span>
+                   carries a capped preview of the summary (as much text as
+                   fits — ellipsis only when narrow), not an empty box. -->
+              <span class="chat-ab-content chat-summary-ab-preview">{{ summaryPreview(item.msg.text) }}</span>
             </div>
             <div v-if="expandedSummaries.has(item.msg.id)" class="chat-work-body">
               <pre class="chat-ab-code chat-summary-ab-body">{{ item.msg.text }}</pre>

@@ -818,11 +818,11 @@
 }
 
 .dir-node-toggle {
-  width: 12px;
-  font-size: 9px;
-  color: var(--sf-text-muted);
-  flex-shrink: 0;
+  width: 16px;
   text-align: center;
+  font-size: 12px;
+  color: var(--sf-text);
+  flex-shrink: 0;
   transition: transform 0.1s;
 }
 

@@ -81,7 +81,7 @@ function select(node: DirNode) {
         class="dir-node-toggle"
         :class="{ 'dir-node-toggle--open': !collapsed.has(node.path) }"
         @click.stop="toggle(node)"
-      >{{ node.children.length ? '▸' : '·' }}</span>
+      >{{ node.children.length ? '❯' : '·' }}</span>
       <span class="dir-node-name">{{ node.name }}</span>
       <span class="dir-node-count">{{ node.count }}</span>
     </div>

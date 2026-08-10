@@ -1025,13 +1025,9 @@
 }
 
 /* Selected rows keep the normal row look — the left border turns accent,
-   exactly like the docker app highlight (no text or background change).
-   The left corners are squared so the line is straight: a border follows
-   the box's border-radius, which would curve the line ends (3px arc). */
+   exactly like the docker app highlight (no text or background change). */
 .chat-list-item--active {
   border-left-color: var(--sf-accent);
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
 }
 
 .chat-list-row1 {

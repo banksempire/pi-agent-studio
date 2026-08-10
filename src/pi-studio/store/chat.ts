@@ -121,22 +121,11 @@ interface ChatState {
   };
 }
 
-const state = reactive<ChatState>({
-  sessions: [],
-  activeChatId: null,
-  openViewTabIds: new Set(),
-  backend: 'connecting',
-  backendError: '',
-  lastError: '',
-  drafts: {},
-  prefs: loadPrefs(),
-});
-
-/** Tab id scheme: one tab per session, stable across open/close. */
-const TAB_PREFIX = 'chat-';
-const chatTabId = (sessionId: string) => TAB_PREFIX + sessionId;
-
 // ── Global preferences (localStorage, apply to ALL chats) ──────────────────
+// NOTE: both this block and the drafts block below sit ABOVE the `state`
+// creation — the loaders run inside the state literal, and their const keys
+// must already be initialized (a TDZ ReferenceError inside the try/catch
+// would silently fall back to defaults).
 
 const PREFS_KEY = 'sf-chat:prefs';
 function loadPrefs(): ChatState['prefs'] {
@@ -159,6 +148,48 @@ function setSendKey(mode: SendKeyMode) {
   state.prefs.sendKey = mode;
   savePrefs();
 }
+
+// ── Unsent composer drafts (localStorage, per session — survive reloads) ──
+
+const DRAFTS_KEY = 'sf-chat:drafts';
+function loadDrafts(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(DRAFTS_KEY);
+    if (raw) {
+      const j = JSON.parse(raw);
+      if (j && typeof j === 'object') return j;
+    }
+  } catch { /* corrupted or unavailable — start empty */ }
+  return {};
+}
+function saveDrafts() {
+  try {
+    // Once the session list is known, drop drafts of sessions that no
+    // longer exist so the storage doesn't accumulate junk keys.
+    if (state.sessions.length > 0) {
+      const known = new Set(state.sessions.map((s) => s.id));
+      for (const id of Object.keys(state.drafts)) {
+        if (!known.has(id)) delete state.drafts[id];
+      }
+    }
+    localStorage.setItem(DRAFTS_KEY, JSON.stringify(state.drafts));
+  } catch { /* storage unavailable */ }
+}
+
+const state = reactive<ChatState>({
+  sessions: [],
+  activeChatId: null,
+  openViewTabIds: new Set(),
+  backend: 'connecting',
+  backendError: '',
+  lastError: '',
+  drafts: loadDrafts(),
+  prefs: loadPrefs(),
+});
+
+/** Tab id scheme: one tab per session, stable across open/close. */
+const TAB_PREFIX = 'chat-';
+const chatTabId = (sessionId: string) => TAB_PREFIX + sessionId;
 
 // ── Backend client ─────────────────────────────────────────────────────────
 
@@ -790,7 +821,10 @@ export const store = {
   clearLastError() { state.lastError = ''; },
   /** unsent composer text of a session's chat window ('' if none) */
   draftOf(sessionId: string): string { return state.drafts[sessionId] ?? ''; },
-  setDraft(sessionId: string, text: string) { state.drafts[sessionId] = text; },
+  setDraft(sessionId: string, text: string) {
+    state.drafts[sessionId] = text;
+    saveDrafts();
+  },
   findSession,
   isViewOpen,
   activeSessions,

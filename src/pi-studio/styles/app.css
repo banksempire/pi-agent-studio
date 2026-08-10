@@ -590,7 +590,8 @@
   border-radius: 5px;
   color: var(--sf-text);
   font-family: var(--sf-font);
-  font-size: 13px;
+  /* 16px: below this iOS Safari auto-zooms into the input on focus */
+  font-size: 16px;
   line-height: 1.4;
   outline: none;
 }
@@ -933,7 +934,7 @@
   border-radius: 4px;
   color: var(--sf-text);
   font-family: var(--sf-font);
-  font-size: 12px;
+  font-size: 16px;   /* ≥16px: no iOS focus auto-zoom */
   padding: 6px 8px;
   outline: none;
 }

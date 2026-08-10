@@ -1120,6 +1120,13 @@
   padding: 2px 0;
 }
 
+/* The stats KeyValueList gets the same 8px inset as the model info block
+   below it — both render through the framework's KeyValueList, so the
+   rows must start at the same x (keys/values line up across blocks). */
+.session-stats-rows {
+  padding: 0 8px;
+}
+
 .session-stats-head {
   display: flex;
   align-items: center;

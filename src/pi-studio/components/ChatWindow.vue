@@ -725,13 +725,16 @@ function autoGrow() {
     return;
   }
   el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 160) + 'px';
+  // Cap follows the CSS max-height (em-based) so it scales with font-size.
+  const cap = parseFloat(getComputedStyle(el).maxHeight) || 10 * 16;
+  el.style.height = Math.min(el.scrollHeight, cap) + 'px';
 }
 
 /** Composer height set by dragging the handle (null = auto-grow). */
 const manualHeight = ref<number | null>(null);
-const MIN_INPUT_H = 60;
-const MAX_INPUT_H = 320;
+// Drag-resize limits, expressed per-em so they scale with font-size.
+const MIN_INPUT_EM = 60 / 16;
+const MAX_INPUT_EM = 320 / 16;
 
 let resizeCleanup: (() => void) | null = null;
 
@@ -740,8 +743,12 @@ function startResize(e: MouseEvent) {
   e.preventDefault();
   const startY = e.clientY;
   const startH = manualHeight.value ?? (inputEl.value?.offsetHeight ?? 80);
+  const el = inputEl.value;
+  const fs = parseFloat(el ? getComputedStyle(el).fontSize : '') || 16;
+  const minH = fs * MIN_INPUT_EM;
+  const maxH = fs * MAX_INPUT_EM;
   const onMove = (ev: MouseEvent) => {
-    manualHeight.value = Math.min(MAX_INPUT_H, Math.max(MIN_INPUT_H, startH + (startY - ev.clientY)));
+    manualHeight.value = Math.min(maxH, Math.max(minH, startH + (startY - ev.clientY)));
   };
   const onUp = () => {
     window.removeEventListener('mousemove', onMove);

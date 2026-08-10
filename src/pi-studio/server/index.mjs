@@ -456,7 +456,23 @@ function emitRefresh(file) {
   refreshTimers.set(file, setTimeout(() => {
     refreshTimers.delete(file);
     emit({ type: 'refresh', file });
+    // The folder tree's session counts changed — push the rebuilt tree so
+    // clients don't refetch on every section flip.
+    scheduleTreePush();
   }, 250));
+}
+
+/** Coalesced tree push: rebuild + broadcast the Directory tree shortly after
+ *  session-file changes. Once a push is pending it is NOT reset by further
+ *  refreshes (a busy turn streams refreshes faster than any debounce —
+ *  resetting would starve the push forever). */
+let treeTimer = null;
+function scheduleTreePush() {
+  if (treeTimer) return;
+  treeTimer = setTimeout(async () => {
+    treeTimer = null;
+    try { emit({ type: 'tree', tree: await buildSessionTree() }); } catch { /* ignore */ }
+  }, 500);
 }
 
 /**

@@ -57,6 +57,15 @@ export interface SessionStatsView {
   userMessages: number;
 }
 
+/** One node of the left-panel Directory tree (backend /api/tree shape). */
+export interface DirNode {
+  name: string;
+  path: string;
+  /** recursive: how many sessions live under this folder */
+  count: number;
+  children: DirNode[];
+}
+
 export interface ChatSession {
   /** UI id (encoded file path) — also the key for the workspace tab */
   id: string;
@@ -107,6 +116,11 @@ interface ChatState {
   /** directory filter from the left panel tree: only sessions whose cwd is
    *  under this path are shown in the lists (null = all) */
   cwdFilter: string | null;
+  /** Directory tree, pushed by the backend on change (fetched once on load) */
+  tree: DirNode | null;
+  /** expanded/collapsed per tree node path — kept in the store so it
+   *  survives switching sections/panels (the component remounts) */
+  treeCollapsed: Set<string>;
   backend: BackendStatus;
   backendError: string;
   /** last send failure, shown in chat windows */
@@ -184,6 +198,8 @@ const state = reactive<ChatState>({
   activeChatId: null,
   openViewTabIds: new Set(),
   cwdFilter: null,
+  tree: null,
+  treeCollapsed: new Set(),
   backend: 'connecting',
   backendError: '',
   lastError: '',
@@ -310,6 +326,39 @@ async function fetchList() {
 /** Public refresh — re-read the session list from the backend (slash results use it). */
 export function refreshList(): Promise<void> {
   return fetchList();
+}
+
+/** Set the Directory tree + seed the default collapse state on the FIRST
+ *  tree (fetch or push) — later updates keep the user's expand/collapse. */
+function applyTree(j: DirNode) {
+  state.tree = j;
+  if (state.treeCollapsed.size === 0) {
+    const s = new Set<string>();
+    const collapseAll = (n: DirNode) => {
+      if (n.children.length) {
+        s.add(n.path);
+        for (const c of n.children) collapseAll(c);
+      }
+    };
+    collapseAll(j);
+    state.treeCollapsed = s;
+  }
+}
+
+/** Fetch the Directory tree once (later updates arrive via SSE 'tree'). */
+export async function loadTree() {
+  try {
+    const res = await fetch('/api/tree');
+    const j = await res.json();
+    if (j && typeof j.name === 'string') applyTree(j);
+  } catch { /* backend offline — the SSE push will fill it in */ }
+}
+
+export function toggleTreeCollapsed(path: string) {
+  const next = new Set(state.treeCollapsed);
+  if (next.has(path)) next.delete(path);
+  else next.add(path);
+  state.treeCollapsed = next;
 }
 
 // ── SSE live events ────────────────────────────────────────────────────────
@@ -441,6 +490,12 @@ function handleEvent(ev: any) {
       const s = byFile(ev.file);
       if (s && s.messagesLoaded) void syncTail(s.id);
       void fetchList();
+      break;
+    }
+    case 'tree': {
+      // Directory tree pushed by the backend whenever session files change.
+      // The user's expand/collapse state is preserved (treeCollapsed keys).
+      if (ev.tree && typeof ev.tree.name === 'string') applyTree(ev.tree);
       break;
     }
   }
@@ -876,6 +931,10 @@ export const store = {
   },
   get cwdFilter() { return state.cwdFilter; },
   setCwdFilter(dir: string | null) { state.cwdFilter = dir; },
+  get tree() { return state.tree; },
+  get treeCollapsed() { return state.treeCollapsed; },
+  loadTree,
+  toggleTreeCollapsed,
   get activeChatId() { return state.activeChatId; },
   get openViewTabIds() { return state.openViewTabIds; },
   get backend() { return state.backend; },

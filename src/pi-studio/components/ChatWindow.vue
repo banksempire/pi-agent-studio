@@ -90,9 +90,12 @@ async function loadOlder() {
 }
 
 // Re-run on new messages and on streaming text/thinking growth. A cheap
-// O(1) key (count + last message identity/lengths) is enough: messages are
-// append-only except the live tail being streamed, so a change always
-// shows up in the last message or in the count. The DOM must be updated
+// key (count + last message identity/lengths + toolCalls digest) is enough:
+// messages are append-only except the live tail being streamed, so a change
+// always shows up in the last message or in the count. The toolCalls digest
+// is required because tool_start / tool_partial / tool_result MUTATE the
+// tail message's toolCalls in place (id/text/thinking unchanged) — without
+// it the scroll never re-anchors while a tool runs. The DOM must be updated
 // before measuring, so scroll runs after the render flush.
 const keepBottom = () => { if (sticky) nextTick(scrollToBottom); };
 watch(
@@ -100,8 +103,12 @@ watch(
     const s = session.value;
     if (!s) return '';
     const last = s.messages[s.messages.length - 1];
+    const tcs = last?.toolCalls;
+    const tcKey = tcs && tcs.length
+      ? tcs.map((t) => `${t.id}:${t.name}:${(t.args ?? '').length}:${(t.result ?? '').length}${t.isError ? ':e' : ''}`).join('|')
+      : '';
     const key = last
-      ? `${s.messages.length}:${last.id}:${last.text.length}:${(last.thinking ?? '').length}`
+      ? `${s.messages.length}:${last.id}:${last.text.length}:${(last.thinking ?? '').length}:${tcKey}:${last.error ?? ''}`
       : `${s.messages.length}:`;
     // The /compact box appears/disappears without messages changing — the
     // compacting flag is part of the key so it still re-anchors the scroll.

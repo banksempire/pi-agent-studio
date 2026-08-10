@@ -72,6 +72,7 @@ function toDisplayMessage(message) {
   if (message.role === 'assistant') {
     d.text = textOf(message.content);
     d.model = message.model ?? null;
+    d.provider = message.provider ?? null;
     d.stopReason = message.stopReason ?? null;
     d.error = message.errorMessage ?? null;
     const thinking = [];
@@ -159,6 +160,7 @@ function deriveSession(entries, st) {
   const header = entries.find((e) => e.type === 'session');
   let name;
   let model = null;
+  let thinkingLevel = null;
   let tokensIn = 0, tokensOut = 0, cost = 0;
   let firstMessage = '';
   let lastText = '';
@@ -172,6 +174,12 @@ function deriveSession(entries, st) {
     if (entry.type === 'session_info' && entry.name !== undefined) name = entry.name;
     if (entry.type === 'model_change') {
       if (!model) model = entry.modelId ?? null;
+      continue;
+    }
+    // The level applies from this point on — stamp it on the assistant
+    // messages that follow so each turn header shows its own level.
+    if (entry.type === 'thinking_level_change') {
+      thinkingLevel = entry.thinkingLevel ?? null;
       continue;
     }
     if (entry.type === 'compaction') {
@@ -204,6 +212,7 @@ function deriveSession(entries, st) {
     }
     const dm = toDisplayMessage(msg);
     dm.id = entry.id;
+    if (msg.role === 'assistant') dm.thinkingLevel = thinkingLevel;
     messages.push(dm);
     if (dm.role === 'assistant' && dm.toolCalls) {
       for (const tc of dm.toolCalls) toolCallIndex.set(tc.id, messages.length - 1);

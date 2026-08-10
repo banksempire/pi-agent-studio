@@ -144,8 +144,15 @@ import { ActionBubble, ActionGroup, actionName, type ActionKind, type ActionStat
 
 export type ChatItem =
   | { kind: 'user' | 'system' | 'summary' | 'custom'; msg: DisplayMessage }
-  | { kind: 'reply'; msg: DisplayMessage; timeUsedMs: number; endTs: number; lastInTurn: boolean; trailing: boolean }
-  | { kind: 'work'; group: ActionGroup };
+  | { kind: 'reply'; msg: DisplayMessage; header: TurnHeader | null }
+  | { kind: 'work'; group: ActionGroup; header: TurnHeader | null };
+
+/** Identity shown in an agent turn's separator: pi · provider · model · level. */
+export interface TurnHeader {
+  provider?: string | null;
+  model?: string | null;
+  thinkingLevel?: string | null;
+}
 
 /** Intermediate move record before it becomes an ActionBubble (timing/status
  *  are only known when the run is flushed). */
@@ -187,16 +194,36 @@ function fmtMsgTime(ts: number): string {
     : `${MONTHS[d.getMonth()]} ${d.getDate()}, ${hhmm}`;
 }
 
-/** Agent reply footer: "pi · model[ · thinking] · time[ · time used]". */
-function agentMeta(item: Extract<ChatItem, { kind: 'reply' }>): string {
-  const m = item.msg;
-  const thinking = m.thinking ? ' · thinking' : '';
-  const used = item.timeUsedMs > 0 ? ` · ${fmtSec(item.timeUsedMs)}` : '';
-  return `${roleLabel(m)} · ${m.model ?? '—'}${thinking} · ${fmtMsgTime(item.endTs)}${used}`;
+
+/** Turn identity from an assistant message. */
+function headerOf(m: DisplayMessage): TurnHeader {
+  return { provider: m.provider ?? null, model: m.model ?? null, thinkingLevel: m.thinkingLevel ?? null };
 }
 
-/** Short duration: "<1s" / "12.3s" / "1m 30s". */
-function fmtSec(ms: number): string {
+/** Agent-turn separator label: "pi · provider/model/level". */
+function agentSepLabel(h: TurnHeader): string {
+  const id = [h.provider, h.model, h.thinkingLevel && h.thinkingLevel !== 'off' ? h.thinkingLevel : '']
+    .filter(Boolean).join('/');
+  return `pi · ${id}`;
+}
+
+/** User-message separator label: "User · time" (datetime on other days). */
+function userSepLabel(m: DisplayMessage): string {
+  return `User · ${fmtMsgTime(m.ts)}`;
+}
+
+/** Clicking a pinned separator jumps to the start of that message (its row
+ *  aligns with the list's content top, where the separator pins). */
+function jumpToSep(e: MouseEvent) {
+  const el = listEl.value;
+  const row = (e.currentTarget as HTMLElement).closest('.chat-msg') as HTMLElement | null;
+  if (!el || !row) return;
+  const padTop = parseFloat(getComputedStyle(el).paddingTop) || 0;
+  const top = row.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop - padTop;
+  el.scrollTop = Math.max(0, Math.min(top, el.scrollHeight - el.clientHeight));
+}
+
+/** Short duration: "<1s" / "12.3s" / "1m 30s". */function fmtSec(ms: number): string {
   if (ms <= 0) return '';
   const s = ms / 1000;
   if (s < 1) return '<1s';
@@ -220,30 +247,10 @@ const items = computed<ChatItem[]>(() => {
   const out: ChatItem[] = [];
   const work: { src: number; mv: PendingMove }[] = [];
   let workId = '';
-
-  // Turn-boundary precompute (single O(n) pass): the old per-reply forward
-  // scans were O(turn²) and re-ran on every streamed token/tool partial.
-  const nextUser: number[] = new Array(n).fill(n);   // first user index > i
-  const prevUserTs: number[] = new Array(n).fill(0); // ts of the last user < i
-  const lastTextReply: boolean[] = new Array(n).fill(false);
-  let next = n;
-  for (let i = n - 1; i >= 0; i--) {
-    if (msgs[i].role === 'user') next = i;
-    nextUser[i] = next;
-  }
-  let prevTs = 0;
-  let turnLastText = -1;
-  for (let i = 0; i < n; i++) {
-    prevUserTs[i] = prevTs;
-    if (msgs[i].role === 'user') {
-      if (turnLastText >= 0) lastTextReply[turnLastText] = true;
-      turnLastText = -1;
-      prevTs = msgs[i].ts;
-    } else if (msgs[i].role === 'assistant' && msgs[i].text) {
-      turnLastText = i;
-    }
-  }
-  if (turnLastText >= 0) lastTextReply[turnLastText] = true;
+  /** Exactly ONE separator per agent turn — on the FIRST reply (the start of
+   *  the agent's text; clicking it jumps there). Later replies of the same
+   *  turn render no line. */
+  let turnSepped = false;
 
   /** endTs = ts of the message that follows the run (null = the run is the tail). */
   const flush = (endTs: number | null, wip: boolean) => {
@@ -274,7 +281,7 @@ const items = computed<ChatItem[]>(() => {
       }
       group.bubbles.push(b);
     });
-    out.push({ kind: 'work', group });
+    out.push({ kind: 'work', group, header: null });
     work.length = 0;
     workId = '';
   };
@@ -289,6 +296,7 @@ const items = computed<ChatItem[]>(() => {
     if (m.role === 'user' || m.role === 'system' || m.role === 'summary') {
       flush(m.ts, false);
       out.push({ kind: m.role, msg: m });
+      turnSepped = false;
       continue;
     }
     if (m.role === 'bash') {
@@ -308,26 +316,14 @@ const items = computed<ChatItem[]>(() => {
         // also contributed moves, the run ends at the next message's step
         // boundary (this message's own ts would measure 0).
         flush(added ? (msgs[i + 1]?.ts ?? m.ts) : m.ts, false);
-        // Whole-job footer timing from the precomputed turn boundaries:
-        // time = when the turn finished (last message of the turn),
-        // time used = from the user's input until then.
-        const end = nextUser[i];
-        const endTs = end > i ? msgs[end - 1].ts : m.ts;
-        const lastInTurn = lastTextReply[i];
-        out.push({
-          kind: 'reply', msg: m,
-          // Textless error messages are never the turn's last text reply
-          // (lastInTurn=false), so timeUsedMs falls back to 0.
-          timeUsedMs: lastInTurn && prevUserTs[i] > 0 ? Math.max(0, endTs - prevUserTs[i]) : 0,
-          endTs,
-          lastInTurn,
-          trailing: end === n,
-        });
+        out.push({ kind: 'reply', msg: m, header: turnSepped ? null : headerOf(m) });
+        turnSepped = true;
       }
       continue;
     }
     flush(m.ts, false);
     out.push({ kind: 'custom', msg: m });
+    turnSepped = false;
   }
   // A trailing work run is still in progress while the agent is working.
   flush(null, session.value?.status === 'running');
@@ -354,7 +350,7 @@ const items = computed<ChatItem[]>(() => {
       b.detail = s.compactError || '';
     }
     group.bubbles.push(b);
-    out.push({ kind: 'work', group });
+    out.push({ kind: 'work', group, header: null });
   }
   return out;
 });
@@ -762,15 +758,6 @@ let anchorBottom = 0;
         <span class="chat-status-dot" :class="'chat-status-dot--' + (session?.status ?? 'idle')" />
         <span class="chat-title-text">{{ session?.title ?? 'Chat' }}</span>
       </div>
-      <div class="chat-header-right">
-        <span v-if="session?.stats.model" class="chat-model">{{ session.stats.model }}</span>
-        <button
-          v-if="session?.status === 'running'"
-          class="chat-stop-btn"
-          title="Abort generation (the session stays open)"
-          @click="store.stopSession(props.sessionId)"
-        >■ Stop</button>
-      </div>
     </div>
 
     <!-- Messages -->
@@ -793,14 +780,16 @@ let anchorBottom = 0;
           class="chat-msg"
           :data-msg-id="item.kind === 'work' ? item.group.id : item.msg.id"
           :class="[
-            'chat-msg--' + item.kind,
+            item.kind === 'user' ? '' : 'chat-msg--' + item.kind,
             { 'chat-msg--error': item.kind === 'system' && item.msg.isError },
           ]"
         >
           <!-- ActionBubble group: consecutive thinking/tool/bash actions in
                one collapsible box. WIP header = the latest bubble; done
                header = "n actions done". Click to reveal the stacked
-               sub-bubbles; a sub-bubble click reveals its detail. -->
+               sub-bubbles; a sub-bubble click reveals its detail. The turn
+               separator (if any) sits above the box and sticks to the top
+               of the window while this row is in view. -->
           <div
             v-if="item.kind === 'work'"
             class="chat-work"
@@ -855,8 +844,27 @@ let anchorBottom = 0;
             </div>
           </div>
 
-          <!-- User / custom: boxed, full width; meta on top -->
-          <template v-else-if="item.kind === 'user' || item.kind === 'custom'">
+          <!-- User message: sticky separator + blue bubble -->
+          <template v-else-if="item.kind === 'user'">
+            <div
+              class="chat-sep"
+              title="Jump to the start of this message"
+              @click="jumpToSep"
+            >
+              <span class="chat-sep-line" /><span class="chat-sep-text">{{ userSepLabel(item.msg) }}</span><span class="chat-sep-line" />
+            </div>
+            <div class="chat-user-bubble">
+              <div v-if="renderMd" class="chat-msg-md" v-html="md(item.msg)" />
+              <template v-else>{{ item.msg.text }}</template>
+            </div>
+            <div v-if="item.msg.sendFailed" class="chat-resend" title="The backend did not accept this message — send it again">
+              <span class="chat-resend-mark">⚠</span> not sent
+              <button class="chat-resend-btn" @click="store.resendMessage(props.sessionId, item.msg.id)">↻ Resend</button>
+            </div>
+          </template>
+
+          <!-- Custom: boxed, full width; meta on top (slash output rows) -->
+          <template v-else-if="item.kind === 'custom'">
             <div class="chat-msg-meta">{{ roleLabel(item.msg) }} · {{ fmtMsgTime(item.msg.ts) }}</div>
             <div v-if="renderMd" class="chat-msg-md" v-html="md(item.msg)" />
             <template v-else>{{ item.msg.text }}</template>
@@ -864,16 +872,24 @@ let anchorBottom = 0;
               <span class="chat-resend-mark">⚠</span> not sent
               <button class="chat-resend-btn" @click="store.resendMessage(props.sessionId, item.msg.id)">↻ Resend</button>
             </div>
-            <div v-if="item.kind === 'custom'" class="chat-msg-time">{{ fmtTime(item.msg.ts) }}</div>
+            <div class="chat-msg-time">{{ fmtTime(item.msg.ts) }}</div>
           </template>
 
-          <!-- Assistant official reply: full width, no box; meta footer -->
+          <!-- Assistant official reply: full width, no bubble; identity in the
+               sticky separator, error banner below the text -->
           <template v-else-if="item.kind === 'reply'">
+            <div
+              v-if="item.header"
+              class="chat-sep"
+              title="Jump to the start of this message"
+              @click="jumpToSep"
+            >
+              <span class="chat-sep-line" /><span class="chat-sep-text">{{ agentSepLabel(item.header) }}</span><span class="chat-sep-line" />
+            </div>
             <div v-if="renderMd" class="chat-msg-md" v-html="md(item.msg)" />
             <template v-else>{{ item.msg.text }}</template>
             <span v-if="streaming && item.msg.id === lastMessage?.id" class="chat-cursor">▌</span>
             <div v-if="item.msg.error" class="chat-aborted chat-aborted--error">⚠ {{ item.msg.error }}</div>
-            <div v-if="item.lastInTurn && !(item.trailing && streaming)" class="chat-msg-meta chat-msg-meta--agent">{{ agentMeta(item) }}</div>
           </template>
 
           <!-- System (slash command output) -->

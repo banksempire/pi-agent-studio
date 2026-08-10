@@ -29,6 +29,10 @@ export interface DisplayMessage {
   thinking?: string;
   toolCalls?: ToolCallView[];
   model?: string | null;
+  /** provider id of the assistant turn (from the SDK AssistantMessage) */
+  provider?: string | null;
+  /** thinking level in effect when the assistant message was produced */
+  thinkingLevel?: string | null;
   stopReason?: string | null;
   error?: string | null;
   ts: number;

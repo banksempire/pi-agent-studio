@@ -259,12 +259,16 @@ export class AgentRegistry extends EventEmitter {
         case 'message_end': {
           const dm = toDisplayMessage(ev.message);
           dm.id = messageId(ev.message);
+          // The SDK message carries provider/model; the thinking level is
+          // session state, so stamp it from the live session here.
+          dm.thinkingLevel = live.session.thinkingLevel ?? null;
           this.broadcast('message', agentId, dm);
           break;
         }
         case 'turn_end': {
           const dm = toDisplayMessage(ev.message);
           dm.id = messageId(ev.message);
+          dm.thinkingLevel = live.session.thinkingLevel ?? null;
           this.broadcast('message', agentId, dm);
           for (const tr of ev.toolResults ?? []) {
             this.broadcast('tool_result', agentId, {

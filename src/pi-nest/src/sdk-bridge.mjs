@@ -69,6 +69,7 @@ export function toDisplayMessage(message) {
   if (message.role === 'assistant') {
     d.text = textOf(message.content);
     d.model = message.model ?? null;
+    d.provider = message.provider ?? null;
     d.stopReason = message.stopReason ?? null;
     d.error = message.errorMessage ?? null;
     const thinking = [];

@@ -38,7 +38,6 @@ const catalog = ref<ModelCatalog | null>(null);
 const loading = ref(false);
 const busy = ref(false);
 const error = ref('');
-const notice = ref('');
 const open = ref(false);
 
 const active = computed(() =>
@@ -138,7 +137,6 @@ async function commit(m: ModelInfo, thinkLevel: string) {
   const s = active.value;
   if (!s?.file || busy.value) return;
   busy.value = true;
-  notice.value = '';
   error.value = '';
   try {
     const res = await fetch('/api/slash', {
@@ -155,11 +153,6 @@ async function commit(m: ModelInfo, thinkLevel: string) {
     if (!j.ok) {
       error.value = j.error || 'Failed to apply model';
     } else {
-      const label =
-        thinkLevel === 'off' && !m.reasoning
-          ? `${m.provider}/${m.name || m.id} · no thinking`
-          : `${m.provider}/${m.name || m.id} · ${thinkLevel}`;
-      notice.value = label;
       void load();
     }
   } catch (e) {
@@ -185,8 +178,7 @@ async function commit(m: ModelInfo, thinkLevel: string) {
     </Menu>
 
     <div v-if="busy" class="model-menu-note">Applying…</div>
-    <div v-if="notice" class="model-menu-note model-menu-note--ok">{{ notice }}</div>
-    <div v-else-if="error" class="model-menu-note model-menu-note--err">{{ error }}</div>
+    <div v-if="error" class="model-menu-note model-menu-note--err">{{ error }}</div>
     <div v-else-if="loading" class="model-menu-note">Loading models…</div>
     <div v-else-if="!active" class="model-menu-note">Open a chat window to change its model.</div>
   </div>

@@ -1108,9 +1108,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.model-menu-note--ok {
-  color: #46a758;
-}
 .model-menu-note--err {
   color: #e5484d;
 }

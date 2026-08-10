@@ -805,6 +805,15 @@
   color: var(--sf-text-on-accent);
 }
 
+/* On the theme-blue row every line must read: the time, preview and
+   status spans use muted greys by default — force them white. */
+.chat-list-item--active .chat-list-title,
+.chat-list-item--active .chat-list-time,
+.chat-list-item--active .chat-list-preview,
+.chat-list-item--active .chat-list-status {
+  color: var(--sf-text-on-accent);
+}
+
 .chat-list-row1 {
   display: flex;
   align-items: baseline;

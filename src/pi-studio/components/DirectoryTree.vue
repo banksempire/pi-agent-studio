@@ -20,7 +20,15 @@ async function load() {
   try {
     const res = await fetch('/api/tree');
     const j = await res.json();
-    if (j && typeof j.name === 'string') tree.value = j;
+    if (j && typeof j.name === 'string') {
+      tree.value = j;
+      // Default: the root's own level expanded, everything deeper collapsed
+      // (a real tree opens compact; the user expands branches of interest).
+      collapsed.value = new Set([
+        ...(j.children ?? []).map((c: DirNode) => c.path),
+        ...((j.others ?? []) as DirNode[]).map((o) => o.path),
+      ]);
+    }
   } catch { /* backend offline — keep the last tree */ }
 }
 
@@ -37,12 +45,14 @@ const flat = computed<{ node: DirNode; depth: number }[]>(() => {
       for (const c of n.children) walk(c, depth + 1);
     }
   };
-  if (tree.value) {
-    walk(tree.value, 0);
-    if (tree.value.others?.length) {
-      for (const o of tree.value.others) walk(o, 0);
-    }
-  }
+  if (tree.value) walk(tree.value, 0);
+  return out;
+});
+
+/** Session directories outside the CWD tree — flat, after a divider. */
+const flatOthers = computed<{ node: DirNode; depth: number }[]>(() => {
+  const out: { node: DirNode; depth: number }[] = [];
+  for (const o of tree.value?.others ?? []) out.push({ node: o, depth: 0 });
   return out;
 });
 
@@ -64,6 +74,24 @@ function select(node: DirNode) {
     <div v-if="!tree" class="dir-tree-empty">Loading directories…</div>
     <div
       v-for="{ node, depth } in flat"
+      :key="node.path"
+      class="dir-node"
+      :class="{ 'dir-node--active': store.cwdFilter === node.path }"
+      :style="{ paddingLeft: 6 + depth * 12 + 'px' }"
+      :title="'Filter chats under ' + node.path"
+      @click="select(node)"
+    >
+      <span
+        class="dir-node-toggle"
+        :class="{ 'dir-node-toggle--open': !collapsed.has(node.path) }"
+        @click.stop="toggle(node)"
+      >{{ node.children.length ? '▸' : '·' }}</span>
+      <span class="dir-node-name">{{ node.name }}</span>
+      <span class="dir-node-count">{{ node.count }}</span>
+    </div>
+    <div v-if="tree?.others?.length" class="dir-tree-divider" />
+    <div
+      v-for="{ node, depth } in flatOthers"
       :key="node.path"
       class="dir-node"
       :class="{ 'dir-node--active': store.cwdFilter === node.path }"

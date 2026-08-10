@@ -387,8 +387,13 @@ async function analyzeSession(file, opts = {}) {
 // RECURSIVE — how many chats live under that folder — matching the filter
 // semantics (a click filters to every session under the path).
 
+/** A real folder tree under NEW_CHAT_CWD (junk skipped, depth-bounded) —
+ *  directories with no sessions stay visible (count 0). Node counts are
+ *  RECURSIVE — how many chats live under that folder — matching the filter
+ *  semantics (a click filters to every session under the path). */
+
 const TREE_SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next', '.cache', '.venv', '__pycache__', 'coverage', 'target']);
-const TREE_MAX_DEPTH = 5;
+const TREE_MAX_DEPTH = 6;
 
 /** cwd → number of session files started there (cached parses). */
 async function sessionCwdCounts() {
@@ -416,8 +421,7 @@ async function buildTree(dir, depth, counts) {
     try { entries = await readdir(dir, { withFileTypes: true }); } catch { /* unreadable */ }
     for (const e of entries) {
       if (!e.isDirectory() || TREE_SKIP_DIRS.has(e.name)) continue;
-      const child = await buildTree(path.join(dir, e.name), depth + 1, counts);
-      if (child.count > 0 || child.children.length > 0) node.children.push(child);
+      node.children.push(await buildTree(path.join(dir, e.name), depth + 1, counts));
     }
   }
   node.count = (counts.get(dir) ?? 0) + node.children.reduce((t, c) => t + c.count, 0);

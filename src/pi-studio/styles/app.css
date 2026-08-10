@@ -795,6 +795,11 @@
   padding: 4px 8px;
 }
 
+.dir-tree-divider {
+  border-top: 1px solid var(--sf-border);
+  margin: 5px 0;
+}
+
 .dir-node {
   display: flex;
   align-items: center;

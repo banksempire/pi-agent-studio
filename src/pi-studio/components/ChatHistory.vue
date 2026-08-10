@@ -21,7 +21,7 @@ const menuOpenFor = ref<string | null>(null);
 function menuItems(s: ChatSession): MenuNodeDef[] {
   return [
     { id: 'rename', label: 'Rename session' },
-    { id: 'delete', label: 'Delete chat', detail: 'Removes the session file' },
+    { id: 'delete', label: 'Delete' },
   ];
 }
 

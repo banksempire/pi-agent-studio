@@ -22,12 +22,18 @@ async function load() {
     const j = await res.json();
     if (j && typeof j.name === 'string') {
       tree.value = j;
-      // Default: the root's own level expanded, everything deeper collapsed
-      // (a real tree opens compact; the user expands branches of interest).
-      collapsed.value = new Set([
-        ...(j.children ?? []).map((c: DirNode) => c.path),
-        ...((j.others ?? []) as DirNode[]).map((o) => o.path),
-      ]);
+      // Everything collapsed by default: only the root (and the flat
+      // outside-CWD session dirs) is visible until a branch is expanded.
+      const s = new Set<string>();
+      const collapseAll = (n: DirNode) => {
+        if (n.children.length) {
+          s.add(n.path);
+          for (const c of n.children) collapseAll(c);
+        }
+      };
+      collapseAll(j);
+      for (const o of j.others ?? []) collapseAll(o);
+      collapsed.value = s;
     }
   } catch { /* backend offline — keep the last tree */ }
 }

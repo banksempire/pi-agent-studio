@@ -212,8 +212,10 @@
   border-top: 1px solid var(--sf-border);
 }
 
-.chat-sep:hover .chat-sep-text {
-  color: var(--sf-text-bright);
+/* Whole-block hover, like buttons: the separator bar lights up (not just
+   the label text). */
+.chat-sep:hover {
+  background: var(--sf-bg-hover);
 }
 
 /* Agent turns: full width, NO box — one row holds the separator plus all

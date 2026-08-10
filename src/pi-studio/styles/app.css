@@ -1392,11 +1392,8 @@
 
 /* The model block sits inside the stats sub-section: same side padding. */
 
-/* Review-mode chat tab (opened from a history list click): dimmed and
-   italic until the window is interacted with (tab click / typing / send). */
+/* Review-mode chat tab (opened from a history list click): dimmed until
+   the window is interacted with (tab click / typing / send). */
 .sf-tab--review {
   opacity: 0.55;
-}
-.sf-tab--review .sf-tab-label {
-  font-style: italic;
 }

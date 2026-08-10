@@ -167,14 +167,8 @@
  "workspace": {
   "minTileWidth": 220,
   "minTileHeight": 140,
-  "tabs": [
-   {
-    "id": "welcome",
-    "label": "Welcome",
-    "icon": "🏠",
-    "content": "welcome"
-   }
-  ]
+  "emptyContent": "welcome",
+  "tabs": []
  },
  "status": {
   "left": [

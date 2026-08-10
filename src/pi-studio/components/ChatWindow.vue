@@ -142,10 +142,17 @@ function roleLabel(m: DisplayMessage): string { return ROLE_LABELS[m.role] ?? 'c
 
 import { ActionBubble, ActionGroup, actionName, type ActionKind, type ActionStatus } from '../actionBubble';
 
+export type AgentPart =
+  | { kind: 'group'; group: ActionGroup }
+  | { kind: 'reply'; msg: DisplayMessage };
+
 export type ChatItem =
   | { kind: 'user' | 'system' | 'summary' | 'custom'; msg: DisplayMessage }
-  | { kind: 'reply'; msg: DisplayMessage; header: TurnHeader | null }
-  | { kind: 'work'; group: ActionGroup; header: TurnHeader | null };
+  /** One row per agent TURN: every work run + reply of the turn grouped
+   *  together, so the separator's sticky pin spans the whole turn (a long
+   *  multi-reply keeps the line at the top of the window). header: null for
+   *  the /compact status box (no separator). */
+  | { kind: 'agent'; header: TurnHeader | null; parts: AgentPart[] };
 
 /** Identity shown in an agent turn's separator: pi · provider · model · level. */
 export interface TurnHeader {
@@ -196,8 +203,10 @@ function fmtMsgTime(ts: number): string {
 
 
 /** Turn identity from an assistant message. */
-function headerOf(m: DisplayMessage): TurnHeader {
-  return { provider: m.provider ?? null, model: m.model ?? null, thinkingLevel: m.thinkingLevel ?? null };
+function ensureHeader(header: TurnHeader, m: DisplayMessage) {
+  if (!header.provider && m.provider) header.provider = m.provider;
+  if (!header.model && m.model) header.model = m.model;
+  if (!header.thinkingLevel && m.thinkingLevel) header.thinkingLevel = m.thinkingLevel;
 }
 
 /** Agent-turn separator label: "pi · provider/model/level". */
@@ -210,6 +219,18 @@ function agentSepLabel(h: TurnHeader): string {
 /** User-message separator label: "User · time" (datetime on other days). */
 function userSepLabel(m: DisplayMessage): string {
   return `User · ${fmtMsgTime(m.ts)}`;
+}
+
+/** Stable row key: user/system/summary/custom rows by message id; agent
+ *  turns by their FIRST part (group or reply id) — fixed once the turn
+ *  starts, so streaming parts never remount the row (open/flash state
+ *  survives across recomputes). */
+function rowKey(item: ChatItem): string {
+  if (item.kind === 'agent') {
+    const first = item.parts[0];
+    return first.kind === 'group' ? first.group.id : first.msg.id;
+  }
+  return item.msg.id;
 }
 
 /** Clicking a pinned separator jumps to the start of that message (its row
@@ -247,10 +268,20 @@ const items = computed<ChatItem[]>(() => {
   const out: ChatItem[] = [];
   const work: { src: number; mv: PendingMove }[] = [];
   let workId = '';
-  /** Exactly ONE separator per agent turn — on the FIRST reply (the start of
-   *  the agent's text; clicking it jumps there). Later replies of the same
-   *  turn render no line. */
-  let turnSepped = false;
+  /** The agent turn being accumulated: ALL of a turn's work runs + replies
+   *  become ONE row (see ChatItem) so the separator pins across the whole
+   *  turn — not just the first reply. */
+  const parts: AgentPart[] = [];
+  let header: TurnHeader = {};
+
+  /** Close the current agent turn (if it has any content). */
+  const endTurn = () => {
+    if (parts.length) {
+      out.push({ kind: 'agent', header, parts: [...parts] });
+      parts.length = 0;
+      header = {};
+    }
+  };
 
   /** endTs = ts of the message that follows the run (null = the run is the tail). */
   const flush = (endTs: number | null, wip: boolean) => {
@@ -281,13 +312,17 @@ const items = computed<ChatItem[]>(() => {
       }
       group.bubbles.push(b);
     });
-    out.push({ kind: 'work', group, header: null });
+    parts.push({ kind: 'group', group });
     work.length = 0;
     workId = '';
   };
 
+  /** Fill the turn's separator identity from any available source message. */
+  const ensureTurnHeader = (m: DisplayMessage) => ensureHeader(header, m);
+
   const addMove = (src: number, msgId: string, kind: ActionKind, mv: Omit<PendingMove, 'kind' | 'name'> & { name?: string }) => {
     if (!workId) workId = 'work-' + msgId;
+    ensureTurnHeader(msgs[src]);
     work.push({ src, mv: { ...mv, kind, name: actionName(kind, mv.name) } });
   };
 
@@ -295,8 +330,8 @@ const items = computed<ChatItem[]>(() => {
     const m = msgs[i];
     if (m.role === 'user' || m.role === 'system' || m.role === 'summary') {
       flush(m.ts, false);
+      endTurn();
       out.push({ kind: m.role, msg: m });
-      turnSepped = false;
       continue;
     }
     if (m.role === 'bash') {
@@ -316,17 +351,18 @@ const items = computed<ChatItem[]>(() => {
         // also contributed moves, the run ends at the next message's step
         // boundary (this message's own ts would measure 0).
         flush(added ? (msgs[i + 1]?.ts ?? m.ts) : m.ts, false);
-        out.push({ kind: 'reply', msg: m, header: turnSepped ? null : headerOf(m) });
-        turnSepped = true;
+        ensureTurnHeader(m);
+        parts.push({ kind: 'reply', msg: m });
       }
       continue;
     }
     flush(m.ts, false);
+    endTurn();
     out.push({ kind: 'custom', msg: m });
-    turnSepped = false;
   }
   // A trailing work run is still in progress while the agent is working.
   flush(null, session.value?.status === 'running');
+  endTurn();
 
   // The /compact status rides the SAME work pipeline as the thinking/tool
   // bubbles: one compaction ActionBubble in its own ActionGroup, appended as
@@ -350,7 +386,7 @@ const items = computed<ChatItem[]>(() => {
       b.detail = s.compactError || '';
     }
     group.bubbles.push(b);
-    out.push({ kind: 'work', group, header: null });
+    out.push({ kind: 'agent', header: null, parts: [{ kind: 'group', group }] });
   }
   return out;
 });
@@ -363,8 +399,10 @@ let nowTimer: number | null = null;
 watch(
   () => {
     const last = items.value[items.value.length - 1];
-    // The /compact WIP group IS a work item — its presence is covered here.
-    return last?.kind === 'work' && last.group.wip;
+    // The /compact WIP group is an agent item with one group part and no
+    // header — its presence is covered by this check too.
+    return last?.kind === 'agent'
+      && last.parts.some((p) => p.kind === 'group' && p.group.wip);
   },
   (active) => {
     if (active && nowTimer === null) {
@@ -434,21 +472,24 @@ watch(
   items,
   (list) => {
     for (const item of list) {
-      if (item.kind !== 'work') continue;
-      for (const b of item.group.bubbles) {
-        const prev = prevBubbleStatus.get(b.key);
-        if (prev === 'pending' && b.status !== 'pending') {
-          const kind = b.status === 'ok' ? 'ok' : 'fail';
-          flash.value = { ...flash.value, [item.group.id]: kind };
-          window.setTimeout(() => {
-            if (flash.value[item.group.id]) {
-              const next = { ...flash.value };
-              delete next[item.group.id];
-              flash.value = next;
-            }
-          }, 1400);
+      if (item.kind !== 'agent') continue;
+      for (const part of item.parts) {
+        if (part.kind !== 'group') continue;
+        for (const b of part.group.bubbles) {
+          const prev = prevBubbleStatus.get(b.key);
+          if (prev === 'pending' && b.status !== 'pending') {
+            const kind = b.status === 'ok' ? 'ok' : 'fail';
+            flash.value = { ...flash.value, [part.group.id]: kind };
+            window.setTimeout(() => {
+              if (flash.value[part.group.id]) {
+                const next = { ...flash.value };
+                delete next[part.group.id];
+                flash.value = next;
+              }
+            }, 1400);
+          }
+          prevBubbleStatus.set(b.key, b.status);
         }
-        prevBubbleStatus.set(b.key, b.status);
       }
     }
   },
@@ -776,73 +817,102 @@ let anchorBottom = 0;
         <div v-if="session.loadingOlder" class="chat-load-older chat-load-older--loading">loading older messages…</div>
         <div
           v-for="item in items"
-          :key="item.kind === 'work' ? item.group.id : item.msg.id"
+          :key="rowKey(item)"
           class="chat-msg"
-          :data-msg-id="item.kind === 'work' ? item.group.id : item.msg.id"
+          :data-msg-id="rowKey(item)"
           :class="[
             item.kind === 'user' ? '' : 'chat-msg--' + item.kind,
             { 'chat-msg--error': item.kind === 'system' && item.msg.isError },
           ]"
         >
-          <!-- ActionBubble group: consecutive thinking/tool/bash actions in
-               one collapsible box. WIP header = the latest bubble; done
-               header = "n actions done". Click to reveal the stacked
-               sub-bubbles; a sub-bubble click reveals its detail. The turn
-               separator (if any) sits above the box and sticks to the top
-               of the window while this row is in view. -->
-          <div
-            v-if="item.kind === 'work'"
-            class="chat-work"
-            :class="[
-              flash[item.group.id] === 'ok' ? 'chat-work--flash-ok' : '',
-              flash[item.group.id] === 'fail' ? 'chat-work--flash-fail' : '',
-              flash['compact'] === 'fail' ? 'chat-work--flash-fail' : '',
-              item.group.id === 'compact' ? 'chat-compacting' : '',
-              item.group.id === 'compact' && !item.group.wip ? 'chat-compacting--failed' : '',
-            ]"
-          >
-            <div class="chat-work-head" @click="toggle(item.group.id)">
-              <span class="chat-work-toggle">{{ open[item.group.id] ? '▾' : '▸' }}</span>
-              <!-- While working the group shows the same thing as the latest bubble:
-                   [action name|ani|content|time elapsed] -->
-              <template v-if="item.group.wip && item.group.latest">
-                <span class="chat-ab-name">{{ item.group.latest.name }}</span>
-                <span class="chat-ab-dots">{{ '.'.repeat(dots) }}</span>
-                <span class="chat-ab-content">{{ item.group.latest.preview() }}</span>
-                <span class="chat-ab-time">{{ fmtSec(now - item.group.latest.startTs) }}</span>
-              </template>
-              <!-- All done: [n actions done|total time elapsed] -->
-              <template v-else>
-                <span class="chat-ab-name">{{ groupDoneLabel(item.group) }}</span>
-                <span class="chat-ab-time">{{ fmtSec(item.group.durMs) }}</span>
-              </template>
+          <!-- Agent turn: ONE separator for the whole turn. Every work run
+               and reply of the turn is a PART of this single row, so the
+               sticky separator's containing block spans the entire turn —
+               the line stays pinned at the top even through a very long
+               multi-reply. -->
+          <template v-if="item.kind === 'agent'">
+            <div
+              v-if="item.header"
+              class="chat-sep"
+              title="Jump to the start of this message"
+              @click="jumpToSep"
+            >
+              <span class="chat-sep-line" /><span class="chat-sep-text">{{ agentSepLabel(item.header) }}</span><span class="chat-sep-line" />
             </div>
-            <div v-if="open[item.group.id]" class="chat-work-body">
+            <div
+              v-for="part in item.parts"
+              :key="part.kind === 'group' ? part.group.id : part.msg.id"
+              class="chat-agent-part"
+            >
+              <!-- ActionBubble group: consecutive thinking/tool/bash actions
+                   in one collapsible box. WIP header = the latest bubble;
+                   done header = "n actions done". Click to reveal the
+                   stacked sub-bubbles; a sub-bubble click reveals its
+                   detail. -->
               <div
-                v-for="b in item.group.bubbles"
-                :key="b.key"
-                class="chat-ab-sub"
-                :class="subClass(b)"
+                v-if="part.kind === 'group'"
+                class="chat-work"
+                :class="[
+                  flash[part.group.id] === 'ok' ? 'chat-work--flash-ok' : '',
+                  flash[part.group.id] === 'fail' ? 'chat-work--flash-fail' : '',
+                  flash['compact'] === 'fail' ? 'chat-work--flash-fail' : '',
+                  part.group.id === 'compact' ? 'chat-compacting' : '',
+                  part.group.id === 'compact' && !part.group.wip ? 'chat-compacting--failed' : '',
+                ]"
               >
-                <!-- Completed bubble: [action name|time elapsed] -->
-                <div class="chat-ab-sub-head" @click="toggle(b.key)">
-                  <span class="chat-ab-sub-toggle">{{ open[b.key] ? '▾' : '▸' }}</span>
-                  <span class="chat-ab-sub-name">{{ b.name }}</span>
-                  <span class="chat-ab-sub-time">{{ b.live ? fmtSec(now - b.startTs) : fmtSec(b.durMs) }}</span>
-                </div>
-                <div v-if="open[b.key]" class="chat-ab-sub-details">
-                  <pre v-if="b.kind === 'thinking'" class="chat-ab-code">{{ b.detail }}</pre>
-                  <template v-else-if="b.kind === 'tool' || b.kind === 'compaction'">
-                    <pre v-if="b.args" class="chat-ab-code">{{ b.args }}</pre>
-                    <div v-if="b.status !== 'pending'" class="chat-ab-result" :class="{ 'chat-ab-result--error': b.isError }">
-                      <pre class="chat-ab-code chat-ab-result-body">{{ b.detail }}</pre>
-                    </div>
+                <div class="chat-work-head" @click="toggle(part.group.id)">
+                  <span class="chat-work-toggle">{{ open[part.group.id] ? '▾' : '▸' }}</span>
+                  <!-- While working the group shows the same thing as the latest bubble:
+                       [action name|ani|content|time elapsed] -->
+                  <template v-if="part.group.wip && part.group.latest">
+                    <span class="chat-ab-name">{{ part.group.latest.name }}</span>
+                    <span class="chat-ab-dots">{{ '.'.repeat(dots) }}</span>
+                    <span class="chat-ab-content">{{ part.group.latest.preview() }}</span>
+                    <span class="chat-ab-time">{{ fmtSec(now - part.group.latest.startTs) }}</span>
                   </template>
-                  <pre v-else class="chat-ab-code chat-ab-bash">{{ b.detail }}</pre>
+                  <!-- All done: [n actions done|total time elapsed] -->
+                  <template v-else>
+                    <span class="chat-ab-name">{{ groupDoneLabel(part.group) }}</span>
+                    <span class="chat-ab-time">{{ fmtSec(part.group.durMs) }}</span>
+                  </template>
+                </div>
+                <div v-if="open[part.group.id]" class="chat-work-body">
+                  <div
+                    v-for="b in part.group.bubbles"
+                    :key="b.key"
+                    class="chat-ab-sub"
+                    :class="subClass(b)"
+                  >
+                    <!-- Completed bubble: [action name|time elapsed] -->
+                    <div class="chat-ab-sub-head" @click="toggle(b.key)">
+                      <span class="chat-ab-sub-toggle">{{ open[b.key] ? '▾' : '▸' }}</span>
+                      <span class="chat-ab-sub-name">{{ b.name }}</span>
+                      <span class="chat-ab-sub-time">{{ b.live ? fmtSec(now - b.startTs) : fmtSec(b.durMs) }}</span>
+                    </div>
+                    <div v-if="open[b.key]" class="chat-ab-sub-details">
+                      <pre v-if="b.kind === 'thinking'" class="chat-ab-code">{{ b.detail }}</pre>
+                      <template v-else-if="b.kind === 'tool' || b.kind === 'compaction'">
+                        <pre v-if="b.args" class="chat-ab-code">{{ b.args }}</pre>
+                        <div v-if="b.status !== 'pending'" class="chat-ab-result" :class="{ 'chat-ab-result--error': b.isError }">
+                          <pre class="chat-ab-code chat-ab-result-body">{{ b.detail }}</pre>
+                        </div>
+                      </template>
+                      <pre v-else class="chat-ab-code chat-ab-bash">{{ b.detail }}</pre>
+                    </div>
+                  </div>
                 </div>
               </div>
+
+              <!-- Assistant official reply: full width, no bubble; error
+                   banner below the text -->
+              <template v-else>
+                <div v-if="renderMd" class="chat-msg-md" v-html="md(part.msg)" />
+                <template v-else>{{ part.msg.text }}</template>
+                <span v-if="streaming && part.msg.id === lastMessage?.id" class="chat-cursor">▌</span>
+                <div v-if="part.msg.error" class="chat-aborted chat-aborted--error">⚠ {{ part.msg.error }}</div>
+              </template>
             </div>
-          </div>
+          </template>
 
           <!-- User message: sticky separator + blue bubble -->
           <template v-else-if="item.kind === 'user'">
@@ -873,23 +943,6 @@ let anchorBottom = 0;
               <button class="chat-resend-btn" @click="store.resendMessage(props.sessionId, item.msg.id)">↻ Resend</button>
             </div>
             <div class="chat-msg-time">{{ fmtTime(item.msg.ts) }}</div>
-          </template>
-
-          <!-- Assistant official reply: full width, no bubble; identity in the
-               sticky separator, error banner below the text -->
-          <template v-else-if="item.kind === 'reply'">
-            <div
-              v-if="item.header"
-              class="chat-sep"
-              title="Jump to the start of this message"
-              @click="jumpToSep"
-            >
-              <span class="chat-sep-line" /><span class="chat-sep-text">{{ agentSepLabel(item.header) }}</span><span class="chat-sep-line" />
-            </div>
-            <div v-if="renderMd" class="chat-msg-md" v-html="md(item.msg)" />
-            <template v-else>{{ item.msg.text }}</template>
-            <span v-if="streaming && item.msg.id === lastMessage?.id" class="chat-cursor">▌</span>
-            <div v-if="item.msg.error" class="chat-aborted chat-aborted--error">⚠ {{ item.msg.error }}</div>
           </template>
 
           <!-- System (slash command output) -->

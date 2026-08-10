@@ -214,14 +214,19 @@
   color: var(--sf-text-bright);
 }
 
-/* Assistant official replies: full width, NO box. */
-.chat-msg--reply,
-.chat-msg--custom {
-  padding: 4px 0 2px;
+/* Agent turns: full width, NO box — one row holds the separator plus all
+   of the turn's work runs and replies (grouped so the sticky separator's
+   pin spans the whole turn). */
+.chat-msg--agent {
+  padding: 2px 0;
 }
 
-.chat-msg--work {
-  padding: 2px 0;
+.chat-agent-part + .chat-agent-part {
+  margin-top: 10px;
+}
+
+.chat-msg--custom {
+  padding: 4px 0 2px;
 }
 
 .chat-msg--system {
@@ -329,10 +334,8 @@
   color: #f87171;
 }
 
-/* The /compact bubble rides the same .chat-msg--work wrapper as the
-   thinking/tool bubbles, so it inherits their flex protection (the wrapper
-   has no overflow:hidden, keeping the automatic minimum size). No extra
-   shrink guard needed. */
+/* The /compact bubble is a group part of an agent item with no header —
+   same rendering path as the thinking/tool bubbles. */
 
 /* The compact head's content slot is the live status — accent-tinted,
    inline in the same slot a tool preview would use. */

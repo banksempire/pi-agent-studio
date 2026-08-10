@@ -108,6 +108,10 @@ interface ChatState {
   backendError: string;
   /** last send failure, shown in chat windows */
   lastError: string;
+  /** unsent composer text per session (tab content instances are REUSED by
+   *  the framework when switching tabs — without per-session state, text
+   *  typed in one window would leak into the next) */
+  drafts: Record<string, string>;
   /** global UI preferences (localStorage-backed, apply to all chats) */
   prefs: {
     /** which key sends a message; the other key inserts a newline */
@@ -124,6 +128,7 @@ const state = reactive<ChatState>({
   backend: 'connecting',
   backendError: '',
   lastError: '',
+  drafts: {},
   prefs: loadPrefs(),
 });
 
@@ -783,6 +788,9 @@ export const store = {
   get backendError() { return state.backendError; },
   get lastError() { return state.lastError; },
   clearLastError() { state.lastError = ''; },
+  /** unsent composer text of a session's chat window ('' if none) */
+  draftOf(sessionId: string): string { return state.drafts[sessionId] ?? ''; },
+  setDraft(sessionId: string, text: string) { state.drafts[sessionId] = text; },
   findSession,
   isViewOpen,
   activeSessions,

@@ -53,7 +53,14 @@ function summaryPreview(text: string): string {
   const flat = capped.replace(/\s+/g, ' ');
   return (t.length > 300 ? flat + '…' : flat) || '…';
 }
-const input = ref('');
+/** Composer text lives in the store PER SESSION: the framework reuses the
+ *  same ChatWindow instance across tab switches (only the sessionId prop
+ *  changes), so a local ref would leak one window's text into the next.
+ *  The getter/setter keeps every existing input.value read/write working. */
+const input = computed({
+  get: () => store.draftOf(props.sessionId),
+  set: (v: string) => store.setDraft(props.sessionId, v),
+});
 const listEl = ref<HTMLElement | null>(null);
 const inputEl = ref<HTMLTextAreaElement | null>(null);
 

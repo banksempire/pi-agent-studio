@@ -989,6 +989,9 @@
   padding: 5px 8px;
   cursor: pointer;
   border-radius: 3px;
+  /* Selection line, docker-app style: a permanent transparent left border
+     that only changes color when selected — no layout shift. */
+  border-left: 2px solid transparent;
 }
 
 /* Row action menu (⋮): hidden until the row is hovered (or its menu open). */
@@ -1021,11 +1024,10 @@
   box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
 }
 
-/* Selected rows keep the normal row look — just a blue line on the left
-   (border + padding rebalance so text stays at the same x as other rows). */
+/* Selected rows keep the normal row look — the left border turns accent,
+   exactly like the docker app highlight (no text or background change). */
 .chat-list-item--active {
-  border-left: 3px solid var(--sf-accent);
-  padding-left: 5px;
+  border-left-color: var(--sf-accent);
 }
 
 .chat-list-row1 {

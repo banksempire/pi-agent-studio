@@ -1042,12 +1042,6 @@ export function fmtDateTime(ts: number): string {
   const date = d.getFullYear() === now.getFullYear() ? `${mo}-${day}` : `${d.getFullYear()}-${mo}-${day}`;
   return `${date} ${time}`;
 }
-export function fmtDuration(sec: number): string {
-  if (sec < 60) return `${Math.floor(sec)}s`;
-  const m = Math.floor(sec / 60);
-  const s = Math.floor(sec % 60);
-  return s > 0 ? `${m}m ${s}s` : `${m}m`;
-}
 
 export function fmtCost(usd: number): string {
   if (usd < 0.01) return `$${usd.toFixed(4)}`;

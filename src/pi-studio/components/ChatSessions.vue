@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { useChatStore, type ChatSession } from '../store/chat';
+import { useChatStore, endExternalDrag, CHAT_DROP_TYPE, type ChatSession } from '../store/chat';
 
 const store = useChatStore();
 
@@ -14,6 +14,15 @@ function badge(s: ChatSession): string {
 function badgeClass(s: ChatSession): string {
   if (s.status === 'running') return 'running';
   return 'open';
+}
+
+/** Start a panel → workspace drag carrying the session id. */
+function onDragStart(e: DragEvent, s: ChatSession) {
+  const dt = e.dataTransfer;
+  if (!dt) return;
+  dt.setData(CHAT_DROP_TYPE, s.id);
+  dt.setData('text/plain', s.title);
+  dt.effectAllowed = 'copy';
 }
 </script>
 
@@ -29,7 +38,10 @@ function badgeClass(s: ChatSession): string {
       class="chat-list-item"
       :class="{ 'chat-list-item--active': s.id === store.activeChatId }"
       :title="'Open chat window: ' + s.title"
+      draggable="true"
       @click="store.openChat(s.id)"
+      @dragstart="onDragStart($event, s)"
+      @dragend="endExternalDrag"
     >
       <div class="chat-list-row1">
         <span class="chat-list-title">{{ s.title }}</span>

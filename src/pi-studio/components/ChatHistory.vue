@@ -2,7 +2,7 @@
 import { computed, nextTick, ref } from 'vue';
 import Menu from '@sf/components/Menu.vue';
 import type { MenuNodeDef } from '@sf/types/layout';
-import { useChatStore, timeAgo, type ChatSession } from '../store/chat';
+import { useChatStore, timeAgo, endExternalDrag, CHAT_DROP_TYPE, type ChatSession } from '../store/chat';
 
 const store = useChatStore();
 
@@ -13,6 +13,15 @@ const sessions = computed(() =>
 function preview(s: ChatSession): string {
   const t = (s.preview || s.title).replace(/\s+/g, ' ').trim();
   return t.length > 56 ? t.slice(0, 56) + '…' : t;
+}
+
+/** Start a panel → workspace drag carrying the session id. */
+function onDragStart(e: DragEvent, s: ChatSession) {
+  const dt = e.dataTransfer;
+  if (!dt) return;
+  dt.setData(CHAT_DROP_TYPE, s.id);
+  dt.setData('text/plain', s.title);
+  dt.effectAllowed = 'copy';
 }
 
 /** Which row's ⋮ action menu is open (session id; null = none). */
@@ -87,7 +96,10 @@ function onMenuSelect(s: ChatSession, item: MenuNodeDef) {
       class="chat-list-item"
       :class="{ 'chat-list-item--active': s.id === store.activeChatId }"
       :title="'Open chat window: ' + s.title"
+      draggable="true"
       @click="store.openChat(s.id)"
+      @dragstart="onDragStart($event, s)"
+      @dragend="endExternalDrag"
     >
       <div class="chat-list-row1">
         <span class="chat-list-title">{{ s.title }}</span>

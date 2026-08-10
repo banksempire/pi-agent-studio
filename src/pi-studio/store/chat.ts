@@ -10,7 +10,8 @@
  */
 import { reactive, watch } from 'vue';
 import { collectAllTabs, firstTile } from '@sf/workspace/tree';
-import type { WorkspaceApi } from '@sf/composables/useWorkspace';
+import type { WorkspaceApi, ExternalDropTarget } from '@sf/composables/useWorkspace';
+import type { WorkspaceTabDef } from '@sf/types/layout';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -210,6 +211,27 @@ const state = reactive<ChatState>({
 /** Tab id scheme: one tab per session, stable across open/close. */
 const TAB_PREFIX = 'chat-';
 const chatTabId = (sessionId: string) => TAB_PREFIX + sessionId;
+
+/**
+ * Workspace tab definition for a session's chat window. Shared by openChat
+ * and the panel → workspace drag handler so both open identical views.
+ */
+function chatTabDef(s: ChatSession): WorkspaceTabDef {
+  return {
+    id: chatTabId(s.id),
+    label: s.title,
+    icon: '💬',
+    content: 'chat-window',
+    props: { sessionId: s.id },
+  };
+}
+
+/**
+ * DataTransfer type carried by a chat-session drag from the Chat panel.
+ * The framework never sees this literal — the accepts predicate below
+ * (product code) owns the contract.
+ */
+export const CHAT_DROP_TYPE = 'application/x-sf-chat-session';
 
 // ── Backend client ─────────────────────────────────────────────────────────
 
@@ -611,6 +633,37 @@ export function bindWorkspace(api: WorkspaceApi) {
   // the app decides what a new workspace item means here.
   api.setNewTabHandler(() => { void newChat(); }, 'New Chat');
 
+  // Panel → workspace drag: dropping a chat session onto a tile opens it
+  // there. Center drops insert/activate a tab; edge drops split the tile
+  // and open the chat in the new half (same zones as tab drags).
+  api.setExternalDropHandler(
+    (types) => types.includes(CHAT_DROP_TYPE),
+    (e, target: ExternalDropTarget) => {
+      const sessionId = e.dataTransfer?.getData(CHAT_DROP_TYPE) ?? '';
+      const s = sessionId ? findSession(sessionId) : undefined;
+      if (!s || !ws) return;
+      const tab = chatTabDef(s);
+      const existing = ws.findTabGlobal(tab.id);
+      if (target.zone === 'center') {
+        if (existing) {
+          // Already open in another tile → move the view there (dedupe by
+          // tab id; a session has exactly one view).
+          ws.ops.moveTab(tab.id, target.tileId, target.index);
+        } else {
+          ws.ops.insertTab(target.tileId, target.index, tab);
+          if (!s.messagesLoaded) void fetchMessages(sessionId);
+          else void syncTail(sessionId);
+        }
+      } else {
+        const dir = target.zone === 'left' || target.zone === 'right' ? 'row' : 'column';
+        const side = target.zone === 'left' || target.zone === 'top' ? 'start' : 'end';
+        ws.ops.splitOpen(target.tileId, dir, side, tab);
+        if (!s.messagesLoaded) void fetchMessages(sessionId);
+        else void syncTail(sessionId);
+      }
+    },
+  );
+
   connectEvents();
   void fetchList().then(() => {
     if (firstBind) {
@@ -706,15 +759,14 @@ export function openChat(sessionId: string) {
 
   const tileId = targetTileId();
   if (!tileId) return;
-  ws.ops.openTab(tileId, {
-    id: tabId,
-    label: s.title,
-    icon: '💬',
-    content: 'chat-window',
-    props: { sessionId },
-  });
+  ws.ops.openTab(tileId, chatTabDef(s));
   if (!s.messagesLoaded) void fetchMessages(sessionId);
   else void syncTail(sessionId);
+}
+
+/** Drag-end cleanup for panel → workspace drags (clears hover state). */
+export function endExternalDrag() {
+  ws?.endDrag();
 }
 
 /** Send a user message; the real pi agent replies (streaming via SSE). */

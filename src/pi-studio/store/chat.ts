@@ -671,15 +671,13 @@ export function bindWorkspace(api: WorkspaceApi) {
           ws.ops.moveTab(tab.id, target.tileId, target.index);
         } else {
           ws.ops.insertTab(target.tileId, target.index, tab);
-          if (!s.messagesLoaded) void fetchMessages(sessionId);
-          else void syncTail(sessionId);
+          syncSessionView(s);
         }
       } else {
         const dir = target.zone === 'left' || target.zone === 'right' ? 'row' : 'column';
         const side = target.zone === 'left' || target.zone === 'top' ? 'start' : 'end';
         ws.ops.splitOpen(target.tileId, dir, side, tab);
-        if (!s.messagesLoaded) void fetchMessages(sessionId);
-        else void syncTail(sessionId);
+        syncSessionView(s);
       }
     },
   );
@@ -770,7 +768,7 @@ function enterReview(tabId: string) {
 }
 
 /** Pin the review window: normal tab styling, no longer auto-closable. */
-export function exitReview() {
+function exitReview() {
   if (!state.reviewTabId || !ws) return;
   ws.tabDefs[state.reviewTabId].tabClass = '';
   state.reviewTabId = null;
@@ -782,6 +780,21 @@ export function exitReview() {
  */
 export function noteChatInteraction(sessionId: string) {
   if (state.reviewTabId === chatTabId(sessionId)) exitReview();
+}
+
+/** Load or refresh a session's messages after its view opens/activates. */
+function syncSessionView(s: ChatSession) {
+  if (!s.messagesLoaded) void fetchMessages(s.id);
+  else void syncTail(s.id);
+}
+
+/** Start a panel → workspace drag carrying the session id. */
+export function startSessionDrag(e: DragEvent, s: ChatSession) {
+  const dt = e.dataTransfer;
+  if (!dt) return;
+  dt.setData(CHAT_DROP_TYPE, s.id);
+  dt.setData('text/plain', s.title);
+  dt.effectAllowed = 'copy';
 }
 
 /** Open (or activate, if already open) a session's window in the workspace. */
@@ -799,8 +812,7 @@ export function openChat(sessionId: string) {
     ws.ops.activateTab(existing.id, tabId);
     // Re-sync on every activation: the session may have advanced while
     // its view was closed or while events were missed.
-    if (!s.messagesLoaded) void fetchMessages(sessionId);
-    else void syncTail(sessionId);
+    syncSessionView(s);
     return;
   }
 
@@ -810,17 +822,15 @@ export function openChat(sessionId: string) {
   let tileId = targetTileId();
   if (state.reviewTabId) {
     const reviewTile = ws.findTabGlobal(state.reviewTabId);
-    const prevTileId = reviewTile?.id ?? null;
     ws.ops.closeTab(state.reviewTabId);
     state.reviewTabId = null;
     // closeTab may have removed the root the review window lived in.
-    tileId = prevTileId && ws.findTileGlobal(prevTileId) ? prevTileId : targetTileId();
+    tileId = reviewTile && ws.findTileGlobal(reviewTile.id) ? reviewTile.id : targetTileId();
   }
   if (!tileId) return;
   ws.ops.openTab(tileId, chatTabDef(s));
   enterReview(tabId);
-  if (!s.messagesLoaded) void fetchMessages(sessionId);
-  else void syncTail(sessionId);
+  syncSessionView(s);
 }
 
 /** Drag-end cleanup for panel → workspace drags (clears hover state). */
@@ -1099,7 +1109,6 @@ export const store = {
   newChat,
   openChat,
   noteChatInteraction,
-  exitReview,
   sendMessage,
   resendMessage,
   markCompactFailed,

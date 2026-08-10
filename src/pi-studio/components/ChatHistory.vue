@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, nextTick, ref } from 'vue';
 import Menu from '@sf/components/Menu.vue';
 import type { MenuNodeDef } from '@sf/types/layout';
 import { useChatStore, timeAgo, type ChatSession } from '../store/chat';
@@ -25,17 +25,47 @@ function menuItems(s: ChatSession): MenuNodeDef[] {
   ];
 }
 
-async function onMenuSelect(s: ChatSession, item: MenuNodeDef) {
-  if (item.id === 'rename') {
-    const name = window.prompt('Rename session', s.title);
-    if (name !== null && name.trim() && name.trim() !== s.title) {
-      await store.renameSession(s.id, name.trim());
-    }
-  } else if (item.id === 'delete') {
-    if (window.confirm(`Delete chat “${s.title}”? This permanently removes the session file.`)) {
-      await store.deleteSession(s.id);
-    }
+/** Inline themed dialog (no browser popups): rename input or delete confirm. */
+type RowDialog =
+  | { kind: 'rename'; session: ChatSession }
+  | { kind: 'delete'; session: ChatSession };
+const dialog = ref<RowDialog | null>(null);
+const dialogEl = ref<HTMLElement | null>(null);
+const renameEl = ref<HTMLInputElement | null>(null);
+const renameInput = ref('');
+
+function openRename(s: ChatSession) {
+  renameInput.value = s.title;
+  dialog.value = { kind: 'rename', session: s };
+  nextTick(() => renameEl.value?.focus());
+}
+function openDelete(s: ChatSession) {
+  dialog.value = { kind: 'delete', session: s };
+  nextTick(() => dialogEl.value?.focus());
+}
+function closeDialog() {
+  dialog.value = null;
+}
+
+async function confirmDialog() {
+  const d = dialog.value;
+  if (!d) return;
+  closeDialog();
+  if (d.kind === 'rename') {
+    const name = renameInput.value.trim();
+    if (name && name !== d.session.title) await store.renameSession(d.session.id, name);
+  } else {
+    await store.deleteSession(d.session.id);
   }
+}
+
+function onDialogKey(e: KeyboardEvent) {
+  if (e.key === 'Escape') closeDialog();
+}
+
+function onMenuSelect(s: ChatSession, item: MenuNodeDef) {
+  if (item.id === 'rename') openRename(s);
+  else if (item.id === 'delete') openDelete(s);
 }
 </script>
 
@@ -81,6 +111,40 @@ async function onMenuSelect(s: ChatSession, item: MenuNodeDef) {
           {{ s.status === 'running' ? '⏳' : '' }}
         </span>
         <span class="chat-list-preview">{{ preview(s) }}</span>
+      </div>
+    </div>
+
+    <!-- Inline themed dialog — rename input / delete confirm. Never the
+         browser's native popup. -->
+    <div v-if="dialog" class="chat-dialog-backdrop" @click.self="closeDialog">
+      <div
+        ref="dialogEl"
+        class="chat-dialog"
+        tabindex="-1"
+        role="dialog"
+        @keydown="onDialogKey"
+      >
+        <div class="chat-dialog-title">{{ dialog.kind === 'rename' ? 'Rename' : 'Delete chat' }}</div>
+
+        <template v-if="dialog.kind === 'rename'">
+          <input
+            ref="renameEl"
+            v-model="renameInput"
+            class="chat-dialog-input"
+            placeholder="Session name"
+            @keydown.enter.prevent="confirmDialog"
+          />
+        </template>
+        <div v-else class="chat-dialog-body">
+          Delete “{{ dialog.session.title }}”? This permanently removes the session file.
+        </div>
+
+        <div class="chat-dialog-actions">
+          <button class="chat-dialog-btn" @click="closeDialog">Cancel</button>
+          <button class="chat-dialog-btn chat-dialog-btn--danger" @click="confirmDialog">
+            {{ dialog.kind === 'rename' ? 'Save' : 'Delete' }}
+          </button>
+        </div>
       </div>
     </div>
   </div>

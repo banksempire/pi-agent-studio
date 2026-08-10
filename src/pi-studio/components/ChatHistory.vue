@@ -7,7 +7,7 @@ import { useChatStore, timeAgo, type ChatSession } from '../store/chat';
 const store = useChatStore();
 
 const sessions = computed(() =>
-  [...store.sessions].sort((a, b) => b.lastActivity - a.lastActivity),
+  [...store.filteredSessions].sort((a, b) => b.lastActivity - a.lastActivity),
 );
 
 function preview(s: ChatSession): string {
@@ -74,6 +74,9 @@ function onMenuSelect(s: ChatSession, item: MenuNodeDef) {
     <div v-if="store.backend === 'offline'" class="chat-list-empty">
       ⚠ Backend offline — start it with <code>npm run server</code> in pi-agent-studio.
       <div v-if="store.backendError" class="chat-list-error">{{ store.backendError }}</div>
+    </div>
+    <div v-else-if="store.cwdFilter && sessions.length === 0" class="chat-list-empty">
+      No chats in this directory.
     </div>
     <div v-else-if="sessions.length === 0" class="chat-list-empty">
       No chats yet — press Ctrl+N or click New Chat above to start one.

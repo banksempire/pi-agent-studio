@@ -11,7 +11,7 @@
     {
      "id": "new-chat",
      "label": "New Chat",
-     "icon": "\ud83d\udcac",
+     "icon": "💬",
      "accelerator": "Ctrl+N",
      "action": "new-chat"
     },
@@ -62,7 +62,7 @@
   {
    "id": "chat",
    "displayName": "Chat",
-   "icon": "\ud83d\udcac",
+   "icon": "💬",
    "panel": {
     "title": "Chat",
     "sections": [
@@ -78,7 +78,7 @@
         "utilities": [
          {
           "id": "new-chat",
-          "icon": "\u2795",
+          "icon": "➕",
           "tooltip": "New Chat (Ctrl+N)"
          }
         ],
@@ -98,6 +98,24 @@
          {
           "type": "component",
           "key": "chat-sessions"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "id": "directory",
+      "label": "Directory",
+      "subSections": [
+       {
+        "id": "directory",
+        "label": "Directory",
+        "height": "variable",
+        "minHeight": 80,
+        "components": [
+         {
+          "type": "component",
+          "key": "directory-tree"
          }
         ]
        }
@@ -153,7 +171,7 @@
    {
     "id": "welcome",
     "label": "Welcome",
-    "icon": "\ud83c\udfe0",
+    "icon": "🏠",
     "content": "welcome"
    }
   ]
@@ -172,7 +190,7 @@
   "right": [
    {
     "id": "backend",
-    "label": "\u26a1 pi agent \u00b7 live"
+    "label": "⚡ pi agent · live"
    },
    {
     "id": "cwd",

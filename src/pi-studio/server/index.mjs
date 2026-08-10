@@ -381,6 +381,64 @@ async function analyzeSession(file, opts = {}) {
   return info;
 }
 
+// ── Directory tree (left panel "Directory" section) ───────────────────────
+// A folder tree under NEW_CHAT_CWD pruned to directories that actually
+// hold sessions (a session's cwd must equal the dir path). Node counts are
+// RECURSIVE — how many chats live under that folder — matching the filter
+// semantics (a click filters to every session under the path).
+
+const TREE_SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next', '.cache', '.venv', '__pycache__', 'coverage', 'target']);
+const TREE_MAX_DEPTH = 5;
+
+/** cwd → number of session files started there (cached parses). */
+async function sessionCwdCounts() {
+  const counts = new Map();
+  let dirs = [];
+  try { dirs = await readdir(SESSIONS_ROOT, { withFileTypes: true }); } catch { return counts; }
+  for (const dirEntry of dirs) {
+    if (!dirEntry.isDirectory()) continue;
+    const dir = path.join(SESSIONS_ROOT, dirEntry.name);
+    let files = [];
+    try { files = await readdir(dir); } catch { continue; }
+    for (const f of files) {
+      if (!f.endsWith('.jsonl')) continue;
+      const info = await analyzeSession(path.join(dir, f));
+      if (info?.cwd) counts.set(info.cwd, (counts.get(info.cwd) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
+async function buildTree(dir, depth, counts) {
+  const node = { name: path.basename(dir), path: dir, count: 0, children: [] };
+  if (depth < TREE_MAX_DEPTH) {
+    let entries = [];
+    try { entries = await readdir(dir, { withFileTypes: true }); } catch { /* unreadable */ }
+    for (const e of entries) {
+      if (!e.isDirectory() || TREE_SKIP_DIRS.has(e.name)) continue;
+      const child = await buildTree(path.join(dir, e.name), depth + 1, counts);
+      if (child.count > 0 || child.children.length > 0) node.children.push(child);
+    }
+  }
+  node.count = (counts.get(dir) ?? 0) + node.children.reduce((t, c) => t + c.count, 0);
+  return node;
+}
+
+async function buildSessionTree() {
+  const counts = await sessionCwdCounts();
+  const root = await buildTree(NEW_CHAT_CWD, 0, counts);
+  // Session directories OUTSIDE the CWD tree (e.g. chats started in other
+  // workspaces) appear as sibling top-level nodes so every chat is
+  // filterable — not just the ones under the CWD.
+  const prefix = NEW_CHAT_CWD.replace(/\/+$/, '') + '/';
+  const others = [...counts.keys()]
+    .filter((cwd) => cwd !== NEW_CHAT_CWD && !cwd.startsWith(prefix))
+    .sort()
+    .map((cwd) => ({ name: path.basename(cwd), path: cwd, count: counts.get(cwd) ?? 0, children: [] }));
+  root.others = others;
+  return root;
+}
+
 // ── SSE hub ───────────────────────────────────────────────────────────────
 
 /** SSE clients: Set<http.ServerResponse> */
@@ -608,6 +666,11 @@ const server = createServer(async (req, res) => {
       let nest = false;
       try { nest = (await client.ping()).ok; } catch { /* nest down */ }
       sendJson(res, 200, { ok: true, nest });
+      return;
+    }
+
+    if (p === '/api/tree' && req.method === 'GET') {
+      sendJson(res, 200, await buildSessionTree());
       return;
     }
 

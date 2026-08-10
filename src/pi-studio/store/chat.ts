@@ -104,6 +104,9 @@ interface ChatState {
   activeChatId: string | null;
   /** tab ids currently open in the workspace */
   openViewTabIds: Set<string>;
+  /** directory filter from the left panel tree: only sessions whose cwd is
+   *  under this path are shown in the lists (null = all) */
+  cwdFilter: string | null;
   backend: BackendStatus;
   backendError: string;
   /** last send failure, shown in chat windows */
@@ -180,6 +183,7 @@ const state = reactive<ChatState>({
   sessions: [],
   activeChatId: null,
   openViewTabIds: new Set(),
+  cwdFilter: null,
   backend: 'connecting',
   backendError: '',
   lastError: '',
@@ -313,7 +317,6 @@ export function refreshList(): Promise<void> {
 function byFile(file: string): ChatSession | undefined {
   return state.sessions.find((s) => s.file === file);
 }
-
 /** In-flight sends awaiting the backend's 'ack' event (keyed by reqId).
  *  `acked` flips the moment pi-nest confirms receipt, so an HTTP failure
  *  after that point must NOT mark the message as failed — the turn is
@@ -550,9 +553,13 @@ export function isViewOpen(sessionId: string): boolean {
 }
 
 /** Sessions considered active: generating in the backend, or with an open view. */
+function cwdMatches(s: ChatSession, f: string | null): boolean {
+  return !f || s.cwd === f || s.cwd.startsWith(f + '/');
+}
+
 export function activeSessions(): ChatSession[] {
   return state.sessions
-    .filter((s) => s.status === 'running' || isViewOpen(s.id))
+    .filter((s) => (s.status === 'running' || isViewOpen(s.id)) && cwdMatches(s, state.cwdFilter))
     .sort((a, b) => b.lastActivity - a.lastActivity);
 }
 
@@ -862,6 +869,13 @@ function applySessionInfo(s: ChatSession, data: any) {
 
 export const store = {
   get sessions() { return state.sessions; },
+  /** sessions honoring the directory filter (cwd under the selected path) */
+  get filteredSessions() {
+    const f = state.cwdFilter;
+    return state.sessions.filter((s) => cwdMatches(s, f));
+  },
+  get cwdFilter() { return state.cwdFilter; },
+  setCwdFilter(dir: string | null) { state.cwdFilter = dir; },
   get activeChatId() { return state.activeChatId; },
   get openViewTabIds() { return state.openViewTabIds; },
   get backend() { return state.backend; },

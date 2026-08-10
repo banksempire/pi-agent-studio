@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue';
+import { computed } from 'vue';
 import {
-  useChatStore, fmtCost, fmtDuration, fmtTime, fmtTokens,
+  useChatStore, fmtCost, fmtDateTime, fmtTokens,
   type ChatSession,
 } from '../store/chat';
 import KeyValueList from '@sf/components/KeyValueList.vue';
@@ -13,21 +13,6 @@ const session = computed<ChatSession | null>(
   () => (store.activeChatId ? store.findSession(store.activeChatId) ?? null : null),
 );
 
-// Live clock — drives the duration ticker. Runs only while the activated
-// session is generating (no point ticking for idle sessions).
-const now = ref(Date.now());
-let timer: number | null = null;
-function tick() { now.value = Date.now(); }
-watch(
-  () => session.value?.status,
-  (status) => {
-    if (status === 'running' && timer === null) timer = window.setInterval(tick, 1000);
-    else if (status !== 'running' && timer !== null) { window.clearInterval(timer); timer = null; }
-  },
-  { immediate: true },
-);
-onUnmounted(() => { if (timer !== null) window.clearInterval(timer); });
-
 function shortFile(file: string): string {
   return file.split('/').pop() ?? file;
 }
@@ -35,9 +20,6 @@ function shortFile(file: string): string {
 const rows = computed<KeyValueItem[]>(() => {
   const s = session.value;
   if (!s) return [];
-  const end = s.status === 'running' ? now.value : Math.max(s.stats.lastActivity, s.stats.startedAt);
-  const dur = Math.max(0, (end - s.stats.startedAt) / 1000);
-  const viewOpen = store.isViewOpen(s.id);
   return [
     { key: 'Status', value: s.status, pill: true },
     { key: 'Working dir', value: s.cwd || '—' },
@@ -45,11 +27,9 @@ const rows = computed<KeyValueItem[]>(() => {
     { key: 'Tokens out', value: fmtTokens(s.stats.tokensOut) },
     { key: 'Total tokens', value: fmtTokens(s.stats.tokensIn + s.stats.tokensOut) },
     { key: 'Cost', value: fmtCost(s.stats.costUsd) },
-    { key: 'Duration', value: fmtDuration(dur) },
-    { key: 'Started', value: fmtTime(s.stats.startedAt) },
-    { key: 'Last activity', value: fmtTime(s.stats.lastActivity) },
+    { key: 'Started', value: fmtDateTime(s.stats.startedAt) },
+    { key: 'Last activity', value: fmtDateTime(s.stats.lastActivity) },
     { key: 'Messages', value: String(s.stats.messageCount) },
-    { key: 'View', value: viewOpen ? 'open' : 'closed', pill: true, tone: viewOpen ? 'view' : 'bg' },
   ];
 });
 </script>

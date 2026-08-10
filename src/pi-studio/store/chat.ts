@@ -1024,6 +1024,24 @@ export function fmtTime(ts: number): string {
   return `${hh}:${mm}`;
 }
 
+/**
+ * Time-of-day, extended to a full datetime when the timestamp is not from
+ * today ("MM-DD HH:MM", with the year prepended if it differs).
+ */
+export function fmtDateTime(ts: number): string {
+  const d = new Date(ts);
+  const now = new Date();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const time = `${hh}:${mm}`;
+  if (d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()) {
+    return time;
+  }
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const date = d.getFullYear() === now.getFullYear() ? `${mo}-${day}` : `${d.getFullYear()}-${mo}-${day}`;
+  return `${date} ${time}`;
+}
 export function fmtDuration(sec: number): string {
   if (sec < 60) return `${Math.floor(sec)}s`;
   const m = Math.floor(sec / 60);

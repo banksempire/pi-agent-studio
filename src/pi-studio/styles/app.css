@@ -115,7 +115,7 @@
 }
 
 .chat-stop-btn:hover {
-  background: var(--sf-active);
+  background: var(--sf-bg-hover);
   color: var(--sf-text-bright);
 }
 
@@ -157,6 +157,7 @@
 }
 
 .chat-load-older:hover {
+  background: var(--sf-bg-hover);
   color: var(--sf-text-bright);
   border-color: var(--sf-border);
 }
@@ -517,7 +518,7 @@
 }
 
 .chat-resend-btn:hover {
-  background: rgba(244, 135, 113, 0.18);
+  background: var(--sf-bg-hover);
 }
 
 .chat-banner {
@@ -1030,6 +1031,7 @@
 }
 
 .md-switch:hover {
+  background: var(--sf-bg-hover);
   border-color: var(--sf-text-muted);
 }
 
@@ -1116,7 +1118,7 @@
   cursor: pointer;
 }
 .model-menu-btn:hover:not(:disabled) {
-  background: rgba(128, 128, 128, 0.2);
+  background: var(--sf-bg-hover);
 }
 .model-menu-btn:disabled {
   opacity: 0.6;

@@ -114,6 +114,13 @@ interface ChatState {
   activeChatId: string | null;
   /** tab ids currently open in the workspace */
   openViewTabIds: Set<string>;
+  /**
+   * Tab id of the session view currently in REVIEW mode (opened from a
+   * history list click, dimmed tab). It auto-closes when another history
+   * item is opened without interaction; any interaction (clicking its tab,
+   * typing, sending) exits review and pins the window.
+   */
+  reviewTabId: string | null;
   /** directory filter from the left panel tree: sessions whose cwd is
    *  under ANY selected folder are shown (empty set = all) */
   selectedDirs: Set<string>;
@@ -198,6 +205,7 @@ const state = reactive<ChatState>({
   sessions: [],
   activeChatId: null,
   openViewTabIds: new Set(),
+  reviewTabId: null,
   selectedDirs: new Set(),
   tree: null,
   treeCollapsed: new Set(),
@@ -624,6 +632,11 @@ export function bindWorkspace(api: WorkspaceApi) {
     () => openTabIds(),
     (ids) => {
       state.openViewTabIds = new Set(ids);
+      // The review window can be closed by hand (✕ / middle-click):
+      // review state dies with it.
+      if (state.reviewTabId && !ids.includes(state.reviewTabId)) {
+        state.reviewTabId = null;
+      }
     },
     { immediate: true },
   );
@@ -632,6 +645,13 @@ export function bindWorkspace(api: WorkspaceApi) {
   // an editor-style "Untitled" tab; a chat product has no use for that, so
   // the app decides what a new workspace item means here.
   api.setNewTabHandler(() => { void newChat(); }, 'New Chat');
+
+  // Clicking a TAB is a real user gesture (the framework distinguishes it
+  // from programmatic activation): interacting with the review window this
+  // way pins it — it stops being auto-closable.
+  api.setTabClickHandler((tabId) => {
+    if (tabId === state.reviewTabId) exitReview();
+  });
 
   // Panel → workspace drag: dropping a chat session onto a tile opens it
   // there. Center drops insert/activate a tab; edge drops split the tile
@@ -740,6 +760,30 @@ export async function newChat(): Promise<void> {
   }
 }
 
+/** Extra tab class marking a review-mode window (dimmed + italic tab). */
+const REVIEW_TAB_CLASS = 'sf-tab--review';
+
+/** Mark the given tab as the review window (dim the tab). */
+function enterReview(tabId: string) {
+  state.reviewTabId = tabId;
+  if (ws) ws.tabDefs[tabId].tabClass = REVIEW_TAB_CLASS;
+}
+
+/** Pin the review window: normal tab styling, no longer auto-closable. */
+export function exitReview() {
+  if (!state.reviewTabId || !ws) return;
+  ws.tabDefs[state.reviewTabId].tabClass = '';
+  state.reviewTabId = null;
+}
+
+/**
+ * Any real interaction with a window (typing, sending) pins it: exit review
+ * if that session's view is the current review window.
+ */
+export function noteChatInteraction(sessionId: string) {
+  if (state.reviewTabId === chatTabId(sessionId)) exitReview();
+}
+
 /** Open (or activate, if already open) a session's window in the workspace. */
 export function openChat(sessionId: string) {
   const s = findSession(sessionId);
@@ -749,6 +793,9 @@ export function openChat(sessionId: string) {
   // Already open somewhere → just activate it (dedupe by tab id).
   const existing = ws.findTabGlobal(tabId);
   if (existing) {
+    // Clicking the SAME history item while it is the review window is the
+    // same navigation gesture — review persists. Opening a pinned window
+    // ends nothing; the review window (if any) stays as it is.
     ws.ops.activateTab(existing.id, tabId);
     // Re-sync on every activation: the session may have advanced while
     // its view was closed or while events were missed.
@@ -757,9 +804,21 @@ export function openChat(sessionId: string) {
     return;
   }
 
-  const tileId = targetTileId();
+  // Opening a NEW view from a history click = review mode. If another
+  // window is currently in review and was never interacted with, close it
+  // first and open this one where it stood.
+  let tileId = targetTileId();
+  if (state.reviewTabId) {
+    const reviewTile = ws.findTabGlobal(state.reviewTabId);
+    const prevTileId = reviewTile?.id ?? null;
+    ws.ops.closeTab(state.reviewTabId);
+    state.reviewTabId = null;
+    // closeTab may have removed the root the review window lived in.
+    tileId = prevTileId && ws.findTileGlobal(prevTileId) ? prevTileId : targetTileId();
+  }
   if (!tileId) return;
   ws.ops.openTab(tileId, chatTabDef(s));
+  enterReview(tabId);
   if (!s.messagesLoaded) void fetchMessages(sessionId);
   else void syncTail(sessionId);
 }
@@ -774,6 +833,8 @@ export async function sendMessage(sessionId: string, text: string, opts: { wait?
   const s = findSession(sessionId);
   const trimmed = text.trim();
   if (!s || !trimmed) return;
+  // Sending is a real interaction: pin the window if it was in review.
+  noteChatInteraction(sessionId);
   state.lastError = '';
 
   // Optimistic append (the backend confirms with the same text shortly).
@@ -1037,6 +1098,8 @@ export const store = {
   activeSessions,
   newChat,
   openChat,
+  noteChatInteraction,
+  exitReview,
   sendMessage,
   resendMessage,
   markCompactFailed,

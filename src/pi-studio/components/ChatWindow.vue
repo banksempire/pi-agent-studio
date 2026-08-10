@@ -730,6 +730,13 @@ function autoGrow() {
   el.style.height = Math.min(el.scrollHeight, cap) + 'px';
 }
 
+/** Typing in the composer is a real interaction: pin the window if it was
+ *  in review mode (then keep the auto-grow behavior). */
+function onComposerInput() {
+  autoGrow();
+  store.noteChatInteraction(props.sessionId);
+}
+
 /** Composer height set by dragging the handle (null = auto-grow). */
 const manualHeight = ref<number | null>(null);
 // Drag-resize limits, expressed per-em so they scale with font-size.
@@ -1020,7 +1027,7 @@ let anchorBottom = 0;
           rows="1"
           :style="manualHeight !== null ? { height: manualHeight + 'px', maxHeight: manualHeight + 'px' } : {}"
           @keydown="onKeydown"
-          @input="autoGrow"
+          @input="onComposerInput"
         />
         <button
           class="chat-send-btn"

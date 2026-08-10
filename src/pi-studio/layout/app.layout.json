@@ -108,11 +108,28 @@
   }
  ],
  "right": {
-  "title": "Session Stats",
+  "title": "Session",
   "sections": [
    {
     "id": "session",
     "label": "Session",
+    "subSections": [
+     {
+      "id": "session-stats",
+      "label": "Stats",
+      "height": "fixed",
+      "components": [
+       {
+        "type": "component",
+        "key": "session-stats"
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "id": "preference",
+    "label": "Preference",
     "subSections": [
      {
       "id": "prefs",
@@ -122,17 +139,6 @@
        {
         "type": "component",
         "key": "prefs"
-       }
-      ]
-     },
-     {
-      "id": "session-stats",
-      "label": "Stats",
-      "height": "fixed",
-      "components": [
-       {
-        "type": "component",
-        "key": "session-stats"
        }
       ]
      }

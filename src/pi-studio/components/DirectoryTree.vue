@@ -8,8 +8,6 @@ interface DirNode {
   /** recursive: how many sessions live under this folder */
   count: number;
   children: DirNode[];
-  /** session directories outside the CWD tree (sibling top-level nodes) */
-  others?: DirNode[];
 }
 
 const store = useChatStore();
@@ -32,7 +30,6 @@ async function load() {
         }
       };
       collapseAll(j);
-      for (const o of j.others ?? []) collapseAll(o);
       collapsed.value = s;
     }
   } catch { /* backend offline — keep the last tree */ }
@@ -55,13 +52,6 @@ const flat = computed<{ node: DirNode; depth: number }[]>(() => {
   return out;
 });
 
-/** Session directories outside the CWD tree — flat, after a divider. */
-const flatOthers = computed<{ node: DirNode; depth: number }[]>(() => {
-  const out: { node: DirNode; depth: number }[] = [];
-  for (const o of tree.value?.others ?? []) out.push({ node: o, depth: 0 });
-  return out;
-});
-
 function toggle(node: DirNode) {
   if (!node.children.length) return;
   const next = new Set(collapsed.value);
@@ -80,24 +70,6 @@ function select(node: DirNode) {
     <div v-if="!tree" class="dir-tree-empty">Loading directories…</div>
     <div
       v-for="{ node, depth } in flat"
-      :key="node.path"
-      class="dir-node"
-      :class="{ 'dir-node--active': store.cwdFilter === node.path }"
-      :style="{ paddingLeft: 6 + depth * 12 + 'px' }"
-      :title="'Filter chats under ' + node.path"
-      @click="select(node)"
-    >
-      <span
-        class="dir-node-toggle"
-        :class="{ 'dir-node-toggle--open': !collapsed.has(node.path) }"
-        @click.stop="toggle(node)"
-      >{{ node.children.length ? '▸' : '·' }}</span>
-      <span class="dir-node-name">{{ node.name }}</span>
-      <span class="dir-node-count">{{ node.count }}</span>
-    </div>
-    <div v-if="tree?.others?.length" class="dir-tree-divider" />
-    <div
-      v-for="{ node, depth } in flatOthers"
       :key="node.path"
       class="dir-node"
       :class="{ 'dir-node--active': store.cwdFilter === node.path }"

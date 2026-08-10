@@ -429,18 +429,7 @@ async function buildTree(dir, depth, counts) {
 }
 
 async function buildSessionTree() {
-  const counts = await sessionCwdCounts();
-  const root = await buildTree(NEW_CHAT_CWD, 0, counts);
-  // Session directories OUTSIDE the CWD tree (e.g. chats started in other
-  // workspaces) appear as sibling top-level nodes so every chat is
-  // filterable — not just the ones under the CWD.
-  const prefix = NEW_CHAT_CWD.replace(/\/+$/, '') + '/';
-  const others = [...counts.keys()]
-    .filter((cwd) => cwd !== NEW_CHAT_CWD && !cwd.startsWith(prefix))
-    .sort()
-    .map((cwd) => ({ name: path.basename(cwd), path: cwd, count: counts.get(cwd) ?? 0, children: [] }));
-  root.others = others;
-  return root;
+  return buildTree(NEW_CHAT_CWD, 0, await sessionCwdCounts());
 }
 
 // ── SSE hub ───────────────────────────────────────────────────────────────

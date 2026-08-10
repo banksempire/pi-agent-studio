@@ -142,6 +142,17 @@
         "key": "session-stats"
        }
       ]
+     },
+     {
+      "id": "session-model",
+      "label": "Model",
+      "height": "fixed",
+      "components": [
+       {
+        "type": "component",
+        "key": "model-picker"
+       }
+      ]
      }
     ]
    },

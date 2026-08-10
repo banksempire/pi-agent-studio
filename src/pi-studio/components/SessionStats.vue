@@ -4,7 +4,6 @@ import {
   useChatStore, fmtCost, fmtDuration, fmtTime, fmtTokens,
   type ChatSession,
 } from '../store/chat';
-import ModelPicker from './ModelPicker.vue';
 import KeyValueList from '@sf/components/KeyValueList.vue';
 import type { KeyValueItem } from '@sf/types/panel';
 
@@ -66,8 +65,6 @@ const rows = computed<KeyValueItem[]>(() => {
       <div class="session-stats-rows">
         <KeyValueList :items="rows" />
       </div>
-      <div class="session-stats-divider" />
-      <ModelPicker />
     </template>
     <div v-else class="session-stats-empty">
       No chat window activated.<br />

@@ -1380,13 +1380,6 @@
   color: #e5484d;
 }
 
-/* Segregation line between the stats rows and the model block */
-.session-stats-divider {
-  height: 1px;
-  background: var(--sf-border, rgba(128, 128, 128, 0.25));
-  margin: 2px 0 6px;
-}
-
 /* App-specific kv-pill tones (base + generic tones live in the framework). */
 .kv-pill--running {
   background: rgba(78, 201, 176, 0.18);

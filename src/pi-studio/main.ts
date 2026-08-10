@@ -11,6 +11,7 @@ import ChatHistory from './components/ChatHistory.vue';
 import ChatSessions from './components/ChatSessions.vue';
 import DirectoryTree from './components/DirectoryTree.vue';
 import SessionStats from './components/SessionStats.vue';
+import ModelPicker from './components/ModelPicker.vue';
 import PrefsPanel from './components/PrefsPanel.vue';
 
 // ── Register content renderers referenced by the layout JSON ──────────────
@@ -24,6 +25,7 @@ registerPanelComponent('chat-history', ChatHistory);
 registerPanelComponent('chat-sessions', ChatSessions);
 registerPanelComponent('directory-tree', DirectoryTree);
 registerPanelComponent('session-stats', SessionStats);
+registerPanelComponent('model-picker', ModelPicker);
 registerPanelComponent('prefs', PrefsPanel);
 
 createApp(StudioShell).mount('#app');

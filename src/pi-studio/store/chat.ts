@@ -113,9 +113,9 @@ interface ChatState {
   activeChatId: string | null;
   /** tab ids currently open in the workspace */
   openViewTabIds: Set<string>;
-  /** directory filter from the left panel tree: only sessions whose cwd is
-   *  under this path are shown in the lists (null = all) */
-  cwdFilter: string | null;
+  /** directory filter from the left panel tree: sessions whose cwd is
+   *  under ANY selected folder are shown (empty set = all) */
+  selectedDirs: Set<string>;
   /** Directory tree, pushed by the backend on change (fetched once on load) */
   tree: DirNode | null;
   /** expanded/collapsed per tree node path — kept in the store so it
@@ -197,7 +197,7 @@ const state = reactive<ChatState>({
   sessions: [],
   activeChatId: null,
   openViewTabIds: new Set(),
-  cwdFilter: null,
+  selectedDirs: new Set(),
   tree: null,
   treeCollapsed: new Set(),
   backend: 'connecting',
@@ -343,6 +343,36 @@ function applyTree(j: DirNode) {
     collapseAll(j);
     state.treeCollapsed = s;
   }
+}
+
+function findNode(tree: DirNode | null, path: string): DirNode | null {
+  if (!tree) return null;
+  if (tree.path === path) return tree;
+  for (const c of tree.children) {
+    const found = findNode(c, path);
+    if (found) return found;
+  }
+  return null;
+}
+
+function collectPaths(node: DirNode, out: string[]) {
+  out.push(node.path);
+  for (const c of node.children) collectPaths(c, out);
+}
+
+/** Toggle a folder's selection; checking a parent selects its whole
+ *  subtree, unchecking deselects it (cascading). */
+export function toggleDir(path: string) {
+  const node = findNode(state.tree, path);
+  if (!node) return;
+  const paths: string[] = [];
+  collectPaths(node, paths);
+  const willCheck = !state.selectedDirs.has(path);
+  const next = new Set(state.selectedDirs);
+  for (const p of paths) {
+    if (willCheck) next.add(p); else next.delete(p);
+  }
+  state.selectedDirs = next;
 }
 
 /** Fetch the Directory tree once (later updates arrive via SSE 'tree'). */
@@ -608,13 +638,17 @@ export function isViewOpen(sessionId: string): boolean {
 }
 
 /** Sessions considered active: generating in the backend, or with an open view. */
-function cwdMatches(s: ChatSession, f: string | null): boolean {
-  return !f || s.cwd === f || s.cwd.startsWith(f + '/');
+function cwdMatches(s: ChatSession, dirs: Set<string>): boolean {
+  if (dirs.size === 0) return true;
+  for (const d of dirs) {
+    if (s.cwd === d || s.cwd.startsWith(d + '/')) return true;
+  }
+  return false;
 }
 
 export function activeSessions(): ChatSession[] {
   return state.sessions
-    .filter((s) => (s.status === 'running' || isViewOpen(s.id)) && cwdMatches(s, state.cwdFilter))
+    .filter((s) => (s.status === 'running' || isViewOpen(s.id)) && cwdMatches(s, state.selectedDirs))
     .sort((a, b) => b.lastActivity - a.lastActivity);
 }
 
@@ -926,11 +960,10 @@ export const store = {
   get sessions() { return state.sessions; },
   /** sessions honoring the directory filter (cwd under the selected path) */
   get filteredSessions() {
-    const f = state.cwdFilter;
-    return state.sessions.filter((s) => cwdMatches(s, f));
+    return state.sessions.filter((s) => cwdMatches(s, state.selectedDirs));
   },
-  get cwdFilter() { return state.cwdFilter; },
-  setCwdFilter(dir: string | null) { state.cwdFilter = dir; },
+  get selectedDirs() { return state.selectedDirs; },
+  toggleDir,
   get tree() { return state.tree; },
   get treeCollapsed() { return state.treeCollapsed; },
   loadTree,

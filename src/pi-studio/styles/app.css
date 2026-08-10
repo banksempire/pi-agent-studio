@@ -812,9 +812,49 @@
   box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
 }
 
-.dir-node--active {
+/* Checkbox: on = theme blue with ✓, mid = some descendants selected. */
+.dir-check {
+  width: 13px;
+  height: 13px;
+  border: 1px solid var(--sf-border);
+  border-radius: 3px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--sf-text-on-accent);
+}
+
+.dir-check--on {
+  background: var(--sf-accent);
+  border-color: var(--sf-accent);
+}
+
+.dir-check--mid {
+  background: var(--sf-accent-soft);
+  border-color: var(--sf-accent);
+}
+
+.dir-node--checked {
   background: var(--sf-accent);
   color: var(--sf-text-on-accent);
+}
+
+.dir-node--checked .dir-node-count,
+.dir-node--checked .dir-node-toggle {
+  color: var(--sf-text-on-accent);
+}
+
+/* On a checked (blue) row the box shows as an outline so the ✓ stays legible. */
+.dir-node--checked .dir-check {
+  background: transparent;
+  border-color: var(--sf-text-on-accent);
+}
+
+.dir-node--indet {
+  background: var(--sf-accent-soft);
 }
 
 .dir-node-toggle {
@@ -842,8 +882,8 @@
   flex-shrink: 0;
 }
 
-.dir-node--active .dir-node-count,
-.dir-node--active .dir-node-toggle {
+.dir-node--checked .dir-node-count,
+.dir-node--checked .dir-node-toggle {
   color: var(--sf-text-on-accent);
 }
 

@@ -5,8 +5,9 @@ import { useChatStore, type DirNode } from '../store/chat';
 const store = useChatStore();
 
 // The tree is fetched ONCE (store.loadTree) and kept fresh by backend SSE
-// pushes — remounting this section never refetches. Expand/collapse state
-// lives in the store too, so flipping sections or panels preserves it.
+// pushes — remounting this section never refetches. Expand/collapse and the
+// multi-selection live in the store too, so flipping sections or panels
+// preserves them.
 onMounted(() => {
   if (!store.tree) void store.loadTree();
 });
@@ -24,9 +25,23 @@ const flat = computed<{ node: DirNode; depth: number }[]>(() => {
   return out;
 });
 
-/** Click a folder: filter the chat lists to it; click again to clear. */
-function select(node: DirNode) {
-  store.setCwdFilter(store.cwdFilter === node.path ? null : node.path);
+/** Checkbox state: 'on' (in the selection, or every descendant selected),
+ *  'mid' (some descendants selected), or 'off'. */
+function allSelected(n: DirNode): boolean {
+  if (store.selectedDirs.has(n.path)) return true;
+  if (n.children.length === 0) return false;
+  return n.children.every(allSelected);
+}
+
+function checkState(node: DirNode): 'on' | 'mid' | 'off' {
+  if (store.selectedDirs.has(node.path) || allSelected(node)) return 'on';
+  const walk = (n: DirNode): boolean => {
+    if (store.selectedDirs.has(n.path)) return true;
+    for (const c of n.children) if (walk(c)) return true;
+    return false;
+  };
+  for (const c of node.children) if (walk(c)) return 'mid';
+  return 'off';
 }
 </script>
 
@@ -37,11 +52,21 @@ function select(node: DirNode) {
       v-for="{ node, depth } in flat"
       :key="node.path"
       class="dir-node"
-      :class="{ 'dir-node--active': store.cwdFilter === node.path }"
-      :style="{ paddingLeft: 6 + depth * 12 + 'px' }"
+      :class="{
+        'dir-node--checked': checkState(node) === 'on',
+        'dir-node--indet': checkState(node) === 'mid',
+      }"
+      :style="{ paddingLeft: 4 + depth * 12 + 'px' }"
       :title="'Filter chats under ' + node.path"
-      @click="select(node)"
+      @click="store.toggleDir(node.path)"
     >
+      <span
+        class="dir-check"
+        :class="{
+          'dir-check--on': checkState(node) === 'on',
+          'dir-check--mid': checkState(node) === 'mid',
+        }"
+      >{{ checkState(node) === 'on' ? '✓' : checkState(node) === 'mid' ? '–' : '' }}</span>
       <span
         class="dir-node-toggle"
         :class="{ 'dir-node-toggle--open': !store.treeCollapsed.has(node.path) }"

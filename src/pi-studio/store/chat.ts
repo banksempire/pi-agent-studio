@@ -716,6 +716,55 @@ export function closeChatView(sessionId: string) {
   if (ws.findTabGlobal(tabId)) ws.ops.closeTab(tabId);
 }
 
+/** Rename a session (the daemon appends a session_info entry). */
+export async function renameSession(sessionId: string, name: string): Promise<boolean> {
+  const s = findSession(sessionId);
+  if (!s || !name.trim()) return false;
+  try {
+    const res = await fetch('/api/slash', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: s.file, command: 'name', args: name.trim() }),
+    });
+    const j = await res.json();
+    if (!j.ok) {
+      state.lastError = j.error || 'Rename failed';
+      return false;
+    }
+    await refreshList();
+    return true;
+  } catch (e) {
+    state.lastError = String((e as Error)?.message ?? e);
+    return false;
+  }
+}
+
+/** Delete a session file via the daemon (refuses while it is running). */
+export async function deleteSession(sessionId: string): Promise<boolean> {
+  const s = findSession(sessionId);
+  if (!s) return false;
+  try {
+    const res = await fetch('/api/slash', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: s.file, command: 'delete' }),
+    });
+    const j = await res.json();
+    if (!j.ok) {
+      state.lastError = j.error || 'Delete failed';
+      return false;
+    }
+    closeChatView(sessionId);
+    delete state.drafts[sessionId];
+    saveDrafts();
+    await refreshList();
+    return true;
+  } catch (e) {
+    state.lastError = String((e as Error)?.message ?? e);
+    return false;
+  }
+}
+
 /** Global preference: render markdown in every chat window. */
 export function setRenderMarkdown(on: boolean) {
   state.prefs.renderMarkdown = on;
@@ -835,6 +884,8 @@ export const store = {
   markCompactFailed,
   stopSession,
   closeChatView,
+  renameSession,
+  deleteSession,
   get prefs() { return state.prefs; },
   setSendKey,
   setRenderMarkdown,

@@ -8,7 +8,7 @@
  */
 import path from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
-import { readFile, mkdir, writeFile } from 'node:fs/promises';
+import { readFile, mkdir, writeFile, unlink } from 'node:fs/promises';
 import { sdk, sdkDir, BUILTIN_SLASH_COMMANDS, SESSIONS_ROOT, NEW_CHAT_CWD, supportedThinkingLevels } from './sdk-bridge.mjs';
 
 /** Builtin commands that only make sense in the pi TUI — answered with a reason. */
@@ -306,6 +306,31 @@ export async function execSlash(registry, { agentId, command, args, extra = {} }
       const changelogPath = path.join(sdkDir, 'CHANGELOG.md');
       const text = readFileSync(changelogPath, 'utf8');
       return { ok: true, data: { text: text.slice(0, 12000) } };
+    }
+
+    case 'delete': {
+      // Remove a session. The agent must be idle — a running turn or queued
+      // messages must not be killed by a UI delete. The agent is then closed
+      // (dispose the SDK session so it can't re-append to the file) and the
+      // EXACT path is unlinked — never a glob.
+      const st = registry.state(file);
+      if (st?.status === 'running') {
+        return { ok: false, error: 'The session is generating a response — stop it first.' };
+      }
+      if (st?.status === 'pending') {
+        return { ok: false, error: 'The session has queued messages — wait for them to finish.' };
+      }
+      const root = path.resolve(SESSIONS_ROOT);
+      const target = path.resolve(file);
+      if (!target.startsWith(root + path.sep) || !target.endsWith('.jsonl')) {
+        return { ok: false, error: 'Refusing to delete outside the sessions directory.' };
+      }
+      await registry.close(file);
+      await unlink(target).catch((e) => {
+        if (e.code !== 'ENOENT') throw e;
+      });
+      registry.broadcast('refresh', file, {});
+      return { ok: true, notice: 'Session deleted.' };
     }
 
     default:

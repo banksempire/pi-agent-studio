@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
+import Menu from '@sf/components/Menu.vue';
+import type { MenuNodeDef } from '@sf/types/layout';
 import { useChatStore, timeAgo, type ChatSession } from '../store/chat';
 
 const store = useChatStore();
@@ -11,6 +13,29 @@ const sessions = computed(() =>
 function preview(s: ChatSession): string {
   const t = (s.preview || s.title).replace(/\s+/g, ' ').trim();
   return t.length > 56 ? t.slice(0, 56) + '…' : t;
+}
+
+/** Which row's ⋮ action menu is open (session id; null = none). */
+const menuOpenFor = ref<string | null>(null);
+
+function menuItems(s: ChatSession): MenuNodeDef[] {
+  return [
+    { id: 'rename', label: 'Rename session' },
+    { id: 'delete', label: 'Delete chat', detail: 'Removes the session file' },
+  ];
+}
+
+async function onMenuSelect(s: ChatSession, item: MenuNodeDef) {
+  if (item.id === 'rename') {
+    const name = window.prompt('Rename session', s.title);
+    if (name !== null && name.trim() && name.trim() !== s.title) {
+      await store.renameSession(s.id, name.trim());
+    }
+  } else if (item.id === 'delete') {
+    if (window.confirm(`Delete chat “${s.title}”? This permanently removes the session file.`)) {
+      await store.deleteSession(s.id);
+    }
+  }
 }
 </script>
 
@@ -34,6 +59,22 @@ function preview(s: ChatSession): string {
       <div class="chat-list-row1">
         <span class="chat-list-title">{{ s.title }}</span>
         <span class="chat-list-time">{{ timeAgo(s.lastActivity) }}</span>
+        <!-- Row action menu: ⋮ appears on hover; rename / delete. -->
+        <Menu
+          :items="menuItems(s)"
+          :open="menuOpenFor === s.id"
+          @update:open="(v: boolean) => { menuOpenFor = v ? s.id : null }"
+          @select="(item: MenuNodeDef) => onMenuSelect(s, item)"
+        >
+          <template #trigger="{ toggle }">
+            <button
+              class="chat-item-menu"
+              :class="{ 'chat-item-menu--open': menuOpenFor === s.id }"
+              title="Session actions"
+              @click.stop="toggle"
+            >⋮</button>
+          </template>
+        </Menu>
       </div>
       <div class="chat-list-row2">
         <span class="chat-list-status" :class="'chat-list-status--' + s.status">

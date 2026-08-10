@@ -865,8 +865,8 @@ let anchorBottom = 0;
             <div v-if="renderMd" class="chat-msg-md" v-html="md(item.msg)" />
             <template v-else>{{ item.msg.text }}</template>
             <span v-if="streaming && item.msg.id === lastMessage?.id" class="chat-cursor">▌</span>
-            <div v-if="item.msg.stopReason === 'aborted'" class="chat-aborted">⏹ generation aborted</div>
-            <div v-else-if="item.msg.error" class="chat-aborted chat-aborted--error">⚠ {{ item.msg.error }}</div>
+            <div v-if="item.msg.error" class="chat-aborted chat-aborted--error">⚠ {{ item.msg.error }}</div>
+            <div v-else-if="item.msg.stopReason === 'aborted'" class="chat-aborted">⏹ generation aborted</div>
             <div v-if="item.lastInTurn && !(item.trailing && streaming)" class="chat-msg-meta chat-msg-meta--agent">{{ agentMeta(item) }}</div>
           </template>
 

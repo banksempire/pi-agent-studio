@@ -108,16 +108,11 @@ async function pendingCatalog(pending) {
 }
 
 function findModel(models, term) {
+  // Only the fully-qualified form is accepted — several providers ship the
+  // same model ids (opencode vs opencode-go vs volcengine-plan …), so a
+  // bare id or display name is ambiguous and must not silently pick one.
   const t = term.toLowerCase();
-  // Exact provider/id wins first — several providers share model ids
-  // (opencode vs opencode-go vs volcengine-plan …) and a bare-id match
-  // would silently pick the first catalog entry for that id.
-  return (
-    models.find((m) => `${m.provider}/${m.id}`.toLowerCase() === t) ??
-    models.find(
-      (m) => m.id.toLowerCase() === t || m.name.toLowerCase() === t,
-    )
-  );
+  return models.find((m) => `${m.provider}/${m.id}`.toLowerCase() === t);
 }
 
 /**

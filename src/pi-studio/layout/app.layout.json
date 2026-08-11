@@ -1,206 +1,234 @@
 {
- "$comment": "pi-agent-studio layout. Built on the StudioFramework single-JSON layout model.",
- "framework": {
-  "title": "pi-agent-studio"
- },
- "menu": [
-  {
-   "id": "chat",
-   "label": "Chat",
-   "items": [
-    {
-     "id": "new-chat",
-     "label": "New Chat",
-     "icon": "💬",
-     "accelerator": "Ctrl+N",
-     "action": "new-chat"
-    },
-    {
-     "separator": true
-    },
-    {
-     "id": "close-chat",
-     "label": "Close Chat Window",
-     "action": "close-chat"
-    },
-    {
-     "id": "stop-chat",
-     "label": "Stop Chat",
-     "action": "stop-chat"
-    }
-   ]
+  "$comment": "pi-agent-studio layout. Built on the StudioFramework single-JSON layout model.",
+  "framework": {
+    "title": "pi-agent-studio"
   },
-  {
-   "id": "view",
-   "label": "View",
-   "items": [
+  "menu": [
     {
-     "id": "view-chat-panel",
-     "label": "Toggle Chat Panel",
-     "action": "toggle-left-panel"
-    },
-    {
-     "id": "view-stats-panel",
-     "label": "Toggle Session Stats",
-     "action": "toggle-right-panel"
-    }
-   ]
-  },
-  {
-   "id": "help",
-   "label": "Help",
-   "items": [
-    {
-     "id": "about",
-     "label": "About pi-agent-studio",
-     "action": "about"
-    }
-   ]
-  }
- ],
- "docker": [
-  {
-   "id": "chat",
-   "displayName": "Chat",
-   "icon": "💬",
-   "panel": {
-    "title": "Chat",
-    "sections": [
-     {
       "id": "chat",
       "label": "Chat",
-      "subSections": [
-       {
-        "id": "history",
-        "label": "Chat History",
-        "height": "variable",
-        "minHeight": 90,
-        "utilities": [
-         {
+      "items": [
+        {
           "id": "new-chat",
-          "icon": "➕",
-          "tooltip": "New Chat (Ctrl+N)"
-         }
-        ],
-        "components": [
-         {
-          "type": "component",
-          "key": "chat-history"
-         }
-        ]
-       },
-       {
-        "id": "sessions",
-        "label": "Sessions",
-        "height": "variable",
-        "minHeight": 80,
-        "components": [
-         {
-          "type": "component",
-          "key": "chat-sessions"
-         }
-        ]
-       }
+          "label": "New Chat",
+          "icon": "💬",
+          "accelerator": "Ctrl+N",
+          "action": "new-chat"
+        },
+        {
+          "separator": true
+        },
+        {
+          "id": "close-chat",
+          "label": "Close Chat Window",
+          "action": "close-chat"
+        },
+        {
+          "id": "stop-chat",
+          "label": "Stop Chat",
+          "action": "stop-chat"
+        }
       ]
-     },
-     {
-      "id": "directory",
-      "label": "Directory",
-      "subSections": [
-       {
-        "id": "directory",
-        "label": "Directory",
-        "height": "variable",
-        "minHeight": 80,
-        "components": [
-         {
-          "type": "component",
-          "key": "directory-tree"
-         }
-        ]
-       }
+    },
+    {
+      "id": "view",
+      "label": "View",
+      "items": [
+        {
+          "id": "view-chat-panel",
+          "label": "Toggle Chat Panel",
+          "action": "toggle-left-panel"
+        },
+        {
+          "id": "view-stats-panel",
+          "label": "Toggle Session Stats",
+          "action": "toggle-right-panel"
+        }
       ]
-     }
-    ]
-   }
-  }
- ],
- "right": {
-  "title": "Chat",
-  "sections": [
-   {
-    "id": "session",
-    "label": "Session",
-    "subSections": [
-     {
-      "id": "session-model",
-      "label": "Model",
-      "height": "fixed",
-      "components": [
-       {
-        "type": "component",
-        "key": "model-picker"
-       }
+    },
+    {
+      "id": "help",
+      "label": "Help",
+      "items": [
+        {
+          "id": "about",
+          "label": "About pi-agent-studio",
+          "action": "about"
+        }
       ]
-     },
-     {
-      "id": "session-stats",
-      "label": "Stats",
-      "height": "fixed",
-      "components": [
-       {
-        "type": "component",
-        "key": "session-stats"
-       }
-      ]
-     }
-    ]
-   },
-   {
-    "id": "preference",
-    "label": "Preference",
-    "subSections": [
-     {
-      "id": "prefs",
-      "label": "Preference",
-      "height": "fixed",
-      "components": [
-       {
-        "type": "component",
-        "key": "prefs"
-       }
-      ]
-     }
-    ]
-   }
-  ]
- },
- "workspace": {
-  "minTileWidth": 220,
-  "minTileHeight": 140,
-  "emptyContent": "welcome",
-  "tabs": []
- },
- "status": {
-  "left": [
-   {
-    "id": "brand",
-    "label": "pi-agent-studio"
-   },
-   {
-    "id": "version",
-    "label": "v0.2.0"
-   }
+    }
   ],
-  "right": [
-   {
-    "id": "backend",
-    "label": "⚡ pi agent · live"
-   },
-   {
-    "id": "cwd",
-    "label": "/workspace/sf"
-   }
-  ]
- }
+  "docker": [
+    {
+      "id": "chat",
+      "displayName": "Chat",
+      "icon": "💬",
+      "panel": {
+        "title": "Chat",
+        "sections": [
+          {
+            "id": "chat",
+            "label": "Chat",
+            "subSections": [
+              {
+                "id": "history",
+                "label": "Chat History",
+                "height": "variable",
+                "minHeight": 90,
+                "utilities": [
+                  {
+                    "id": "new-chat",
+                    "icon": "➕",
+                    "tooltip": "New Chat (Ctrl+N)"
+                  }
+                ],
+                "components": [
+                  {
+                    "type": "component",
+                    "key": "chat-history"
+                  }
+                ]
+              },
+              {
+                "id": "sessions",
+                "label": "Sessions",
+                "height": "variable",
+                "minHeight": 80,
+                "components": [
+                  {
+                    "type": "component",
+                    "key": "chat-sessions"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "directory",
+            "label": "Directory",
+            "subSections": [
+              {
+                "id": "directory",
+                "label": "Directory",
+                "height": "variable",
+                "minHeight": 80,
+                "components": [
+                  {
+                    "type": "component",
+                    "key": "directory-tree"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "workspace",
+      "displayName": "Workspace",
+      "icon": "🗂",
+      "panel": {
+        "title": "Workspaces",
+        "sections": [
+          {
+            "id": "workspaces",
+            "label": "Workspaces",
+            "subSections": [
+              {
+                "id": "ws-panel",
+                "label": "Saved Workspaces",
+                "height": "variable",
+                "minHeight": 120,
+                "components": [
+                  {
+                    "type": "component",
+                    "key": "workspace-panel"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "right": {
+    "title": "Chat",
+    "sections": [
+      {
+        "id": "session",
+        "label": "Session",
+        "subSections": [
+          {
+            "id": "session-model",
+            "label": "Model",
+            "height": "fixed",
+            "components": [
+              {
+                "type": "component",
+                "key": "model-picker"
+              }
+            ]
+          },
+          {
+            "id": "session-stats",
+            "label": "Stats",
+            "height": "fixed",
+            "components": [
+              {
+                "type": "component",
+                "key": "session-stats"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "preference",
+        "label": "Preference",
+        "subSections": [
+          {
+            "id": "prefs",
+            "label": "Preference",
+            "height": "fixed",
+            "components": [
+              {
+                "type": "component",
+                "key": "prefs"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "workspace": {
+    "minTileWidth": 220,
+    "minTileHeight": 140,
+    "emptyContent": "welcome",
+    "tabs": []
+  },
+  "status": {
+    "left": [
+      {
+        "id": "brand",
+        "label": "pi-agent-studio"
+      },
+      {
+        "id": "version",
+        "label": "v0.2.0"
+      }
+    ],
+    "right": [
+      {
+        "id": "backend",
+        "label": "⚡ pi agent · live"
+      },
+      {
+        "id": "cwd",
+        "label": "/workspace/sf"
+      }
+    ]
+  }
 }

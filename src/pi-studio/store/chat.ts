@@ -10,7 +10,7 @@
  */
 import { reactive, watch } from 'vue';
 import { collectAllTabs, firstTile } from '@sf/workspace/tree';
-import type { WorkspaceApi, ExternalDropTarget } from '@sf/composables/useWorkspace';
+import { BLANK_CONTENT, type WorkspaceApi, type ExternalDropTarget } from '@sf/composables/useWorkspace';
 import type { WorkspaceTabDef } from '@sf/types/layout';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -755,6 +755,11 @@ export function bindWorkspace(api: WorkspaceApi) {
     },
   );
 
+  // A restored workspace may reference sessions already in the store
+  // (re-bind after the framework re-created its state): swap ghosts for
+  // real windows right away; fetchList covers the sessions still loading.
+  reconcileGhostWindows();
+
   connectEvents();
   void fetchList().then(() => {
     if (firstBind) {
@@ -762,11 +767,28 @@ export function bindWorkspace(api: WorkspaceApi) {
       // Show the most recent real conversation on first launch.
       if (state.sessions.length > 0) openChat(state.sessions[0].id);
     }
+    reconcileGhostWindows();
   });
 
   // Periodic refresh picks up sessions created outside the UI (e.g. TUI).
   if (listTimer === null) {
     listTimer = window.setInterval(() => void fetchList(), 15000);
+  }
+}
+
+/**
+ * Saved / auto-restored workspaces may reference chat windows that were not
+ * open at startup (or sessions that have since been deleted). Deleted ones
+ * stay as framework ghost tabs (blank page); live sessions get their real
+ * window definition swapped in so the restored layout shows them again.
+ */
+function reconcileGhostWindows() {
+  if (!ws) return;
+  for (const id of Object.keys(ws.tabDefs)) {
+    if (!id.startsWith(TAB_PREFIX)) continue;
+    if (ws.tabDefs[id].content !== BLANK_CONTENT) continue;
+    const s = findSession(id.slice(TAB_PREFIX.length));
+    if (s) ws.tabDefs[id] = chatTabDef(s);
   }
 }
 

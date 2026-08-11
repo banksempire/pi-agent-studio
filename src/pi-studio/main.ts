@@ -5,6 +5,7 @@ import './styles/app.css';
 import { registerPanelComponent, registerTabContent } from '@sf/registry';
 
 import StudioShell from './shell/StudioShell.vue';
+import WorkspacePanel from '@sf/components/WorkspacePanel.vue';
 import ChatWindow from './components/ChatWindow.vue';
 import WelcomeContent from './components/WelcomeContent.vue';
 import ChatHistory from './components/ChatHistory.vue';
@@ -27,5 +28,8 @@ registerPanelComponent('directory-tree', DirectoryTree);
 registerPanelComponent('session-stats', SessionStats);
 registerPanelComponent('model-picker', ModelPicker);
 registerPanelComponent('prefs', PrefsPanel);
+
+// The Workspace app (docker item "workspace") — saved-workspace management.
+registerPanelComponent('workspace-panel', WorkspacePanel);
 
 createApp(StudioShell).mount('#app');

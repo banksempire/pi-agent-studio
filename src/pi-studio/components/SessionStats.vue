@@ -33,8 +33,6 @@ interface StatRow {
   label: string;
   value: string;
   section?: boolean;
-  /** mono font (File / ID / Working dir values) */
-  mono?: boolean;
   /** hover tooltip (full untruncated value) */
   title?: string;
 }
@@ -90,9 +88,9 @@ const rows = computed<StatRow[]>(() => {
 
   // ── General (first): File / ID / Working dir / Started / Last activity ──
   section('General');
-  push('  File', shortFile.value, { mono: true, title: s.file });
-  push('  ID', shortId.value, { mono: true, title: s.sessionId ?? s.file });
-  push('  Working dir', s.cwd || '—', { mono: true, title: s.cwd });
+  push('  File', shortFile.value, { title: s.file });
+  push('  ID', shortId.value, { title: s.sessionId ?? s.file });
+  push('  Working dir', s.cwd || '—', { title: s.cwd });
   push('  Started', fmtDateTime(st.startedAt));
   push('  Last activity', fmtDateTime(st.lastActivity));
 
@@ -156,7 +154,7 @@ const rows = computed<StatRow[]>(() => {
             <span class="session-stats-key">{{ row.label }}</span>
             <span
               class="session-stats-value"
-              :class="{ 'session-stats-mono': row.mono, 'session-stats-value--copied': copiedIndex === i }"
+              :class="{ 'session-stats-value--copied': copiedIndex === i }"
               :title="row.title ?? ''"
             >{{ copiedIndex === i ? 'Copied' : row.value }}</span>
           </div>

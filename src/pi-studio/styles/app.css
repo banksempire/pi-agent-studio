@@ -1180,15 +1180,6 @@
   white-space: nowrap;
 }
 
-/* File / ID / Working dir rows above the stat sections. */
-.session-stats-mono {
-  font-family: var(--sf-mono-font, monospace);
-  color: var(--sf-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* TUI /session section headers (Messages / Tokens / Cost). */
 .session-stats-section {
   font-size: 16px;

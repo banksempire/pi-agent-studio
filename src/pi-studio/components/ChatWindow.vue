@@ -722,6 +722,13 @@ function onComposerInput() {
   store.noteChatInteraction(props.sessionId);
 }
 
+/** Scroll the message list to the bottom and re-anchor auto-scroll so new
+ *  content keeps the view at the bottom. */
+function scrollToBottomNow() {
+  sticky = true;
+  scrollToBottom();
+}
+
 /** Composer height set by dragging the handle (null = fixed one-line box). */
 const manualHeight = ref<number | null>(null);
 // Drag-resize limits, expressed per-em so they scale with font-size.
@@ -1014,11 +1021,18 @@ let anchorBottom = 0;
           @keydown="onKeydown"
           @input="onComposerInput"
         />
-        <button
-          class="chat-send-btn"
-          :disabled="!input.trim()"
-          @click="send"
-        >Send</button>
+        <div class="chat-composer-actions">
+          <button
+            class="chat-scroll-btn"
+            title="Scroll to bottom"
+            @click="scrollToBottomNow"
+          >↓</button>
+          <button
+            class="chat-send-btn"
+            :disabled="!input.trim()"
+            @click="send"
+          >Send</button>
+        </div>
     </div>
 
     <!-- Picker dialog (model / scoped-models / tree / fork / resume) -->

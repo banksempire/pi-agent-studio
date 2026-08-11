@@ -1216,12 +1216,10 @@
   font-size: 16px;
   padding: 2px 0;
 }
-.session-stats-row--sub {
-  padding-left: 12px;
-}
 .session-stats-key {
   color: var(--sf-text-muted);
   flex-shrink: 0;
+  white-space: pre; /* sub-level rows indent via leading spaces in the key */
 }
 .session-stats-value {
   color: var(--sf-text);

@@ -29,50 +29,53 @@ function tuiCost(usd: number): string {
   return `$${usd.toFixed(3)}`;
 }
 
-interface StatRow { label: string; value: string; sub?: boolean; }
+interface StatRow { label: string; value: string; section?: boolean; }
 
 const rows = computed<StatRow[]>(() => {
   const s = session.value;
   if (!s) return [];
   const st = s.stats;
   const out: StatRow[] = [];
-  const push = (label: string, value: string, sub = false) => out.push({ label, value, sub });
+  const section = (label: string) => out.push({ label, value: '', section: true });
+  const push = (label: string, value: string) => out.push({ label, value });
 
-  // ── Messages (TUI /session) ──
-  push('Messages', '');
-  push('Total', fmtTokens(st.messageCount), true);
-  push('User', fmtTokens(st.userMessages), true);
-  push('Assistant', fmtTokens(st.assistantMessages), true);
-  push('Tools', `${fmtTokens(st.toolCalls)} calls, ${fmtTokens(st.toolResults)} results`, true);
+  // ── Messages (TUI /session) — sub-level rows carry leading spaces in
+  // the key ("  calls") instead of CSS indentation. ──
+  section('Messages');
+  push('Total', fmtTokens(st.messageCount));
+  push('User', fmtTokens(st.userMessages));
+  push('Assistant', fmtTokens(st.assistantMessages));
+  push('Tools', '');
+  push('  calls', fmtTokens(st.toolCalls));
+  push('  results', fmtTokens(st.toolResults));
 
   // ── Tokens ──
-  push('Tokens', '');
-  push('Input', fmtTokens(st.promptTokens), true);
+  section('Tokens');
+  push('Input', fmtTokens(st.promptTokens));
   if (st.promptTokens > 0 && (st.cacheRead > 0 || st.cacheWrite > 0)) {
     const hit = ((st.cacheRead / st.promptTokens) * 100).toFixed(1);
-    push('Cached', `${fmtTokens(st.cacheRead)} (${hit}%)`, true);
+    push('  Cached', `${fmtTokens(st.cacheRead)} (${hit}%)`);
     const written = st.cacheWrite > 0 ? ` (${fmtTokens(st.cacheWrite)} written to cache)` : '';
-    push('Uncached', `${fmtTokens(st.tokensIn + st.cacheWrite)}${written}`, true);
+    push('  Uncached', `${fmtTokens(st.tokensIn + st.cacheWrite)}${written}`);
   }
-  push('Output', fmtTokens(st.tokensOut), true);
-  push('Total', fmtTokens(st.promptTokens + st.tokensOut), true);
+  push('Output', fmtTokens(st.tokensOut));
+  push('Total', fmtTokens(st.promptTokens + st.tokensOut));
 
   // ── Cost (only when there is something to report) ──
   if (st.costUsd > 0 || st.cacheWaste.missedTokens > 0) {
-    push('Cost', '');
-    push('Total', tuiCost(st.costUsd), true);
+    section('Cost');
+    push('Total', tuiCost(st.costUsd));
     // Per-model attribution (hidden when everything lands in one bucket).
     if (st.costBreakdown.length > 1) {
       for (const b of st.costBreakdown) {
-        push(b.key, `${tuiCost(b.cost)} (${fmtCompactTokens(b.tokens)} tokens)`, true);
+        push(`  ${b.key}`, `${tuiCost(b.cost)} (${fmtCompactTokens(b.tokens)} tokens)`);
       }
     }
     if (st.cacheWaste.missedTokens > 0) {
       const misses = st.cacheWaste.missCount === 1 ? '1 miss' : `${st.cacheWaste.missCount} misses`;
       const detail = `${fmtTokens(st.cacheWaste.missedTokens)} tokens, ${misses}`;
-      push('Cache Re-billed',
-        st.cacheWaste.missedCost >= 0.0001 ? `${tuiCost(st.cacheWaste.missedCost)} (${detail})` : detail,
-        true);
+      push('  Cache Re-billed',
+        st.cacheWaste.missedCost >= 0.0001 ? `${tuiCost(st.cacheWaste.missedCost)} (${detail})` : detail);
     }
   }
 
@@ -104,8 +107,8 @@ const rows = computed<StatRow[]>(() => {
           <span class="session-stats-mono" :title="session.cwd">{{ session.cwd || '—' }}</span>
         </div>
         <template v-for="(row, i) in rows" :key="i">
-          <div v-if="!row.value" class="session-stats-section">{{ row.label }}</div>
-          <div v-else class="session-stats-row" :class="{ 'session-stats-row--sub': row.sub }">
+          <div v-if="row.section" class="session-stats-section">{{ row.label }}</div>
+          <div v-else class="session-stats-row">
             <span class="session-stats-key">{{ row.label }}</span>
             <span class="session-stats-value">{{ row.value }}</span>
           </div>

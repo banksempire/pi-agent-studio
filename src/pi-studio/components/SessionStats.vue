@@ -29,7 +29,15 @@ function tuiCost(usd: number): string {
   return `$${usd.toFixed(3)}`;
 }
 
-interface StatRow { label: string; value: string; section?: boolean; }
+interface StatRow {
+  label: string;
+  value: string;
+  section?: boolean;
+  /** mono font (File / ID / Working dir values) */
+  mono?: boolean;
+  /** hover tooltip (full untruncated value) */
+  title?: string;
+}
 
 const rows = computed<StatRow[]>(() => {
   const s = session.value;
@@ -37,21 +45,29 @@ const rows = computed<StatRow[]>(() => {
   const st = s.stats;
   const out: StatRow[] = [];
   const section = (label: string) => out.push({ label, value: '', section: true });
-  const push = (label: string, value: string) => out.push({ label, value });
+  const push = (label: string, value: string, extra?: Partial<StatRow>) => out.push({ label, value, ...extra });
+
+  // ── General (first): File / ID / Working dir / Started / Last activity ──
+  section('General');
+  push('  File', shortFile.value, { mono: true, title: s.file });
+  push('  ID', shortId.value, { mono: true, title: s.sessionId ?? s.file });
+  push('  Working dir', s.cwd || '—', { mono: true, title: s.cwd });
+  push('  Started', fmtDateTime(st.startedAt));
+  push('  Last activity', fmtDateTime(st.lastActivity));
 
   // ── Messages (TUI /session) — sub-level rows carry leading spaces in
   // the key ("  calls") instead of CSS indentation. ──
   section('Messages');
-  push('Total', fmtTokens(st.messageCount));
-  push('User', fmtTokens(st.userMessages));
-  push('Assistant', fmtTokens(st.assistantMessages));
-  push('Tools', '');
-  push('  calls', fmtTokens(st.toolCalls));
-  push('  results', fmtTokens(st.toolResults));
+  push('  Total', fmtTokens(st.messageCount));
+  push('  User', fmtTokens(st.userMessages));
+  push('  Assistant', fmtTokens(st.assistantMessages));
+  push('  Tools', '');
+  push('    calls', fmtTokens(st.toolCalls));
+  push('    results', fmtTokens(st.toolResults));
 
   // ── Tokens ──
   section('Tokens');
-  push('Input', fmtTokens(st.promptTokens));
+  push('  Input', fmtTokens(st.promptTokens));
   if (st.promptTokens > 0 && (st.cacheRead > 0 || st.cacheWrite > 0)) {
     const hit = ((st.cacheRead / st.promptTokens) * 100).toFixed(1);
     push('  Cached', fmtTokens(st.cacheRead));
@@ -59,13 +75,13 @@ const rows = computed<StatRow[]>(() => {
     const written = st.cacheWrite > 0 ? ` (${fmtTokens(st.cacheWrite)} written to cache)` : '';
     push('  Uncached', `${fmtTokens(st.tokensIn + st.cacheWrite)}${written}`);
   }
-  push('Output', fmtTokens(st.tokensOut));
-  push('Total', fmtTokens(st.promptTokens + st.tokensOut));
+  push('  Output', fmtTokens(st.tokensOut));
+  push('  Total', fmtTokens(st.promptTokens + st.tokensOut));
 
   // ── Cost (only when there is something to report) ──
   if (st.costUsd > 0 || st.cacheWaste.missedTokens > 0) {
     section('Cost');
-    push('Total', tuiCost(st.costUsd));
+    push('  Total', tuiCost(st.costUsd));
     // Per-model attribution (hidden when everything lands in one bucket).
     if (st.costBreakdown.length > 1) {
       for (const b of st.costBreakdown) {
@@ -79,10 +95,6 @@ const rows = computed<StatRow[]>(() => {
       push('    misses', String(st.cacheWaste.missCount));
     }
   }
-
-  // ── Old-stat rows that stay ──
-  push('Started', fmtDateTime(st.startedAt));
-  push('Last activity', fmtDateTime(st.lastActivity));
   return out;
 });
 </script>
@@ -95,23 +107,11 @@ const rows = computed<StatRow[]>(() => {
         <span class="session-stats-title" :title="session.file">{{ session.title }}</span>
       </div>
       <div class="session-stats-rows">
-        <div class="session-stats-field">
-          <span>File</span>
-          <span class="session-stats-mono" :title="session.file">{{ shortFile }}</span>
-        </div>
-        <div class="session-stats-field">
-          <span>ID</span>
-          <span class="session-stats-mono" :title="session.sessionId ?? session.file">{{ shortId }}</span>
-        </div>
-        <div class="session-stats-field">
-          <span>Working dir</span>
-          <span class="session-stats-mono" :title="session.cwd">{{ session.cwd || '—' }}</span>
-        </div>
         <template v-for="(row, i) in rows" :key="i">
           <div v-if="row.section" class="session-stats-section">{{ row.label }}</div>
           <div v-else class="session-stats-row">
             <span class="session-stats-key">{{ row.label }}</span>
-            <span class="session-stats-value">{{ row.value }}</span>
+            <span class="session-stats-value" :class="{ 'session-stats-mono': row.mono }" :title="row.title ?? ''">{{ row.value }}</span>
           </div>
         </template>
       </div>

@@ -156,10 +156,9 @@ const rows = computed<StatRow[]>(() => {
             <span class="session-stats-key">{{ row.label }}</span>
             <span
               class="session-stats-value"
-              :class="{ 'session-stats-mono': row.mono }"
+              :class="{ 'session-stats-mono': row.mono, 'session-stats-value--copied': copiedIndex === i }"
               :title="row.title ?? ''"
-            >{{ row.value }}</span>
-            <span v-if="copiedIndex === i" class="session-stats-copied">Copied</span>
+            >{{ copiedIndex === i ? 'Copied' : row.value }}</span>
           </div>
         </template>
       </div>

@@ -1207,7 +1207,6 @@
   /* click-to-copy affordance */
   cursor: pointer;
   border-radius: 3px;
-  position: relative; /* anchors the ✓ Copied overlay */
 }
 .session-stats-row:hover {
   box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
@@ -1235,22 +1234,6 @@
 }
 .session-stats-value--copied {
   color: var(--sf-accent);
-}
-
-/* "✓ Copied" feedback floats OVER the row (absolute) — swapping the value
-   text in-flow changed the line box on some platforms (the ✓ glyph's font
-   metrics), shifting every row below. */
-.session-stats-copied {
-  position: absolute;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--sf-accent);
-  background: var(--sf-bg);
-  padding: 0 2px;
-  border-radius: 3px;
-  white-space: nowrap;
-  pointer-events: none;
 }
 
 .prefs-panel {

@@ -14,6 +14,15 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 7492,
     allowedHosts: ['mbp', 'localhost', '.local'],
+    watch: {
+      // Editors write files non-atomically; without this the watcher can
+      // read a half-written file and vite caches the failed (empty) CSS
+      // transform until the next change.
+      awaitWriteFinish: {
+        stabilityThreshold: 150,
+        pollInterval: 20,
+      },
+    },
     proxy: {
       // pi-agent-studio backend (src/pi-studio/server/index.mjs) — real pi agent sessions
       '/api': {

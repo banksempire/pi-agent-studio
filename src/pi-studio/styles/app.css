@@ -542,7 +542,8 @@
 .chat-composer {
   position: relative;
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
+  align-items: stretch;
   gap: 8px;
   padding: 10px 12px;
   border-top: 1px solid var(--sf-border);
@@ -579,7 +580,7 @@
 }
 
 .chat-input {
-  flex: 1;
+  width: 100%;      /* the input owns the full composer width */
   resize: none;
   max-height: 10em;    /* auto-grows with content, scrolls past this cap — em: scales with font-size */
   /* two lines + slack: 2 × line-height(1.4em) + 2 × vertical padding(0.44em) + 0.25em.
@@ -604,6 +605,7 @@
 }
 
 .chat-send-btn {
+  align-self: flex-end;   /* bottom-right, below the input */
   background: var(--sf-accent);
   border: none;
   border-radius: 5px;

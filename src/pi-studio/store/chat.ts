@@ -826,18 +826,15 @@ export function bindWorkspace(api: WorkspaceApi) {
     },
   );
 
-  // A restored workspace may reference sessions already in the store
-  // (re-bind after the framework re-created its state): swap ghosts for
-  // real windows right away; fetchList covers the sessions still loading.
-  reconcileGhostWindows();
-
-  // Ghost windows can appear at ANY time — loading a saved workspace from
-  // the panel creates them on the spot. Reconcile as soon as tabDefs gains
-  // (or drops) keys; the swap itself only changes values, so this cannot
-  // loop.
+  // Ghost windows can appear at ANY time — the boot auto-restore creates
+  // them before this binds, and loading a saved workspace from the panel
+  // creates them on the spot. Reconcile whenever tabDefs gains (or drops)
+  // keys (immediate: the ghosts already there on bind); the swap itself
+  // only changes values, so this cannot loop.
   watch(
     () => Object.keys(api.tabDefs).join('\n'),
     () => reconcileGhostWindows(),
+    { immediate: true },
   );
 
   // A workspace apply replaces the root ARRAY (other ops mutate in place).

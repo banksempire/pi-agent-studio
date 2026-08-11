@@ -1031,9 +1031,9 @@ let anchorBottom = 0;
         />
         <button
           class="chat-send-btn"
-          :disabled="!input.trim() || session?.status === 'running'"
+          :disabled="!input.trim()"
           @click="send"
-        >{{ session?.status === 'running' ? '…' : 'Send' }}</button>
+        >Send</button>
     </div>
 
     <!-- Picker dialog (model / scoped-models / tree / fork / resume) -->

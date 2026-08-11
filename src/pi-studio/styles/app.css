@@ -583,10 +583,10 @@
   width: 100%;      /* the input owns the full composer width */
   resize: none;
   max-height: 10em;    /* auto-grows with content, scrolls past this cap — em: scales with font-size */
-  /* two lines + slack: 2 × line-height(1.4em) + 2 × vertical padding(0.44em) + 0.25em.
-     The slack keeps a 2-line input from bumping the box (exact-fit min-heights
+  /* one line + slack: 1 × line-height(1.4em) + 2 × vertical padding(0.44em) + 0.25em.
+     The slack keeps a 1-line input from bumping the box (exact-fit min-heights
      exceed by a hair under subpixel rounding, which shifts the composer). */
-  min-height: calc(2 * 1.4em + 2 * 0.44em + 0.25em);
+  min-height: calc(1.4em + 2 * 0.44em + 0.25em);
   overflow-y: auto;
   padding: 0.44em 0.625em;
   background: var(--sf-bg);

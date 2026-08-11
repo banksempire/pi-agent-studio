@@ -61,9 +61,7 @@ const rows = computed<StatRow[]>(() => {
   push('  Total', fmtTokens(st.messageCount));
   push('  User', fmtTokens(st.userMessages));
   push('  Assistant', fmtTokens(st.assistantMessages));
-  push('  Tools', '');
-  push('    calls', fmtTokens(st.toolCalls));
-  push('    results', fmtTokens(st.toolResults));
+  push('  Tools', fmtTokens(st.toolResults));
 
   // ── Tokens ──
   section('Tokens');

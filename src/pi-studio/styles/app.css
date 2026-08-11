@@ -308,7 +308,7 @@
   flex-shrink: 0;
   width: 3ch;              /* constant space: dot growth never shifts the content */
   font-family: var(--sf-mono);
-  color: var(--sf-accent);
+  color: var(--sf-text);   /* white-on-dark, matches the action name */
   text-align: left;
 }
 
@@ -342,10 +342,10 @@
 /* The /compact bubble is a group part of an agent item with no header —
    same rendering path as the thinking/tool bubbles. */
 
-/* The compact head's content slot is the live status — accent-tinted,
-   inline in the same slot a tool preview would use. */
+/* The compact head's content slot is the live status — grey like the
+   preview text other action bubbles show in this slot. */
 .chat-compacting .chat-ab-content {
-  color: var(--sf-accent);
+  color: var(--sf-text-muted);
 }
 
 /* Action-completion flash: green on success, red on failure, then settle. */

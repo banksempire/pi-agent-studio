@@ -233,6 +233,71 @@ const state = reactive<ChatState>({
   prefs: loadPrefs(),
 });
 
+// ── Pending chats registry (localStorage) ─────────────────────────────────
+// A "New Chat" becomes a real session only on its first message; until then
+// its window is a local-only entry. The registry remembers these across
+// refreshes so a restored workspace tab (framework auto-save / saved
+// workspace) can find its pending session again instead of rendering a
+// blank ghost window.
+
+const PENDING_KEY = 'sf-chat:pending';
+
+interface PendingChatInfo {
+  file: string;
+  cwd: string;
+  createdAt: number;
+}
+
+function loadPendingChats(): PendingChatInfo[] {
+  try {
+    const raw = localStorage.getItem(PENDING_KEY);
+    if (raw) {
+      const j = JSON.parse(raw);
+      if (Array.isArray(j)) {
+        return j.filter((p) => p && typeof p.file === 'string');
+      }
+    }
+  } catch { /* corrupted or unavailable — start empty */ }
+  return [];
+}
+
+function persistPendingChats(list: PendingChatInfo[]) {
+  try {
+    localStorage.setItem(PENDING_KEY, JSON.stringify(list.slice(-20)));
+  } catch { /* storage unavailable */ }
+}
+
+/** Build the local session entry for a not-yet-materialized chat. */
+function pendingSessionEntry(file: string, cwd: string, createdAt: number): ChatSession {
+  return {
+    id: encodeURIComponent(file),
+    sessionId: null, file, title: 'New Chat', cwd,
+    createdAt, lastActivity: createdAt,
+    status: 'idle', compacting: false, compactResult: null, compactStartedAt: 0, compactEndedAt: 0, compactError: null, preview: '',
+    stats: {
+      model: null, tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0, promptTokens: 0,
+      costUsd: 0, costBreakdown: [], cacheWaste: { missedCost: 0, missedTokens: 0, missCount: 0 },
+      startedAt: createdAt, lastActivity: createdAt, messageCount: 0, userMessages: 0,
+      assistantMessages: 0, toolCalls: 0, toolResults: 0,
+    },
+    messages: [], messagesLoaded: true,
+    hasMoreOlder: false, oldestId: null, loadingOlder: false,
+    context: null,
+    onDisk: false,
+  };
+}
+
+/** Recreate pending chats from the last session (their windows get their
+ *  sessions back via ghost reconciliation). Never opens windows itself. */
+function seedPendingSessions() {
+  const known = new Set(state.sessions.map((s) => s.file));
+  for (const p of loadPendingChats()) {
+    if (!known.has(p.file)) state.sessions.push(pendingSessionEntry(p.file, p.cwd, p.createdAt));
+  }
+}
+
+seedPendingSessions();
+
 /** Tab id scheme: one tab per session, stable across open/close. */
 const TAB_PREFIX = 'chat-';
 const chatTabId = (sessionId: string) => TAB_PREFIX + sessionId;
@@ -377,6 +442,12 @@ async function fetchList() {
     const { sessions } = await api<{ sessions: SessionInfo[] }>('/api/sessions');
     const prev = new Map(state.sessions.map((s) => [s.file, s]));
     const onDisk = new Set(sessions.map((s) => s.file));
+    // Pending chats whose file materialized are no longer pending: drop
+    // them from the registry (fetchList below swaps in the real session).
+    const pending = loadPendingChats();
+    if (pending.some((p) => onDisk.has(p.file))) {
+      persistPendingChats(pending.filter((p) => !onDisk.has(p.file)));
+    }
     // Sessions that never hit disk yet (fresh UI chats before the first
     // assistant message) are absent from the backend list — keep them so
     // open windows don't lose their session mid-flight.
@@ -760,6 +831,15 @@ export function bindWorkspace(api: WorkspaceApi) {
   // real windows right away; fetchList covers the sessions still loading.
   reconcileGhostWindows();
 
+  // Ghost windows can appear at ANY time — loading a saved workspace from
+  // the panel creates them on the spot. Reconcile as soon as tabDefs gains
+  // (or drops) keys; the swap itself only changes values, so this cannot
+  // loop.
+  watch(
+    () => Object.keys(api.tabDefs).join('\n'),
+    () => reconcileGhostWindows(),
+  );
+
   connectEvents();
   void fetchList().then(() => {
     if (firstBind) {
@@ -788,7 +868,13 @@ function reconcileGhostWindows() {
     if (!id.startsWith(TAB_PREFIX)) continue;
     if (ws.tabDefs[id].content !== BLANK_CONTENT) continue;
     const s = findSession(id.slice(TAB_PREFIX.length));
-    if (s) ws.tabDefs[id] = chatTabDef(s);
+    if (s) {
+      ws.tabDefs[id] = chatTabDef(s);
+      // A reconciled window opens like any other view: it must load its
+      // messages (syncSessionView fetches the first page; otherwise the
+      // window would sit on the empty state forever).
+      syncSessionView(s);
+    }
   }
 }
 
@@ -833,21 +919,13 @@ export async function newChat(): Promise<void> {
     const id = encodeURIComponent(file);
     const now = Date.now();
     if (!findSession(id)) {
-      state.sessions.unshift({
-        id, sessionId: null, file, title: 'New Chat', cwd: NEW_CHAT_CWD,
-        createdAt: now, lastActivity: now,
-        status: 'idle', compacting: false, compactResult: null, compactStartedAt: 0, compactEndedAt: 0, compactError: null, preview: '',
-        stats: {
-          model: null, tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0, promptTokens: 0,
-          costUsd: 0, costBreakdown: [], cacheWaste: { missedCost: 0, missedTokens: 0, missCount: 0 },
-          startedAt: now, lastActivity: now, messageCount: 0, userMessages: 0,
-          assistantMessages: 0, toolCalls: 0, toolResults: 0,
-        },
-        messages: [], messagesLoaded: true,
-        hasMoreOlder: false, oldestId: null, loadingOlder: false,
-        context: null,
-        onDisk: false,
-      });
+      state.sessions.unshift(pendingSessionEntry(file, NEW_CHAT_CWD, now));
+      // Remember the pending chat across refreshes (see PENDING_KEY block).
+      const pending = loadPendingChats();
+      if (!pending.some((p) => p.file === file)) {
+        pending.push({ file, cwd: NEW_CHAT_CWD, createdAt: now });
+        persistPendingChats(pending);
+      }
     }
     openChat(id);
   } catch (e) {

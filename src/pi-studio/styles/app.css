@@ -1209,11 +1209,20 @@
   color: var(--sf-text-muted);
   flex-shrink: 0;
   white-space: pre; /* sub-level rows indent via leading spaces in the key */
+  /* long keys (model names) cap at 65% and ellipsize instead of shoving
+     the value out of the row */
+  max-width: 65%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .session-stats-value {
   color: var(--sf-text);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap; /* numbers truncate with '…' when the row is tight */
   text-align: right;
-  overflow-wrap: anywhere;
 }
 
 .prefs-panel {

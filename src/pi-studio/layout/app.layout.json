@@ -133,17 +133,6 @@
     "label": "Session",
     "subSections": [
      {
-      "id": "session-stats",
-      "label": "Stats",
-      "height": "fixed",
-      "components": [
-       {
-        "type": "component",
-        "key": "session-stats"
-       }
-      ]
-     },
-     {
       "id": "session-model",
       "label": "Model",
       "height": "fixed",
@@ -151,6 +140,17 @@
        {
         "type": "component",
         "key": "model-picker"
+       }
+      ]
+     },
+     {
+      "id": "session-stats",
+      "label": "Stats",
+      "height": "fixed",
+      "components": [
+       {
+        "type": "component",
+        "key": "session-stats"
        }
       ]
      }

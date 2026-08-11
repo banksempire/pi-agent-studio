@@ -385,7 +385,8 @@ const items = computed<ChatItem[]>(() => {
       group.wip = true;
       b.live = true;
       b.status = 'pending';
-      b.detail = 'Summarizing the conversation…';
+      // No detail text: the running dots already signal in-progress, and the
+      // name is "Compaction" — "Summarizing the conversation…" was redundant.
     } else {
       b.status = 'fail';
       b.isError = true;

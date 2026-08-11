@@ -43,6 +43,23 @@ interface StatRow {
 const copiedIndex = ref<number | null>(null);
 let copyTimer: number | undefined;
 
+/** execCommand fallback — Edge/Chrome only expose navigator.clipboard in
+ *  secure contexts (https or localhost); on http://<hostname> the API is
+ *  absent, so the copy must go through a hidden textarea. */
+function legacyCopy(text: string, done: () => void) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    done();
+  } catch { /* clipboard unavailable */ }
+}
+
 /** Click a stat row → copy "key: value" (full untruncated values) to the
  *  clipboard, with a transient ✓ feedback on the row. */
 function copyRow(row: StatRow, index: number) {
@@ -52,20 +69,15 @@ function copyRow(row: StatRow, index: number) {
     if (copyTimer) clearTimeout(copyTimer);
     copyTimer = window.setTimeout(() => { copiedIndex.value = null; }, 1200);
   };
-  navigator.clipboard.writeText(text).then(done).catch(() => {
-    // Fallback for non-secure contexts.
-    try {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
-      done();
-    } catch { /* clipboard unavailable */ }
-  });
+  try {
+    if (navigator.clipboard?.writeText) {
+      // Clipboard API present (secure context) — but a rejected promise
+      // (e.g. permission denied) still falls back to the textarea copy.
+      navigator.clipboard.writeText(text).then(done).catch(() => legacyCopy(text, done));
+      return;
+    }
+  } catch { /* fall through to legacy */ }
+  legacyCopy(text, done);
 }
 
 const rows = computed<StatRow[]>(() => {

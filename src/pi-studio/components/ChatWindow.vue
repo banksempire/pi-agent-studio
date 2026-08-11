@@ -727,7 +727,11 @@ function autoGrow() {
   el.style.height = 'auto';
   // Cap follows the CSS max-height (em-based) so it scales with font-size.
   const cap = parseFloat(getComputedStyle(el).maxHeight) || 10 * 16;
-  el.style.height = Math.min(el.scrollHeight, cap) + 'px';
+  // +2px hair: a textarea's client height is 2px less than its CSS height
+  // (1px border top + bottom). Without it the content would overflow by a
+  // hair and paint a scrollbar at every line count. Past the cap the
+  // overflow is real and the scrollbar appears as intended.
+  el.style.height = Math.min(el.scrollHeight + 2, cap) + 'px';
 }
 
 /** Typing in the composer is a real interaction: pin the window if it was
@@ -740,9 +744,9 @@ function onComposerInput() {
 /** Composer height set by dragging the handle (null = auto-grow). */
 const manualHeight = ref<number | null>(null);
 // Drag-resize limits, expressed per-em so they scale with font-size.
-// Minimum = one line: same formula as the .chat-input min-height in app.css
-// (1 × line-height + 2 × vertical padding + subpixel slack).
-const MIN_INPUT_EM = 1.4 + 2 * 0.44 + 0.25;
+// Minimum = one line + the autoGrow hair (2px, see autoGrow) so the input
+// never paints a scrollbar even at its smallest dragged size.
+const MIN_INPUT_EM = 1.4 + 2 * 0.44 + 2 / 16;
 const MAX_INPUT_EM = 320 / 16;
 
 let resizeCleanup: (() => void) | null = null;

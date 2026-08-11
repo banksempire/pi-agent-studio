@@ -583,10 +583,10 @@
   width: 100%;      /* the input owns the full composer width */
   resize: none;
   max-height: 10em;    /* auto-grows with content, scrolls past this cap — em: scales with font-size */
-  /* one line + slack: 1 × line-height(1.4em) + 2 × vertical padding(0.44em) + 0.25em.
-     The slack keeps a 1-line input from bumping the box (exact-fit min-heights
-     exceed by a hair under subpixel rounding, which shifts the composer). */
-  min-height: calc(1.4em + 2 * 0.44em + 0.25em);
+  /* One line: 1 × line-height + 2 × vertical padding, symmetric — the text
+     margins stay equal at every line count. autoGrow() adds a 2px hair so
+     the box never paints a scrollbar before the cap. */
+  min-height: calc(1.4em + 2 * 0.44em);
   overflow-y: auto;
   padding: 0.44em 0.625em;
   background: var(--sf-bg);

@@ -740,7 +740,9 @@ function onComposerInput() {
 /** Composer height set by dragging the handle (null = auto-grow). */
 const manualHeight = ref<number | null>(null);
 // Drag-resize limits, expressed per-em so they scale with font-size.
-const MIN_INPUT_EM = 60 / 16;
+// Minimum = one line: same formula as the .chat-input min-height in app.css
+// (1 × line-height + 2 × vertical padding + subpixel slack).
+const MIN_INPUT_EM = 1.4 + 2 * 0.44 + 0.25;
 const MAX_INPUT_EM = 320 / 16;
 
 let resizeCleanup: (() => void) | null = null;

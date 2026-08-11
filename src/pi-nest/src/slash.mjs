@@ -109,11 +109,14 @@ async function pendingCatalog(pending) {
 
 function findModel(models, term) {
   const t = term.toLowerCase();
-  return models.find(
-    (m) =>
-      m.id.toLowerCase() === t ||
-      `${m.provider}/${m.id}`.toLowerCase() === t ||
-      m.name.toLowerCase() === t,
+  // Exact provider/id wins first — several providers share model ids
+  // (opencode vs opencode-go vs volcengine-plan …) and a bare-id match
+  // would silently pick the first catalog entry for that id.
+  return (
+    models.find((m) => `${m.provider}/${m.id}`.toLowerCase() === t) ??
+    models.find(
+      (m) => m.id.toLowerCase() === t || m.name.toLowerCase() === t,
+    )
   );
 }
 

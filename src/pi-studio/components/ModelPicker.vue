@@ -145,7 +145,10 @@ async function commit(m: ModelInfo, thinkLevel: string) {
       body: JSON.stringify({
         file: s.file,
         command: 'model',
-        args: m.id,
+        // Fully-qualified provider/model id — several providers ship the
+        // same model id (opencode, opencode-go, volcengine-plan …) and a
+        // bare id would match whichever catalog entry comes first.
+        args: `${m.provider}/${m.id}`,
         extra: { thinkLevel },
       }),
     });

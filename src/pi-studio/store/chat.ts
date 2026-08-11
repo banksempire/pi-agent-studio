@@ -276,8 +276,7 @@ interface SessionInfo {
 
 function toSession(raw: SessionInfo): ChatSession {
   const id = encodeURIComponent(raw.file);
-  const title = raw.name
-    ?? (raw.firstMessage ? (raw.firstMessage.length > 60 ? raw.firstMessage.slice(0, 60) + '…' : raw.firstMessage) : 'Untitled chat');
+  const title = sessionTitle(raw);
   return {
     id,
     file: raw.file,
@@ -311,6 +310,30 @@ function toSession(raw: SessionInfo): ChatSession {
   };
 }
 
+/** List-row title: session name, else the first message (truncated). */
+function sessionTitle(raw: SessionInfo): string {
+  return raw.name
+    ?? (raw.firstMessage ? (raw.firstMessage.length > 60 ? raw.firstMessage.slice(0, 60) + '…' : raw.firstMessage) : 'Untitled chat');
+}
+
+/** The fields a session list row renders, as a comparable string. Used to
+ *  skip fetchList's object replacement when nothing observable changed. */
+function listSignature(raw: SessionInfo): string {
+  return [
+    raw.file, raw.modified, raw.running, raw.messageCount, raw.model ?? '',
+    raw.preview, sessionTitle(raw), raw.tokens.input, raw.tokens.output,
+    raw.cost, raw.cwd,
+  ].join('|');
+}
+
+function oldListSignature(s: ChatSession): string {
+  return [
+    s.file, s.lastActivity, s.status === 'running', s.stats.messageCount,
+    s.stats.model ?? '', s.preview, s.title, s.stats.tokensIn, s.stats.tokensOut,
+    s.stats.costUsd, s.cwd,
+  ].join('|');
+}
+
 let listTimer: number | null = null;
 
 async function fetchList() {
@@ -322,6 +345,18 @@ async function fetchList() {
     // assistant message) are absent from the backend list — keep them so
     // open windows don't lose their session mid-flight.
     const memoryOnly = state.sessions.filter((s) => !onDisk.has(s.file) && !s.onDisk);
+    // Nothing observable changed (poll timer, refresh-event bursts) → keep
+    // the existing session objects and the array reference, so panels and
+    // watchers don't re-render for a no-op refresh.
+    if (memoryOnly.length === 0 && sessions.length === prev.size
+        && sessions.every((raw) => {
+          const old = prev.get(raw.file);
+          return old && oldListSignature(old) === listSignature(raw);
+        })) {
+      state.backend = 'online';
+      state.backendError = '';
+      return;
+    }
     state.sessions = [
       ...memoryOnly,
       ...sessions.map((raw) => {
@@ -501,8 +536,10 @@ function handleEvent(ev: any) {
       const s = byFile(ev.file);
       if (!s) break;
       if (!s.messagesLoaded) {
-        // Session was opened without messages — load them now.
-        void fetchMessages(s.id);
+        // Only the OPEN window's load race needs an event-driven retry — a
+        // session nobody is viewing must not fetch a 50-message page on
+        // every streamed message (syncSessionView loads it on open).
+        if (isViewOpen(s.id)) void fetchMessages(s.id);
         break;
       }
       const m = ev.message as DisplayMessage;
@@ -1119,9 +1156,7 @@ export const store = {
   get prefs() { return state.prefs; },
   setSendKey,
   setRenderMarkdown,
-  fetchMessages,
   loadOlder,
-  syncTail,
   bindWorkspace,
   refreshList,
   appendLocalMessage,

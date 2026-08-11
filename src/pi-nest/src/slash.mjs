@@ -80,13 +80,22 @@ async function catalogOf(cwd) {
   }
 }
 
-/** The available models + the current model (given a pending preference). */
+// A throwaway SDK session is expensive (~100-500ms) and the catalog only
+// changes with models.json/provider configs — cache briefly so repeated
+// picker opens (mount, file flips, model changes) reuse the same read.
+let catalogCache = null;
+let catalogCachedAt = 0;
+const CATALOG_TTL_MS = 30 * 1000;
+
 async function pendingCatalog(pending) {
-  const { models, defaultModel, defaultLevel } = await catalogOf(pending.cwd);
+  if (!catalogCache || Date.now() - catalogCachedAt > CATALOG_TTL_MS) {
+    catalogCache = await catalogOf(pending.cwd);
+    catalogCachedAt = Date.now();
+  }
   return {
-    models,
-    current: pending.model ?? defaultModel,
-    currentLevel: pending.thinkLevel ?? defaultLevel,
+    models: catalogCache.models,
+    current: pending.model ?? catalogCache.defaultModel,
+    currentLevel: pending.thinkLevel ?? catalogCache.defaultLevel,
   };
 }
 

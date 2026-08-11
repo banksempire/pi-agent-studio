@@ -69,14 +69,14 @@ const rows = computed<StatRow[]>(() => {
     // Per-model attribution (hidden when everything lands in one bucket).
     if (st.costBreakdown.length > 1) {
       for (const b of st.costBreakdown) {
-        push(`  ${b.key}`, `${tuiCost(b.cost)} (${fmtCompactTokens(b.tokens)} tokens)`);
+        push(`  ${b.key}`, tuiCost(b.cost));
+        push('    tokens', fmtCompactTokens(b.tokens));
       }
     }
     if (st.cacheWaste.missedTokens > 0) {
-      const misses = st.cacheWaste.missCount === 1 ? '1 miss' : `${st.cacheWaste.missCount} misses`;
-      const detail = `${fmtTokens(st.cacheWaste.missedTokens)} tokens, ${misses}`;
-      push('  Cache Re-billed',
-        st.cacheWaste.missedCost >= 0.0001 ? `${tuiCost(st.cacheWaste.missedCost)} (${detail})` : detail);
+      push('  Cache Re-billed', st.cacheWaste.missedCost >= 0.0001 ? tuiCost(st.cacheWaste.missedCost) : '');
+      push('    tokens', fmtTokens(st.cacheWaste.missedTokens));
+      push('    misses', String(st.cacheWaste.missCount));
     }
   }
 

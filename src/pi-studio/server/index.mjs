@@ -66,6 +66,94 @@ function textOf(content) {
   return '';
 }
 
+// ── Context-window usage (mirror of the SDK's estimate) ───────────────────
+// The pi TUI footer's "12.3%/1M" comes from session.getContextUsage(): the
+// compaction-aware message set (latest compaction summary + its kept tail +
+// everything after) is anchored on the LAST valid assistant usage, with
+// char-estimates for whatever follows it. After a compaction with no
+// post-compaction assistant usage yet, the count is UNKNOWN (the TUI shows
+// "?/1M") until the next LLM response. Same math here, over the file.
+
+const IMAGE_CHARS = 4800;
+
+function usageTokensOf(usage) {
+  return usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+}
+
+/** Char-based token estimate of one session entry (SDK estimateTokens). */
+function estimateEntryTokens(entry) {
+  if (entry.type === 'compaction') return Math.ceil((entry.summary ?? '').length / 4);
+  if (entry.type !== 'message') return 0;
+  const msg = entry.message;
+  if (!msg) return 0;
+  let chars = 0;
+  const content = msg.content;
+  if (msg.role === 'assistant' && Array.isArray(content)) {
+    for (const block of content) {
+      if (block.type === 'text') chars += block.text.length;
+      else if (block.type === 'thinking') chars += block.thinking.length;
+      else if (block.type === 'toolCall') chars += block.name.length + JSON.stringify(block.arguments).length;
+    }
+  } else if (typeof content === 'string') {
+    chars = content.length;
+  } else if (Array.isArray(content)) {
+    for (const block of content) {
+      if (block.type === 'text' || block.type === 'input_text') chars += block.text.length;
+      else if (block.type === 'image') chars += IMAGE_CHARS;
+    }
+  }
+  return Math.ceil(chars / 4);
+}
+
+/** The assistant usage the SDK trusts (skip aborted/error/all-zero). */
+function validAssistantUsage(entry) {
+  if (entry.type !== 'message') return null;
+  const m = entry.message;
+  if (!m || m.role !== 'assistant' || m.stopReason === 'aborted' || m.stopReason === 'error') return null;
+  return m.usage && usageTokensOf(m.usage) > 0 ? m.usage : null;
+}
+
+/** Context-token estimate over a leaf chain, or null when unknown (the
+ *  "?" state right after a compaction). */
+function estimateContextTokens(chain) {
+  let compIdx = -1;
+  for (let i = chain.length - 1; i >= 0; i--) {
+    if (chain[i].type === 'compaction') { compIdx = i; break; }
+  }
+  // The message set the SDK would feed the LLM (buildContextEntries):
+  // compaction summary + kept tail (firstKeptEntryId … compaction) + every
+  // entry after it. Without a compaction: the whole chain.
+  let ctx = chain;
+  if (compIdx >= 0) {
+    const comp = chain[compIdx];
+    const kept = [];
+    let found = false;
+    for (let i = 0; i < compIdx; i++) {
+      if (chain[i].id === comp.firstKeptEntryId) found = true;
+      if (found) kept.push(chain[i]);
+    }
+    ctx = [comp, ...kept, ...chain.slice(compIdx + 1)];
+  }
+  if (compIdx >= 0) {
+    // No assistant usage after the compaction yet → unknown until the
+    // next response (TUI "?/window" state).
+    let hasPost = false;
+    for (let i = compIdx + 1; i < chain.length; i++) {
+      if (validAssistantUsage(chain[i])) { hasPost = true; break; }
+    }
+    if (!hasPost) return null;
+  }
+  let anchor = -1;
+  let anchorTokens = 0;
+  for (let i = ctx.length - 1; i >= 0; i--) {
+    const usage = validAssistantUsage(ctx[i]);
+    if (usage) { anchor = i; anchorTokens = usageTokensOf(usage); break; }
+  }
+  let trailing = 0;
+  for (let i = anchor + 1; i < ctx.length; i++) trailing += estimateEntryTokens(ctx[i]);
+  return anchor >= 0 ? anchorTokens + trailing : trailing;
+}
+
 /** Convert an entry's message into the wire/display shape (file-parse side). */
 function toDisplayMessage(message) {
   const d = { role: message.role, text: '', ts: message.timestamp ?? Date.now() };
@@ -242,6 +330,9 @@ function deriveSession(entries, st) {
       model,
       tokens: { input: tokensIn, output: tokensOut, total: tokensIn + tokensOut },
       cost,
+      // Compaction-aware context-token estimate (null = unknown, the "?"
+      // state right after a compaction) — see estimateContextTokens.
+      contextTokens: estimateContextTokens(chain),
     },
     merged: messages.filter((m) => m.role !== 'toolResult' || !m.merged),
   };
@@ -372,12 +463,50 @@ async function analyzeSession(file, opts = {}) {
     cost: base.cost,
     running,
     runningSince,
+    contextTokens: base.contextTokens,
   };
   if (opts.withMessages) {
     info.messages = merged;
     info.oldestId = oldestId;
     info.hasMore = hasMore;
   }
+  return info;
+}
+
+/**
+ * Model id → contextWindow, resolved through pi-nest's (internally cached)
+ * model catalog. The gateway keeps its own TTL so the catalog round-trip
+ * happens at most once a minute even though /api/sessions is polled every
+ * 15s. pi-nest down → keep the last catalog (or empty) and the indicator
+ * simply hides.
+ */
+let modelWindows = new Map();
+let modelWindowsAt = 0;
+const MODEL_WINDOWS_TTL_MS = 60 * 1000;
+
+async function contextWindowOf(modelId) {
+  if (!modelId) return 0;
+  if (Date.now() - modelWindowsAt > MODEL_WINDOWS_TTL_MS) {
+    try {
+      const r = await client.slash({ agentId: '', command: '_models' });
+      const data = r.dataJson ? JSON.parse(r.dataJson) : {};
+      modelWindows = new Map((data.models ?? []).map((m) => [m.id, m.contextWindow ?? 0]));
+    } catch { /* pi-nest down or no catalog — keep the last known one */ }
+    modelWindowsAt = Date.now();
+  }
+  return modelWindows.get(modelId) ?? 0;
+}
+
+/** Overlay the context gauge onto a parsed session info. */
+async function withContext(info) {
+  const tokens = info.contextTokens ?? null;
+  const window = await contextWindowOf(info.model);
+  info.context = {
+    tokens,
+    window,
+    percent: tokens !== null && window > 0 ? (tokens / window) * 100 : null,
+  };
+  delete info.contextTokens;
   return info;
 }
 
@@ -563,7 +692,7 @@ const server = createServer(async (req, res) => {
       // Parallel parse (cache makes re-reads cheap; cold starts split across cores).
       const sessions = (await Promise.all(files.map((f) => analyzeSession(f, { states })))).filter(Boolean);
       sessions.sort((a, b) => b.modified - a.modified);
-      sendJson(res, 200, { sessions });
+      sendJson(res, 200, { sessions: await Promise.all(sessions.map(withContext)) });
       return;
     }
 
@@ -580,14 +709,14 @@ const server = createServer(async (req, res) => {
       if (!existsSync(file)) {
         const st = await client.getAgentState({ agentId: file }).catch(() => null);
         if (st?.state?.status) {
-          sendJson(res, 200, { file, name: null, cwd: NEW_CHAT_CWD, created: Date.now(), modified: Date.now(), messageCount: 0, userMessages: 0, firstMessage: '', preview: '', model: null, tokens: { input: 0, output: 0, total: 0 }, cost: 0, running: st.state.status === 'running', messages: [], oldestId: null, hasMore: false });
+          sendJson(res, 200, { file, name: null, cwd: NEW_CHAT_CWD, created: Date.now(), modified: Date.now(), messageCount: 0, userMessages: 0, firstMessage: '', preview: '', model: null, tokens: { input: 0, output: 0, total: 0 }, cost: 0, running: st.state.status === 'running', context: { tokens: null, window: 0, percent: null }, messages: [], oldestId: null, hasMore: false });
           return;
         }
         return sendJson(res, 404, { error: 'session file not found' });
       }
       const info = await analyzeSession(file, { withMessages: true, limit, before, after });
       if (!info) return sendJson(res, 404, { error: 'session file not found' });
-      sendJson(res, 200, info);
+      sendJson(res, 200, await withContext(info));
       return;
     }
 

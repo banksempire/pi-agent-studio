@@ -120,6 +120,20 @@ export async function execSlash(registry, { agentId, command, args, extra = {} }
   const file = agentId || undefined;
 
   switch (name) {
+    case '_models': {
+      // Internal (absent from the user-facing catalog): the model catalog
+      // alone, no agent involvement — the gateway resolves model context
+      // windows through this. Never materializes a session (catalog comes
+      // from the same cached throwaway read as the lazy-chat picker).
+      const { models, defaultModel } = await pendingCatalog({
+        cwd: NEW_CHAT_CWD, model: null, thinkLevel: null,
+      });
+      return {
+        ok: true,
+        data: { models: models.map(serializeModel), default: serializeModel(defaultModel) },
+      };
+    }
+
     case 'new': {
       // Same as the ➕ New Chat flow: fresh session (frontend opens the window).
       const cwd = args?.trim() || NEW_CHAT_CWD;

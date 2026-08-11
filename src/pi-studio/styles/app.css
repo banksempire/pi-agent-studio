@@ -609,6 +609,24 @@
   gap: 8px;
 }
 
+/* Context gauge ("10.0%/1M"), left side under the input box — pushed to
+   the left edge while the buttons stay right-aligned. */
+.chat-context {
+  margin-right: auto;
+  align-self: center;
+  color: var(--sf-text-muted);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: default;
+}
+.chat-context--warn {
+  color: #e5c07b;
+}
+.chat-context--error {
+  color: #f87171;
+}
+
 .chat-send-btn {
   background: var(--sf-accent);
   border: none;

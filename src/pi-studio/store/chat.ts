@@ -95,6 +95,9 @@ export interface ChatSession {
   /** entry id of the oldest loaded message (cursor for loading older) */
   oldestId: string | null;
   loadingOlder: boolean;
+  /** Context gauge (backend /api/sessions `context`): tokens estimate +
+   *  model context window; percent null = unknown after a compaction. */
+  context: { tokens: number | null; window: number; percent: number | null } | null;
   /**
    * False while the session exists only in frontend state (created via
    * /api/new-chat; the session file is written by the SDK only once the
@@ -272,6 +275,9 @@ interface SessionInfo {
   tokens: { input: number; output: number; total: number };
   cost: number;
   running: boolean;
+  /** Context gauge: compaction-aware token estimate + the model's window
+   *  (percent null = unknown, the "?" state right after a compaction). */
+  context?: { tokens: number | null; window: number; percent: number | null } | null;
 }
 
 function toSession(raw: SessionInfo): ChatSession {
@@ -307,6 +313,7 @@ function toSession(raw: SessionInfo): ChatSession {
     oldestId: null,
     loadingOlder: false,
     onDisk: true,
+    context: raw.context ?? null,
   };
 }
 
@@ -322,7 +329,7 @@ function listSignature(raw: SessionInfo): string {
   return [
     raw.file, raw.modified, raw.running, raw.messageCount, raw.model ?? '',
     raw.preview, sessionTitle(raw), raw.tokens.input, raw.tokens.output,
-    raw.cost, raw.cwd,
+    raw.cost, raw.cwd, JSON.stringify(raw.context ?? ''),
   ].join('|');
 }
 
@@ -330,7 +337,7 @@ function oldListSignature(s: ChatSession): string {
   return [
     s.file, s.lastActivity, s.status === 'running', s.stats.messageCount,
     s.stats.model ?? '', s.preview, s.title, s.stats.tokensIn, s.stats.tokensOut,
-    s.stats.costUsd, s.cwd,
+    s.stats.costUsd, s.cwd, JSON.stringify(s.context ?? ''),
   ].join('|');
 }
 
@@ -785,6 +792,7 @@ export async function newChat(): Promise<void> {
         },
         messages: [], messagesLoaded: true,
         hasMoreOlder: false, oldestId: null, loadingOlder: false,
+        context: null,
         onDisk: false,
       });
     }
@@ -1112,6 +1120,7 @@ function applySessionInfo(s: ChatSession, data: any) {
   s.stats.costUsd = data.cost ?? s.stats.costUsd;
   s.stats.messageCount = data.messageCount ?? s.stats.messageCount;
   s.status = data.running ? 'running' : s.status;
+  if (data.context) s.context = data.context;
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────

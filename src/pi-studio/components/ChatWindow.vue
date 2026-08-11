@@ -64,6 +64,38 @@ const input = computed({
 const listEl = ref<HTMLElement | null>(null);
 const inputEl = ref<HTMLTextAreaElement | null>(null);
 
+/**
+ * Context gauge (pi TUI footer parity: "10.0%/1M" — percent of the model's
+ * context window in use; "?/…" when unknown right after a compaction).
+ */
+function formatTokens(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 10000) return `${(n / 1000).toFixed(1)}k`;
+  if (n < 1_000_000) return `${Math.round(n / 1000)}k`;
+  if (n < 10_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  return `${Math.round(n / 1_000_000)}M`;
+}
+
+const contextDisplay = computed(() => {
+  const ctx = session.value?.context;
+  if (!ctx || !ctx.window) return '';
+  const win = formatTokens(ctx.window);
+  return ctx.percent === null ? `?/${win}` : `${ctx.percent.toFixed(1)}%/${win}`;
+});
+const contextTitle = computed(() => {
+  const ctx = session.value?.context;
+  if (!ctx || !ctx.window) return '';
+  const win = formatTokens(ctx.window);
+  return ctx.percent === null
+    ? `Context in use: unknown until the next response (${win} window)`
+    : `${Math.round(ctx.tokens ?? 0).toLocaleString()} of ${win} tokens (${ctx.percent.toFixed(1)}%)`;
+});
+const contextClass = computed(() => {
+  const p = session.value?.context?.percent;
+  if (p === null || p === undefined) return '';
+  return p > 90 ? 'chat-context--error' : p > 70 ? 'chat-context--warn' : '';
+});
+
 /** Auto-scroll only while the user is already at the bottom. */
 let sticky = true;
 
@@ -1023,6 +1055,12 @@ let anchorBottom = 0;
           @input="onComposerInput"
         />
         <div class="chat-composer-actions">
+          <span
+            v-if="contextDisplay"
+            class="chat-context"
+            :class="contextClass"
+            :title="contextTitle"
+          >{{ contextDisplay }}</span>
           <button
             class="chat-scroll-btn"
             title="Scroll to bottom"

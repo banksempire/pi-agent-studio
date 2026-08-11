@@ -29,6 +29,14 @@ function serializeModel(m) {
     name: m.name,
     reasoning: !!m.reasoning,
     contextWindow: m.contextWindow ?? 0,
+    // Per-1M-token price list (cache-waste fallback in the gateway's
+    // session-stats derivation needs the cacheRead rate).
+    cost: m.cost ? {
+      input: m.cost.input ?? 0,
+      output: m.cost.output ?? 0,
+      cacheRead: m.cost.cacheRead ?? 0,
+      cacheWrite: m.cost.cacheWrite ?? 0,
+    } : undefined,
     // Per-model thinking levels from the model configuration — a model that
     // doesn't support reasoning offers only ['off'] (the UI shows "(None)").
     thinkingLevels: supportedThinkingLevels(m),

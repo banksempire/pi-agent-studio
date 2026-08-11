@@ -51,11 +51,23 @@ export interface SessionStatsView {
   model: string | null;
   tokensIn: number;
   tokensOut: number;
+  /** prompt-cache read/written tokens (TUI /session "Cached/Uncached") */
+  cacheRead: number;
+  cacheWrite: number;
+  /** full prompt volume: input + cacheRead + cacheWrite */
+  promptTokens: number;
   costUsd: number;
+  /** per-model cost breakdown ("provider/model" vs "Tools/summaries") */
+  costBreakdown: { key: string; cost: number; tokens: number }[];
+  /** prompt tokens re-billed as fresh after cache misses (TUI "Cache Re-billed") */
+  cacheWaste: { missedCost: number; missedTokens: number; missCount: number };
   startedAt: number;
   lastActivity: number;
   messageCount: number;
   userMessages: number;
+  assistantMessages: number;
+  toolCalls: number;
+  toolResults: number;
 }
 
 /** One node of the left-panel Directory tree (backend /api/tree shape). */
@@ -70,6 +82,8 @@ export interface DirNode {
 export interface ChatSession {
   /** UI id (encoded file path) — also the key for the workspace tab */
   id: string;
+  /** the session UUID from the file header (TUI /session "ID:") */
+  sessionId: string | null;
   file: string;
   title: string;
   cwd: string;
@@ -263,17 +277,23 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
 interface SessionInfo {
   file: string;
+  id: string | null;
   name: string | null;
   cwd: string;
   created: number;
   modified: number;
   messageCount: number;
   userMessages: number;
+  assistantMessages: number;
+  toolCalls: number;
+  toolResults: number;
   firstMessage: string;
   preview: string;
   model: string | null;
-  tokens: { input: number; output: number; total: number };
+  tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; prompt: number; total: number };
   cost: number;
+  costBreakdown: { key: string; cost: number; tokens: number }[];
+  cacheWaste: { missedCost: number; missedTokens: number; missCount: number };
   running: boolean;
   /** Context gauge: compaction-aware token estimate + the model's window
    *  (percent null = unknown, the "?" state right after a compaction). */
@@ -285,6 +305,7 @@ function toSession(raw: SessionInfo): ChatSession {
   const title = sessionTitle(raw);
   return {
     id,
+    sessionId: raw.id ?? null,
     file: raw.file,
     title,
     cwd: raw.cwd,
@@ -301,11 +322,19 @@ function toSession(raw: SessionInfo): ChatSession {
       model: raw.model,
       tokensIn: raw.tokens.input,
       tokensOut: raw.tokens.output,
+      cacheRead: raw.tokens.cacheRead,
+      cacheWrite: raw.tokens.cacheWrite,
+      promptTokens: raw.tokens.prompt,
       costUsd: raw.cost,
+      costBreakdown: raw.costBreakdown ?? [],
+      cacheWaste: raw.cacheWaste ?? { missedCost: 0, missedTokens: 0, missCount: 0 },
       startedAt: raw.created,
       lastActivity: raw.modified,
       messageCount: raw.messageCount,
       userMessages: raw.userMessages,
+      assistantMessages: raw.assistantMessages ?? 0,
+      toolCalls: raw.toolCalls ?? 0,
+      toolResults: raw.toolResults ?? 0,
     },
     messages: [],
     messagesLoaded: false,
@@ -783,12 +812,14 @@ export async function newChat(): Promise<void> {
     const now = Date.now();
     if (!findSession(id)) {
       state.sessions.unshift({
-        id, file, title: 'New Chat', cwd: NEW_CHAT_CWD,
+        id, sessionId: null, file, title: 'New Chat', cwd: NEW_CHAT_CWD,
         createdAt: now, lastActivity: now,
         status: 'idle', compacting: false, compactResult: null, compactStartedAt: 0, compactEndedAt: 0, compactError: null, preview: '',
         stats: {
-          model: null, tokensIn: 0, tokensOut: 0, costUsd: 0,
+          model: null, tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0, promptTokens: 0,
+          costUsd: 0, costBreakdown: [], cacheWaste: { missedCost: 0, missedTokens: 0, missCount: 0 },
           startedAt: now, lastActivity: now, messageCount: 0, userMessages: 0,
+          assistantMessages: 0, toolCalls: 0, toolResults: 0,
         },
         messages: [], messagesLoaded: true,
         hasMoreOlder: false, oldestId: null, loadingOlder: false,
@@ -1117,8 +1148,16 @@ function applySessionInfo(s: ChatSession, data: any) {
   s.stats.model = data.model ?? s.stats.model;
   s.stats.tokensIn = data.tokens?.input ?? s.stats.tokensIn;
   s.stats.tokensOut = data.tokens?.output ?? s.stats.tokensOut;
+  s.stats.cacheRead = data.tokens?.cacheRead ?? s.stats.cacheRead;
+  s.stats.cacheWrite = data.tokens?.cacheWrite ?? s.stats.cacheWrite;
+  s.stats.promptTokens = data.tokens?.prompt ?? s.stats.promptTokens;
   s.stats.costUsd = data.cost ?? s.stats.costUsd;
+  s.stats.costBreakdown = data.costBreakdown ?? s.stats.costBreakdown;
+  s.stats.cacheWaste = data.cacheWaste ?? s.stats.cacheWaste;
   s.stats.messageCount = data.messageCount ?? s.stats.messageCount;
+  s.stats.assistantMessages = data.assistantMessages ?? s.stats.assistantMessages;
+  s.stats.toolCalls = data.toolCalls ?? s.stats.toolCalls;
+  s.stats.toolResults = data.toolResults ?? s.stats.toolResults;
   s.status = data.running ? 'running' : s.status;
   if (data.context) s.context = data.context;
 }
@@ -1218,4 +1257,14 @@ export function fmtCost(usd: number): string {
 
 export function fmtTokens(n: number): string {
   return n.toLocaleString('en-US');
+}
+
+/** Compact token count (TUI footer/formatTokens): 950 → "950", 12.3k,
+ *  4.2M … — used for the cost-breakdown "(552M tokens)" style suffixes. */
+export function fmtCompactTokens(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 10000) return `${(n / 1000).toFixed(1)}k`;
+  if (n < 1_000_000) return `${Math.round(n / 1000)}k`;
+  if (n < 10_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  return `${Math.round(n / 1_000_000)}M`;
 }

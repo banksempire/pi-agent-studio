@@ -1180,6 +1180,55 @@
   white-space: nowrap;
 }
 
+/* File / ID / Working dir rows above the stat sections. */
+.session-stats-field {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 16px;
+  padding: 2px 0;
+}
+.session-stats-field > span:first-child {
+  color: var(--sf-text-muted);
+  flex-shrink: 0;
+}
+.session-stats-mono {
+  font-family: var(--sf-mono-font, monospace);
+  color: var(--sf-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* TUI /session section headers (Messages / Tokens / Cost). */
+.session-stats-section {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--sf-text-bright);
+  border-bottom: 1px solid var(--sf-border);
+  margin-top: 8px;
+  margin-bottom: 2px;
+}
+.session-stats-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 16px;
+  padding: 2px 0;
+}
+.session-stats-row--sub {
+  padding-left: 12px;
+}
+.session-stats-key {
+  color: var(--sf-text-muted);
+  flex-shrink: 0;
+}
+.session-stats-value {
+  color: var(--sf-text);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
 .prefs-panel {
   padding: 6px 8px;
   display: flex;

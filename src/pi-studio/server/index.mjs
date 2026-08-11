@@ -113,6 +113,144 @@ function validAssistantUsage(entry) {
   return m.usage && usageTokensOf(m.usage) > 0 ? m.usage : null;
 }
 
+// ── Session stats (TUI /session parity) ───────────────────────────────────
+// Mirrors agent-session.getSessionStats() + usage-totals.getUsageCostBreakdown()
+// + cache-stats.computeCacheWaste() over the parsed chain, so the right panel
+// shows exactly what the TUI's /session prints.
+
+/** Per-message usage sums (SDK createUsageTotals/addUsageToTotals). */
+function addUsage(totals, usage) {
+  totals.input += usage.input ?? 0;
+  totals.output += usage.output ?? 0;
+  totals.cacheRead += usage.cacheRead ?? 0;
+  totals.cacheWrite += usage.cacheWrite ?? 0;
+  totals.cost += usage.cost?.total ?? 0;
+}
+
+/**
+ * Full stat derivation over ALL parsed entries in file order (TUI /session
+ * parity): the SDK's getSessionStats + getUsageCostBreakdown scan
+ * getEntries() — every line of the file, not just the active branch — so
+ * entries outside the leaf chain (retry siblings, ...) still count.
+ *
+ *  - message counts (total/user/assistant/tool calls/tool results)
+ *  - token + cost totals incl. cache buckets and compaction usage
+ *  - per-model cost breakdown ("provider/model" vs "Tools/summaries")
+ *  - cache waste (prompt tokens re-billed as fresh after a miss)
+ */
+function deriveSessionStats(entries) {
+  const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+  const breakdown = new Map(); // key → totals
+  let totalMessages = 0;
+  let userMessages = 0;
+  let assistantMessages = 0;
+  let toolCalls = 0;
+  let toolResults = 0;
+  // cache-stats scan state (detectMiss/asPreviousRequest replica).
+  let prev = null;
+  const waste = { missedTokens: 0, missedCost: 0, missCount: 0 };
+
+  for (const entry of entries) {
+    if (entry.type === 'compaction' || entry.type === 'branch_summary') {
+      if (entry.usage) {
+        addUsage(totals, entry.usage);
+        addUsage(bucket(breakdown, 'Tools/summaries'), entry.usage);
+      }
+      // The context legitimately changed; the next turn's prompt is new
+      // content, not re-billed content.
+      prev = null;
+      continue;
+    }
+    if (entry.type !== 'message') continue;
+    const msg = entry.message;
+    if (!msg) continue;
+    totalMessages += 1;
+    if (msg.role === 'user') {
+      userMessages += 1;
+    } else if (msg.role === 'toolResult') {
+      toolResults += 1;
+      if (msg.usage) {
+        addUsage(totals, msg.usage);
+        addUsage(bucket(breakdown, 'Tools/summaries'), msg.usage);
+      }
+    } else if (msg.role === 'assistant') {
+      assistantMessages += 1;
+      if (Array.isArray(msg.content)) {
+        toolCalls += msg.content.filter((b) => b.type === 'toolCall').length;
+      }
+      if (msg.usage) {
+        addUsage(totals, msg.usage);
+        addUsage(bucket(breakdown, `${msg.provider}/${msg.responseModel ?? msg.model}`), msg.usage);
+        // Cache-miss detection for this turn (cache-stats.detectMiss).
+        const promptTokens = msg.usage.input + msg.usage.cacheRead + msg.usage.cacheWrite;
+        if (prev && promptTokens > 0
+            && (msg.usage.cacheRead + msg.usage.cacheWrite > 0 || prev.reportedCache)) {
+          const missedTokens = Math.min(prev.promptTokens, promptTokens) - msg.usage.cacheRead;
+          if (missedTokens > 1024) { // NOISE_FLOOR_TOKENS
+            // Extra cost = missed tokens billed at the paid rate (input/cacheWrite)
+            // instead of the cache-read rate.
+            const paidTokens = msg.usage.input + msg.usage.cacheWrite;
+            const paidPerToken = paidTokens > 0
+              ? ((msg.usage.cost?.input ?? 0) + (msg.usage.cost?.cacheWrite ?? 0)) / paidTokens
+              : 0;
+            const rate = modelCostRates.get(`${msg.provider}/${msg.model}`);
+            const readPerToken = msg.usage.cacheRead > 0
+              ? (msg.usage.cost?.cacheRead ?? 0) / msg.usage.cacheRead
+              : (rate?.cacheRead ?? 0) / 1_000_000;
+            waste.missedTokens += missedTokens;
+            waste.missedCost += missedTokens * Math.max(0, paidPerToken - readPerToken);
+            waste.missCount += 1;
+          }
+        }
+        if (promptTokens > 0) {
+          prev = {
+            promptTokens,
+            modelKey: `${msg.provider}/${msg.model}`,
+            timestamp: entry.timestamp,
+            reportedCache: (prev?.reportedCache ?? false) || msg.usage.cacheRead + msg.usage.cacheWrite > 0,
+          };
+        }
+      }
+    }
+  }
+  const prompt = totals.input + totals.cacheRead + totals.cacheWrite;
+  const costBreakdown = Array.from(breakdown, ([key, t]) => ({
+    key,
+    cost: t.cost,
+    tokens: t.input + t.output + t.cacheRead + t.cacheWrite,
+  }))
+    .filter((b) => b.cost > 0 || b.tokens > 0)
+    .sort((a, b) => b.cost - a.cost);
+  return {
+    totalMessages,
+    userMessages,
+    assistantMessages,
+    toolCalls,
+    toolResults,
+    tokens: {
+      input: totals.input,
+      output: totals.output,
+      cacheRead: totals.cacheRead,
+      cacheWrite: totals.cacheWrite,
+      prompt,
+      total: prompt + totals.output,
+    },
+    cost: totals.cost,
+    costBreakdown,
+    cacheWaste: waste,
+  };
+}
+
+/** Get (or create) the cost-breakdown bucket for a model key. */
+function bucket(map, key) {
+  let t = map.get(key);
+  if (!t) {
+    t = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+    map.set(key, t);
+  }
+  return t;
+}
+
 /** Context-token estimate over a leaf chain, or null when unknown (the
  *  "?" state right after a compaction). */
 function estimateContextTokens(chain) {
@@ -249,11 +387,8 @@ function deriveSession(entries, st) {
   let name;
   let model = null;
   let thinkingLevel = null;
-  let tokensIn = 0, tokensOut = 0, cost = 0;
   let firstMessage = '';
   let lastText = '';
-  let userMessages = 0;
-  let messageCount = 0;
   const messages = [];
 
   const toolCallIndex = new Map(); // toolCallId → display message index
@@ -282,14 +417,7 @@ function deriveSession(entries, st) {
     if (entry.type !== 'message') continue;
     const msg = entry.message;
     if (!msg) continue;
-    messageCount += 1;
-    if (msg.usage) {
-      tokensIn += msg.usage.input ?? 0;
-      tokensOut += msg.usage.output ?? 0;
-      if (msg.usage.cost?.total) cost += msg.usage.cost.total;
-    }
     if (msg.role === 'user') {
-      userMessages += 1;
       if (!firstMessage) firstMessage = textOf(msg.content);
       lastText = textOf(msg.content);
     }
@@ -317,19 +445,29 @@ function deriveSession(entries, st) {
       }
     }
   }
+  // TUI /session parity: message breakdown, token/cost totals incl. cache
+  // buckets + compaction usage, per-model cost breakdown, cache waste.
+  // Counts EVERY file entry (like the SDK's getEntries), not just the
+  // active leaf chain.
+  const stats = deriveSessionStats(entries);
   return {
     base: {
       header,
       name,
       cwd: header?.cwd ?? '',
       created: header?.timestamp ? new Date(header.timestamp).getTime() : st.mtimeMs,
-      messageCount,
-      userMessages,
+      messageCount: stats.totalMessages,
+      userMessages: stats.userMessages,
+      assistantMessages: stats.assistantMessages,
+      toolCalls: stats.toolCalls,
+      toolResults: stats.toolResults,
       firstMessage: firstMessage.slice(0, 200),
       preview: lastText.slice(0, 200),
       model,
-      tokens: { input: tokensIn, output: tokensOut, total: tokensIn + tokensOut },
-      cost,
+      tokens: stats.tokens,
+      cost: stats.cost,
+      costBreakdown: stats.costBreakdown,
+      cacheWaste: stats.cacheWaste,
       // Compaction-aware context-token estimate (null = unknown, the "?"
       // state right after a compaction) — see estimateContextTokens.
       contextTokens: estimateContextTokens(chain),
@@ -450,17 +588,23 @@ async function analyzeSession(file, opts = {}) {
 
   const info = {
     file,
+    id: base.header?.id ?? null,
     name: base.name ?? null,
     cwd: base.cwd,
     created: base.created,
     modified,
     messageCount: base.messageCount,
     userMessages: base.userMessages,
+    assistantMessages: base.assistantMessages,
+    toolCalls: base.toolCalls,
+    toolResults: base.toolResults,
     firstMessage: base.firstMessage,
     preview: base.preview,
     model: base.model,
     tokens: base.tokens,
     cost: base.cost,
+    costBreakdown: base.costBreakdown,
+    cacheWaste: base.cacheWaste,
     running,
     runningSince,
     contextTokens: base.contextTokens,
@@ -481,19 +625,38 @@ async function analyzeSession(file, opts = {}) {
  * simply hides.
  */
 let modelWindows = new Map();
-let modelWindowsAt = 0;
-const MODEL_WINDOWS_TTL_MS = 60 * 1000;
+/** `${provider}/${model}` → per-1M-token cost rates (cache-waste fallback
+ *  for full misses, where the message itself carries no cacheRead cost). */
+let modelCostRates = new Map();
+let modelCatalogAt = 0;
+let modelCatalogBackoff = 0;
+const MODEL_CATALOG_TTL_MS = 60 * 1000;
+
+async function ensureModelCatalog() {
+  if (Date.now() - modelCatalogAt <= MODEL_CATALOG_TTL_MS) return;
+  // A failed fetch must NOT be cached for the full TTL (an empty catalog
+  // skews the cache-waste fallback rates for every parse in the window) —
+  // retry after a short backoff instead (the first attempt always runs).
+  if (modelCatalogAt === 0 && modelCatalogBackoff !== 0 && Date.now() - modelCatalogBackoff <= 5_000) return;
+  try {
+    const r = await client.slash({ agentId: '', command: '_models' });
+    const data = r.dataJson ? JSON.parse(r.dataJson) : {};
+    modelWindows = new Map();
+    modelCostRates = new Map();
+    for (const m of data.models ?? []) {
+      modelWindows.set(m.id, m.contextWindow ?? 0);
+      modelCostRates.set(`${m.provider}/${m.id}`, m.cost ?? {});
+    }
+    modelCatalogAt = Date.now();
+  } catch {
+    // pi-nest down or no catalog — keep the last known one, retry shortly.
+    modelCatalogBackoff = Date.now();
+  }
+}
 
 async function contextWindowOf(modelId) {
   if (!modelId) return 0;
-  if (Date.now() - modelWindowsAt > MODEL_WINDOWS_TTL_MS) {
-    try {
-      const r = await client.slash({ agentId: '', command: '_models' });
-      const data = r.dataJson ? JSON.parse(r.dataJson) : {};
-      modelWindows = new Map((data.models ?? []).map((m) => [m.id, m.contextWindow ?? 0]));
-    } catch { /* pi-nest down or no catalog — keep the last known one */ }
-    modelWindowsAt = Date.now();
-  }
+  await ensureModelCatalog();
   return modelWindows.get(modelId) ?? 0;
 }
 
@@ -690,6 +853,9 @@ const server = createServer(async (req, res) => {
         (await client.listStates().catch(() => ({ states: [] }))).states.map((s) => [s.agentId, s])
       );
       // Parallel parse (cache makes re-reads cheap; cold starts split across cores).
+      // The catalog is ensured BEFORE parsing so deriveSessionStats' cache-waste
+      // fallback rates are present on the first parse.
+      await ensureModelCatalog();
       const sessions = (await Promise.all(files.map((f) => analyzeSession(f, { states })))).filter(Boolean);
       sessions.sort((a, b) => b.modified - a.modified);
       sendJson(res, 200, { sessions: await Promise.all(sessions.map(withContext)) });
@@ -709,7 +875,7 @@ const server = createServer(async (req, res) => {
       if (!existsSync(file)) {
         const st = await client.getAgentState({ agentId: file }).catch(() => null);
         if (st?.state?.status) {
-          sendJson(res, 200, { file, name: null, cwd: NEW_CHAT_CWD, created: Date.now(), modified: Date.now(), messageCount: 0, userMessages: 0, firstMessage: '', preview: '', model: null, tokens: { input: 0, output: 0, total: 0 }, cost: 0, running: st.state.status === 'running', context: { tokens: null, window: 0, percent: null }, messages: [], oldestId: null, hasMore: false });
+          sendJson(res, 200, { file, name: null, cwd: NEW_CHAT_CWD, created: Date.now(), modified: Date.now(), messageCount: 0, userMessages: 0, assistantMessages: 0, toolCalls: 0, toolResults: 0, firstMessage: '', preview: '', model: null, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, prompt: 0, total: 0 }, cost: 0, costBreakdown: [], cacheWaste: { missedTokens: 0, missedCost: 0, missCount: 0 }, running: st.state.status === 'running', context: { tokens: null, window: 0, percent: null }, messages: [], oldestId: null, hasMore: false });
           return;
         }
         return sendJson(res, 404, { error: 'session file not found' });

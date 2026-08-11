@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import {
   useChatStore, fmtDateTime, fmtTokens, fmtCompactTokens,
   type ChatSession,
@@ -37,6 +37,35 @@ interface StatRow {
   mono?: boolean;
   /** hover tooltip (full untruncated value) */
   title?: string;
+}
+
+/** Index of the row whose value briefly shows "✓ Copied" after a click. */
+const copiedIndex = ref<number | null>(null);
+let copyTimer: number | undefined;
+
+/** Click a stat row → copy "key: value" (full untruncated values) to the
+ *  clipboard, with a transient ✓ feedback on the row. */
+function copyRow(row: StatRow, index: number) {
+  const text = `${row.label.trim()}: ${row.title ?? row.value}`;
+  const done = () => {
+    copiedIndex.value = index;
+    if (copyTimer) clearTimeout(copyTimer);
+    copyTimer = window.setTimeout(() => { copiedIndex.value = null; }, 1200);
+  };
+  navigator.clipboard.writeText(text).then(done).catch(() => {
+    // Fallback for non-secure contexts.
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      done();
+    } catch { /* clipboard unavailable */ }
+  });
 }
 
 const rows = computed<StatRow[]>(() => {
@@ -106,9 +135,18 @@ const rows = computed<StatRow[]>(() => {
       <div class="session-stats-rows">
         <template v-for="(row, i) in rows" :key="i">
           <div v-if="row.section" class="session-stats-section">{{ row.label }}</div>
-          <div v-else class="session-stats-row">
+          <div
+            v-else
+            class="session-stats-row"
+            :title="'Click to copy: ' + row.label.trim() + ': ' + (row.title ?? row.value)"
+            @click="copyRow(row, i)"
+          >
             <span class="session-stats-key">{{ row.label }}</span>
-            <span class="session-stats-value" :class="{ 'session-stats-mono': row.mono }" :title="row.title ?? ''">{{ row.value }}</span>
+            <span
+              class="session-stats-value"
+              :class="{ 'session-stats-mono': row.mono, 'session-stats-value--copied': copiedIndex === i }"
+              :title="row.title ?? ''"
+            >{{ copiedIndex === i ? '✓ Copied' : row.value }}</span>
           </div>
         </template>
       </div>

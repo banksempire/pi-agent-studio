@@ -1204,6 +1204,12 @@
   gap: 12px;
   font-size: 16px;
   padding: 2px 0;
+  /* click-to-copy affordance */
+  cursor: pointer;
+  border-radius: 3px;
+}
+.session-stats-row:hover {
+  box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
 }
 .session-stats-key {
   color: var(--sf-text-muted);
@@ -1219,10 +1225,15 @@
   color: var(--sf-text);
   flex: 1;
   min-width: 0;
+  /* values never take more than 2/3 of the row (File etc.) */
+  max-width: 66.67%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap; /* numbers truncate with '…' when the row is tight */
   text-align: right;
+}
+.session-stats-value--copied {
+  color: var(--sf-accent);
 }
 
 .prefs-panel {

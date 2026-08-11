@@ -840,6 +840,23 @@ export function bindWorkspace(api: WorkspaceApi) {
     () => reconcileGhostWindows(),
   );
 
+  // A workspace apply replaces the root ARRAY (other ops mutate in place).
+  // Windows resumed from a saved/auto workspace must never come back in
+  // review state: the review class can survive on defs whose review window
+  // was closed, so sweep every def rather than just the tracked window.
+  watch(
+    () => api.roots,
+    () => {
+      state.reviewTabId = null;
+      for (const def of Object.values(api.tabDefs)) {
+        if (def.tabClass === REVIEW_TAB_CLASS) {
+          def.tabClass = '';
+          def.transient = false;
+        }
+      }
+    },
+  );
+
   connectEvents();
   void fetchList().then(() => {
     if (firstBind) {
@@ -940,13 +957,23 @@ const REVIEW_TAB_CLASS = 'sf-tab--review';
 /** Mark the given tab as the review window (dim the tab). */
 function enterReview(tabId: string) {
   state.reviewTabId = tabId;
-  if (ws) ws.tabDefs[tabId].tabClass = REVIEW_TAB_CLASS;
+  if (ws) {
+    ws.tabDefs[tabId].tabClass = REVIEW_TAB_CLASS;
+    // Review windows are transient previews: they must not persist into
+    // the auto-saved layout or a saved workspace (capture excludes
+    // transient tabs).
+    ws.tabDefs[tabId].transient = true;
+  }
 }
 
 /** Pin the review window: normal tab styling, no longer auto-closable. */
 function exitReview() {
   if (!state.reviewTabId || !ws) return;
-  ws.tabDefs[state.reviewTabId].tabClass = '';
+  const def = ws.tabDefs[state.reviewTabId];
+  if (def) {
+    def.tabClass = '';
+    def.transient = false;
+  }
   state.reviewTabId = null;
 }
 

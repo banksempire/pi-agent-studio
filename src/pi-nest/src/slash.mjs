@@ -59,6 +59,48 @@ async function forkSession(registry, live, targetLeafId) {
 }
 
 /**
+ * Read the model catalog through a throwaway in-memory session. Lazy new
+ * chats must not be materialized by a catalog read (a real agent would burn
+ * the virtual reservation), so the catalog + environment default come from
+ * a temp session that is disposed right after. Same call shape as the real
+ * materialization, so the models/current are exactly what the chat will get.
+ */
+async function catalogOf(cwd) {
+  const sm = sdk.SessionManager.inMemory(cwd);
+  const { session } = await sdk.createAgentSession({ sessionManager: sm });
+  try {
+    const models = await session.modelRuntime.getAvailable().catch(() => []);
+    return {
+      models,
+      defaultModel: session.model,
+      defaultLevel: session.thinkingLevel ?? null,
+    };
+  } finally {
+    try { session.dispose(); } catch { /* ignore */ }
+  }
+}
+
+/** The available models + the current model (given a pending preference). */
+async function pendingCatalog(pending) {
+  const { models, defaultModel, defaultLevel } = await catalogOf(pending.cwd);
+  return {
+    models,
+    current: pending.model ?? defaultModel,
+    currentLevel: pending.thinkLevel ?? defaultLevel,
+  };
+}
+
+function findModel(models, term) {
+  const t = term.toLowerCase();
+  return models.find(
+    (m) =>
+      m.id.toLowerCase() === t ||
+      `${m.provider}/${m.id}`.toLowerCase() === t ||
+      m.name.toLowerCase() === t,
+  );
+}
+
+/**
  * Execute one slash command. `registry` is the AgentRegistry; `extra` is the
  * parsed extra_json from the request (entryId, modelIds, ...).
  */
@@ -149,18 +191,67 @@ export async function execSlash(registry, { agentId, command, args, extra = {} }
     }
 
     case 'model': {
+      const requested = args?.trim() ?? '';
+      const wantedLevel = extra?.thinkLevel ?? null;
+
+      // A lazy new chat has no agent yet — changing its model must NOT
+      // materialize it: the preference is stored on the reservation and
+      // applied when the first message turns it real. The catalog/current
+      // come from a throwaway in-memory session (same defaults the chat
+      // would get), so the menu works exactly like on a real session.
+      const pending = registry.pendingInfo(file);
+      if (pending) {
+        const { models, current, currentLevel } = await pendingCatalog(pending);
+        if (requested) {
+          const hit = findModel(models, requested);
+          if (!hit) return { ok: false, error: `No model matches "${requested}"` };
+          const level = wantedLevel ?? pending.thinkLevel;
+          const levels = supportedThinkingLevels(hit);
+          if (level && !levels.includes(level)) {
+            return {
+              ok: false,
+              error: `"${level}" is not a supported thinking level for ${hit.provider}/${hit.id} (offers: ${levels.join(', ')}).`,
+            };
+          }
+          registry.setPendingModel(file, hit, level);
+          registry.broadcast('refresh', file, {});
+          return {
+            ok: true,
+            notice: `Model: ${hit.provider}/${hit.id}${level ? ` · Thinking: ${level}` : ''} (applies when the chat starts)`,
+          };
+        }
+        if (wantedLevel) {
+          const levels = supportedThinkingLevels(current);
+          if (!levels.includes(wantedLevel)) {
+            return {
+              ok: false,
+              error: `"${wantedLevel}" is not a supported thinking level for ${current.provider}/${current.id} (offers: ${levels.join(', ')}).`,
+            };
+          }
+          registry.setPendingModel(file, current, wantedLevel);
+          registry.broadcast('refresh', file, {});
+          return {
+            ok: true,
+            notice: `Thinking: ${wantedLevel} (applies when the chat starts)`,
+          };
+        }
+        return {
+          ok: true,
+          data: {
+            models: models.map(serializeModel),
+            current: serializeModel(current),
+            currentThinkingLevel: currentLevel,
+          },
+        };
+      }
+
       const live = await registry.open(file);
       const rt = live.session.modelRuntime;
       const current = live.session.model;
-      const requested = args?.trim() ?? '';
-      const wantedLevel = extra?.thinkLevel ?? null;
       let target = current;
       if (requested) {
         const models = await rt.getAvailable().catch(() => []);
-        const term = requested.toLowerCase();
-        const hit = models.find((m) =>
-          m.id.toLowerCase() === term || `${m.provider}/${m.id}`.toLowerCase() === term || m.name.toLowerCase() === term,
-        );
+        const hit = findModel(models, requested);
         if (!hit) return { ok: false, error: `No model matches "${requested}"` };
         await live.session.setModel(hit);
         target = hit;

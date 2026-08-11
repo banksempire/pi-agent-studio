@@ -21,7 +21,8 @@ export const WATCHDOG_INTERVAL_MS = 30 * 1000;
 export class AgentRegistry extends EventEmitter {
   /** agentId → { session, status, runningSince, lastEventAt, opChain, pendingOps } */
   #live = new Map();
-  /** Lazy new-session reservations: agentId → { cwd, dir } (materialized on first Prompt). */
+  /** Lazy new-session reservations: agentId → { cwd, dir, model, thinkLevel }
+   *  (materialized on first Prompt; the model pref is applied then). */
   #pending = new Map();
 
   // ── lifecycle ──────────────────────────────────────────────────────────
@@ -29,8 +30,26 @@ export class AgentRegistry extends EventEmitter {
   /** Reserve a future session path (the SDK materializes it on first chat). */
   createSession(cwd) {
     const file = newSessionPath(cwd);
-    this.#pending.set(file, { cwd, dir: path.dirname(file) });
+    this.#pending.set(file, { cwd, dir: path.dirname(file), model: null, thinkLevel: null });
     return { file };
+  }
+
+  /** The lazy reservation for agentId, or null if the agent isn't pending
+   *  (already live or unknown). Never materializes. */
+  pendingInfo(agentId) {
+    return this.#pending.get(agentId) ?? null;
+  }
+
+  /** Store the model preference of a lazy reservation WITHOUT materializing
+   *  it — the model picker works on new chats, but the session stays
+   *  virtual until the first prompt. Returns the reservation, or null if
+   *  the agent isn't pending anymore. */
+  setPendingModel(agentId, model, thinkLevel) {
+    const p = this.#pending.get(agentId);
+    if (!p) return null;
+    p.model = model;
+    p.thinkLevel = thinkLevel ?? null;
+    return p;
   }
 
   /** True if the agent is known (pending, open, or running) — i.e. a client
@@ -46,10 +65,22 @@ export class AgentRegistry extends EventEmitter {
     if (this.#pending.has(agentId)) {
       // Lazy start: the reserved virtual new-chat becomes real here, pinned
       // to the exact file path the frontend already holds as its session id.
-      const { cwd, dir } = this.#pending.get(agentId);
+      const { cwd, dir, model, thinkLevel } = this.#pending.get(agentId);
       this.#pending.delete(agentId);
       const sessionManager = new sdk.SessionManager(cwd, dir, agentId, true);
       const { session } = await sdk.createAgentSession({ sessionManager });
+      // A model chosen in the UI while the chat was still lazy applies now,
+      // before the first message runs.
+      if (model) {
+        try { await session.setModel(model); } catch (e) {
+          console.error(`[pi-nest] applying pending model pref failed (${agentId.split('/').pop()}):`, e);
+        }
+      }
+      if (thinkLevel) {
+        try { session.setThinkingLevel(thinkLevel); } catch (e) {
+          console.error(`[pi-nest] applying pending think-level pref failed (${agentId.split('/').pop()}):`, e);
+        }
+      }
       return this.#register(agentId, session);
     }
     const { session } = await sdk.createAgentSession({

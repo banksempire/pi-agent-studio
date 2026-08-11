@@ -54,7 +54,8 @@ const rows = computed<StatRow[]>(() => {
   push('Input', fmtTokens(st.promptTokens));
   if (st.promptTokens > 0 && (st.cacheRead > 0 || st.cacheWrite > 0)) {
     const hit = ((st.cacheRead / st.promptTokens) * 100).toFixed(1);
-    push('  Cached', `${fmtTokens(st.cacheRead)} (${hit}%)`);
+    push('  Cached', fmtTokens(st.cacheRead));
+    push('    rate%', `${hit}%`);
     const written = st.cacheWrite > 0 ? ` (${fmtTokens(st.cacheWrite)} written to cache)` : '';
     push('  Uncached', `${fmtTokens(st.tokensIn + st.cacheWrite)}${written}`);
   }

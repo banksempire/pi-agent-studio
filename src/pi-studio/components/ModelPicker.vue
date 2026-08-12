@@ -4,7 +4,7 @@ import Menu from '@sf/components/Menu.vue';
 import KeyValueList from '@sf/components/KeyValueList.vue';
 import type { KeyValueItem } from '@sf/types/panel';
 import type { MenuNodeDef } from '@sf/types/layout';
-import { useChatStore } from '../store/chat';
+import { useChatStore, api } from '../store/chat';
 
 interface ModelInfo {
   id: string;
@@ -53,12 +53,11 @@ async function load() {
   loading.value = true;
   error.value = '';
   try {
-    const res = await fetch('/api/slash', {
+    const j = await api<{ ok: boolean; data?: ModelCatalog; error?: string }>('/api/slash', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ file: s.file, command: 'model' }),
     });
-    const j = await res.json();
     if (!j.ok) {
       error.value = j.error || 'Failed to load models';
       catalog.value = null;
@@ -66,7 +65,11 @@ async function load() {
       catalog.value = j.data as ModelCatalog;
     }
   } catch (e) {
-    error.value = String((e as Error)?.message ?? e);
+    // Connectivity failures are silent — the status-bar dot is the only
+    // indicator; real backend rejections (j.ok === false) still show.
+    if (!(e instanceof TypeError)) {
+      error.value = String((e as Error)?.message ?? e);
+    }
     catalog.value = null;
   } finally {
     loading.value = false;
@@ -139,7 +142,7 @@ async function commit(m: ModelInfo, thinkLevel: string) {
   busy.value = true;
   error.value = '';
   try {
-    const res = await fetch('/api/slash', {
+    const j = await api<{ ok: boolean; error?: string }>('/api/slash', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -152,14 +155,17 @@ async function commit(m: ModelInfo, thinkLevel: string) {
         extra: { thinkLevel },
       }),
     });
-    const j = await res.json();
     if (!j.ok) {
       error.value = j.error || 'Failed to apply model';
     } else {
       void load();
     }
   } catch (e) {
-    error.value = String((e as Error)?.message ?? e);
+    // Connectivity failures are silent (the dot in the status bar says it
+    // all); real backend rejections (j.ok === false) still show.
+    if (!(e instanceof TypeError)) {
+      error.value = String((e as Error)?.message ?? e);
+    }
   } finally {
     busy.value = false;
   }

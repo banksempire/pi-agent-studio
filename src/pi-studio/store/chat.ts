@@ -367,14 +367,25 @@ export const CHAT_DROP_TYPE = 'application/x-sf-chat-session';
 
 const NEW_CHAT_CWD = '/workspace/sf';
 
-async function api<T>(path: string, init?: RequestInit): Promise<T> {
+/**
+ * Backend request helper. Throws `ConnectivityError` (a TypeError subclass)
+ * when the backend itself is unreachable — the dev proxy answers a dead
+ * gateway with an empty-body 500 — so callers can silence connectivity
+ * failures (the status-bar dot is the only indicator) while real backend
+ * rejections (JSON error bodies) still surface as Error.
+ */
+class ConnectivityError extends TypeError {}
+
+export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
     try {
       const j = await res.json();
       if (j?.error) msg = j.error;
-    } catch { /* keep default */ }
+    } catch {
+      throw new ConnectivityError(msg);
+    }
     throw new Error(msg);
   }
   return res.json() as Promise<T>;
@@ -1033,7 +1044,11 @@ export async function newChat(): Promise<void> {
     }
     openChat(id);
   } catch (e) {
-    state.lastError = e instanceof Error ? e.message : String(e);
+    // Connectivity failures are silent — the status-bar dot is the only
+    // indicator. Real backend rejections still surface as a banner.
+    if (!(e instanceof TypeError)) {
+      state.lastError = e instanceof Error ? e.message : String(e);
+    }
     state.backend = 'offline';
   }
 }
@@ -1165,7 +1180,13 @@ export async function sendMessage(sessionId: string, text: string, opts: { wait?
       // entry replacing it means the backend took it after all).
       s.messages[i] = { ...s.messages[i], sendFailed: true };
     }
-    state.lastError = e instanceof Error ? e.message : String(e);
+    // Connectivity failures are silent (the status-bar dot says it all);
+    // real backend rejections still surface as a banner.
+    if (!(e instanceof TypeError)) {
+      state.lastError = e instanceof Error ? e.message : String(e);
+    } else {
+      state.backend = 'offline';
+    }
   }
 }
 
@@ -1230,12 +1251,11 @@ export async function renameSession(sessionId: string, name: string): Promise<bo
   const s = findSession(sessionId);
   if (!s || !name.trim()) return false;
   try {
-    const res = await fetch('/api/slash', {
+    const j = await api<any>('/api/slash', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ file: s.file, command: 'name', args: name.trim() }),
     });
-    const j = await res.json();
     if (!j.ok) {
       state.lastError = j.error || 'Rename failed';
       return false;
@@ -1243,7 +1263,8 @@ export async function renameSession(sessionId: string, name: string): Promise<bo
     await refreshList();
     return true;
   } catch (e) {
-    state.lastError = String((e as Error)?.message ?? e);
+    // Connectivity failures are silent (the status-bar dot says it all).
+    if (!(e instanceof TypeError)) state.lastError = String((e as Error)?.message ?? e);
     return false;
   }
 }
@@ -1253,12 +1274,11 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
   const s = findSession(sessionId);
   if (!s) return false;
   try {
-    const res = await fetch('/api/slash', {
+    const j = await api<any>('/api/slash', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ file: s.file, command: 'delete' }),
     });
-    const j = await res.json();
     if (!j.ok) {
       state.lastError = j.error || 'Delete failed';
       return false;
@@ -1270,7 +1290,8 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
     await refreshList();
     return true;
   } catch (e) {
-    state.lastError = String((e as Error)?.message ?? e);
+    // Connectivity failures are silent (the status-bar dot says it all).
+    if (!(e instanceof TypeError)) state.lastError = String((e as Error)?.message ?? e);
     return false;
   }
 }
@@ -1310,7 +1331,11 @@ export async function fetchMessages(sessionId: string, opts?: { older?: boolean 
     applySessionInfo(s, data);
   } catch (e) {
     s.loadingOlder = false;
-    state.lastError = `Failed to load messages: ${e instanceof Error ? e.message : e}`;
+    // Connectivity failures are silent (the status-bar dot says it all);
+    // the SSE push refills messages once the connection is back.
+    if (!(e instanceof TypeError)) {
+      state.lastError = `Failed to load messages: ${e instanceof Error ? e.message : e}`;
+    }
   }
 }
 

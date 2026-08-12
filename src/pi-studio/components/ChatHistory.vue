@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import Menu from '@sf/components/Menu.vue';
+import SvgIcon from '@sf/components/SvgIcon.vue';
 import type { MenuNodeDef } from '@sf/types/layout';
 import { computed, nextTick, ref } from 'vue';
 import { type ChatSession, endExternalDrag, startSessionDrag, timeAgo, useChatStore } from '../store/chat';
@@ -100,13 +101,13 @@ function onMenuSelect(s: ChatSession, item: MenuNodeDef) {
               :class="{ 'chat-item-menu--open': menuOpenFor === s.id }"
               title="Session actions"
               @click.stop="toggle"
-            >⋮</button>
+            ><SvgIcon name="⋯" /></button>
           </template>
         </Menu>
       </div>
       <div class="chat-list-row2">
         <span class="chat-list-status" :class="'chat-list-status--' + s.status">
-          {{ s.status === 'running' ? '⏳' : '' }}
+          <SvgIcon v-if="s.status === 'running'" name="⏳" />
         </span>
         <span class="chat-list-preview">{{ preview(s) }}</span>
       </div>

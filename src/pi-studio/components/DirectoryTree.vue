@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SvgIcon from '@sf/components/SvgIcon.vue';
 import { computed, onMounted } from 'vue';
 import { type DirNode, useChatStore } from '../store/chat';
 
@@ -66,12 +67,12 @@ function checkState(node: DirNode): 'on' | 'mid' | 'off' {
           'dir-check--on': checkState(node) === 'on',
           'dir-check--mid': checkState(node) === 'mid',
         }"
-      >{{ checkState(node) === 'on' ? '✓' : checkState(node) === 'mid' ? '–' : '' }}</span>
+      ><SvgIcon v-if="checkState(node) === 'on'" name="✓" /><SvgIcon v-else-if="checkState(node) === 'mid'" name="–" /></span>
       <span
         class="dir-node-toggle"
         :class="{ 'dir-node-toggle--open': !store.treeCollapsed.has(node.path) }"
         @click.stop="store.toggleTreeCollapsed(node.path)"
-      >{{ node.children.length ? '❯' : '·' }}</span>
+      ><SvgIcon v-if="node.children.length" name="❯" /><span v-else class="dir-leaf-dot">·</span></span>
       <span class="dir-node-name">{{ node.name }}</span>
       <span class="dir-node-count">{{ node.count }}</span>
     </div>

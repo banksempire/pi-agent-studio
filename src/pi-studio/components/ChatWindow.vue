@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SvgIcon from '@sf/components/SvgIcon.vue';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
@@ -938,7 +939,7 @@ let anchorBottom = 0;
           v-if="session.hasMoreOlder && !session.loadingOlder"
           class="chat-load-older"
           @click="loadOlder()"
-        >↑ older messages</div>
+        ><SvgIcon name="↑" /> older messages</div>
         <div v-if="session.loadingOlder" class="chat-load-older chat-load-older--loading">loading older messages…</div>
         <div
           v-for="item in items"
@@ -986,7 +987,7 @@ let anchorBottom = 0;
                 ]"
               >
                 <div class="chat-work-head" @click="toggle(part.group.id)">
-                  <span class="chat-work-toggle">{{ open[part.group.id] ? '▾' : '▸' }}</span>
+                  <span class="chat-work-toggle"><SvgIcon :name="open[part.group.id] ? '▾' : '▸'" /></span>
                   <!-- While working the group shows the same thing as the latest bubble:
                        [action name|ani|content|time elapsed] -->
                   <template v-if="part.group.wip && part.group.latest">
@@ -1010,7 +1011,7 @@ let anchorBottom = 0;
                   >
                     <!-- Completed bubble: [action name|time elapsed] -->
                     <div class="chat-ab-sub-head" @click="toggle(b.key)">
-                      <span class="chat-ab-sub-toggle">{{ open[b.key] ? '▾' : '▸' }}</span>
+                      <span class="chat-ab-sub-toggle"><SvgIcon :name="open[b.key] ? '▾' : '▸'" /></span>
                       <span class="chat-ab-sub-name">{{ b.name }}</span>
                       <span class="chat-ab-sub-time">{{ b.live ? fmtSec(now - b.startTs) : fmtSec(b.durMs) }}</span>
                     </div>
@@ -1033,8 +1034,8 @@ let anchorBottom = 0;
               <template v-else>
                 <div v-if="renderMd" class="chat-msg-md" v-html="md(part.msg)" />
                 <template v-else>{{ part.msg.text }}</template>
-                <span v-if="streaming && part.msg.id === lastMessage?.id" class="chat-cursor">▌</span>
-                <div v-if="part.msg.error" class="chat-aborted chat-aborted--error">⚠ {{ part.msg.error }}</div>
+                <span v-if="streaming && part.msg.id === lastMessage?.id" class="chat-cursor"><SvgIcon name="▌" /></span>
+                <div v-if="part.msg.error" class="chat-aborted chat-aborted--error"><SvgIcon name="⚠" /> {{ part.msg.error }}</div>
               </template>
             </div>
           </template>
@@ -1053,8 +1054,8 @@ let anchorBottom = 0;
               <template v-else>{{ item.msg.text }}</template>
             </div>
             <div v-if="item.msg.sendFailed" class="chat-resend" title="The backend did not accept this message — send it again">
-              <span class="chat-resend-mark">⚠</span> not sent
-              <button class="chat-resend-btn" @click="store.resendMessage(props.sessionId, item.msg.id)">↻ Resend</button>
+              <span class="chat-resend-mark"><SvgIcon name="⚠" /></span> not sent
+              <button class="chat-resend-btn" @click="store.resendMessage(props.sessionId, item.msg.id)"><SvgIcon name="↻" /> Resend</button>
             </div>
           </template>
 
@@ -1064,8 +1065,8 @@ let anchorBottom = 0;
             <div v-if="renderMd" class="chat-msg-md" v-html="md(item.msg)" />
             <template v-else>{{ item.msg.text }}</template>
             <div v-if="item.msg.sendFailed" class="chat-resend" title="The backend did not accept this message — send it again">
-              <span class="chat-resend-mark">⚠</span> not sent
-              <button class="chat-resend-btn" @click="store.resendMessage(props.sessionId, item.msg.id)">↻ Resend</button>
+              <span class="chat-resend-mark"><SvgIcon name="⚠" /></span> not sent
+              <button class="chat-resend-btn" @click="store.resendMessage(props.sessionId, item.msg.id)"><SvgIcon name="↻" /> Resend</button>
             </div>
             <div class="chat-msg-time">{{ fmtTime(item.msg.ts) }}</div>
           </template>
@@ -1082,7 +1083,7 @@ let anchorBottom = 0;
             @click="toggle('sum-' + item.msg.id)"
           >
             <div class="chat-work-head">
-              <span class="chat-work-toggle">{{ open['sum-' + item.msg.id] ? '▾' : '▸' }}</span>
+              <span class="chat-work-toggle"><SvgIcon :name="open['sum-' + item.msg.id] ? '▾' : '▸'" /></span>
               <span class="chat-ab-name">Compaction summary</span>
               <!-- Same content slot as the tool bubbles: the collapsed head
                    carries a capped preview of the summary (as much text as
@@ -1106,7 +1107,7 @@ let anchorBottom = 0;
         @dblclick="resetResize"
       ><span class="chat-composer-grip" /></div>
       <div v-if="store.lastError" class="chat-banner chat-banner--error" @click="store.clearLastError()">
-        ⚠ {{ store.lastError }} (click to dismiss)
+        <SvgIcon name="⚠" /> {{ store.lastError }} (click to dismiss)
       </div>
       <!-- Slash command autocomplete -->
         <div v-if="completionOpen && !picker" class="chat-completions">
@@ -1146,7 +1147,7 @@ let anchorBottom = 0;
             class="chat-scroll-btn"
             title="Scroll to bottom"
             @click="scrollToBottomNow"
-          >↓</button>
+          ><SvgIcon name="↓" /></button>
           <button
             class="chat-send-btn"
             :disabled="!input.trim()"

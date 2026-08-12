@@ -622,7 +622,7 @@
   border: none;
   border-radius: 4px;
   padding: 2px 8px;
-  color: var(--sf-text-muted);
+  color: var(--sf-text);
   font-family: var(--sf-font);
   font-size: 16px;
   font-variant-numeric: tabular-nums;

@@ -214,10 +214,6 @@
       {
         "id": "brand",
         "label": "pi-agent-studio"
-      },
-      {
-        "id": "version",
-        "label": "v0.2.0"
       }
     ],
     "right": [

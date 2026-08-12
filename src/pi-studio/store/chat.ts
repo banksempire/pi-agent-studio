@@ -218,6 +218,42 @@ function saveDrafts() {
   } catch { /* storage unavailable */ }
 }
 
+// ── Per-window UI state (survives workspace persistence) ───────────────────
+// Each workspace window may carry state that is captured into workspace
+// snapshots — e.g. the chat composer's drag-resized height. The store is
+// the single source of truth; the window-state provider registered in
+// bindWorkspace merges it into snapshots (keyed by tab id) and restores
+// it on apply.
+
+export interface WindowUi {
+  /** Drag-resized composer height in px (null = default one-line box). */
+  composerHeight: number | null;
+}
+
+const windowUi = reactive<Record<string, WindowUi>>({});
+
+/** Per-window UI state of a session (undefined until first set). */
+export function windowUiOf(sessionId: string): WindowUi | undefined {
+  return windowUi[sessionId];
+}
+
+let windowPersistTimer: ReturnType<typeof setTimeout> | undefined;
+function scheduleWindowPersist() {
+  if (windowPersistTimer) clearTimeout(windowPersistTimer);
+  // The framework can't observe window-internal state — nudge the
+  // workspace auto-save so the height survives reloads.
+  windowPersistTimer = setTimeout(() => ws?.persistNow(), 400);
+}
+
+/** Set a window's drag-resized composer height (null = reset to default). */
+export function setComposerHeight(sessionId: string, height: number | null) {
+  const ui = windowUi[sessionId] ?? { composerHeight: null };
+  if (ui.composerHeight === height) return;
+  ui.composerHeight = height;
+  windowUi[sessionId] = ui;
+  scheduleWindowPersist();
+}
+
 const state = reactive<ChatState>({
   sessions: [],
   activeChatId: null,
@@ -761,6 +797,33 @@ function targetTileId(): string {
  */
 export function bindWorkspace(api: WorkspaceApi) {
   ws = api;
+
+  // Windows may carry state that survives workspace persistence (e.g. the
+  // drag-resized composer height): it is merged into every captured
+  // snapshot and restored on apply. The boot auto-restore runs before
+  // this binds — pending snapshot state is flushed here by the API.
+  api.setWindowStateProvider({
+    read: () => {
+      const out: Record<string, unknown> = {};
+      for (const [file, ui] of Object.entries(windowUi)) {
+        out[TAB_PREFIX + file] = { composerHeight: ui.composerHeight };
+      }
+      return out;
+    },
+    apply: (state) => {
+      const next: Record<string, WindowUi> = {};
+      for (const [tabId, ui] of Object.entries(state)) {
+        if (!tabId.startsWith(TAB_PREFIX)) continue;
+        next[tabId.slice(TAB_PREFIX.length)] = {
+          composerHeight: (ui as WindowUi | null)?.composerHeight ?? null,
+        };
+      }
+      // Replace, don't merge: the snapshot is the full truth of the
+      // workspace. Open windows pick the state up via their computed.
+      for (const k of Object.keys(windowUi)) delete windowUi[k];
+      Object.assign(windowUi, next);
+    },
+  });
 
   watch(
     () => activeTabOfFocusedTile(),
@@ -1312,6 +1375,8 @@ export const store = {
     state.drafts[sessionId] = text;
     saveDrafts();
   },
+  windowUiOf,
+  setComposerHeight,
   findSession,
   isViewOpen,
   activeSessions,

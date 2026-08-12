@@ -781,8 +781,14 @@ function scrollToBottomNow() {
   scrollToBottom();
 }
 
-/** Composer height set by dragging the handle (null = fixed one-line box). */
-const manualHeight = ref<number | null>(null);
+/** Composer height set by dragging the handle (null = fixed one-line box).
+ *  Store-backed so it survives workspace persistence: the store's
+ *  window-state provider captures it into snapshots and restores it on
+ *  apply (the workspace API flushes pending state at bind time). */
+const manualHeight = computed({
+  get: () => store.windowUiOf(props.sessionId)?.composerHeight ?? null,
+  set: (v: number | null) => store.setComposerHeight(props.sessionId, v),
+});
 // Drag-resize limits, expressed per-em so they scale with font-size.
 // Minimum = the fixed one-line box (line + padding + borders).
 const MIN_INPUT_EM = 1.4 + 2 * 0.44 + 2 / 16;

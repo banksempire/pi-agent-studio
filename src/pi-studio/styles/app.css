@@ -602,19 +602,19 @@
   border-color: var(--sf-accent);
 }
 
-/* Bottom action row: scroll-to-bottom + Send, right-aligned. Wraps onto a
-   second line on very narrow panels instead of clipping the gauge. */
+/* Bottom action row: scroll-to-bottom + Send, right-aligned (never wraps). */
 .chat-composer-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  flex-wrap: wrap;
 }
 
 /* Context gauge ("10.0%/1M"), left side under the input box — pushed to
-   the left edge while the buttons stay right-aligned. Never shrinks: the
-   gauge keeps its full text width even when the panel gets narrow (the
-   row wraps instead). */
+   the left edge while the buttons stay right-aligned. The auto margin
+   gives the gauge as much room as the row has, so its full text shows
+   whenever possible; only when the panel is too narrow for the buttons
+   + gauge does the gauge shrink and truncate with '…' (the title
+   tooltip still shows the full context). */
 .chat-context {
   margin-right: auto;
   align-self: center;
@@ -627,7 +627,9 @@
   font-size: 16px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
   cursor: pointer;
 }
 /* Grey highlight block on hover, same overlay as the other buttons

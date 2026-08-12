@@ -616,7 +616,8 @@
   align-self: center;
   background: none;
   border: none;
-  padding: 0;
+  border-radius: 4px;
+  padding: 2px 8px;
   color: var(--sf-text-muted);
   font-family: var(--sf-font);
   font-size: 16px;
@@ -624,16 +625,17 @@
   white-space: nowrap;
   cursor: pointer;
 }
-/* Hover affordance for click-to-compact (warn/error keep their color —
-   their rules below win on equal specificity). */
+/* Grey highlight block on hover, same overlay as the other buttons
+   (warn/error keep their color — their rules below win on equal
+   specificity, the overlay still shows). */
 .chat-context:hover {
+  box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
   color: var(--sf-text-bright);
-  text-decoration: underline;
 }
 .chat-context:disabled {
   cursor: default;
   opacity: 0.55;
-  text-decoration: none;
+  box-shadow: none;
 }
 .chat-context--warn {
   color: var(--sf-status-warn);

@@ -247,10 +247,13 @@ function scheduleWindowPersist() {
 
 /** Set a window's drag-resized composer height (null = reset to default). */
 export function setComposerHeight(sessionId: string, height: number | null) {
-  const ui = windowUi[sessionId] ?? { composerHeight: null };
+  let ui = windowUi[sessionId];
+  if (!ui) {
+    ui = { composerHeight: null };
+    windowUi[sessionId] = ui;
+  }
   if (ui.composerHeight === height) return;
   ui.composerHeight = height;
-  windowUi[sessionId] = ui;
   scheduleWindowPersist();
 }
 
@@ -804,9 +807,13 @@ export function bindWorkspace(api: WorkspaceApi) {
   // this binds — pending snapshot state is flushed here by the API.
   api.setWindowStateProvider({
     read: () => {
+      // Only windows in the layout carry state in a snapshot — closed
+      // sessions' entries must not leak into captures (mirrors the
+      // layout's skipTab semantics; one tree traversal for all ids).
       const out: Record<string, unknown> = {};
+      const open = new Set(openTabIds());
       for (const [file, ui] of Object.entries(windowUi)) {
-        out[TAB_PREFIX + file] = { composerHeight: ui.composerHeight };
+        if (open.has(TAB_PREFIX + file)) out[TAB_PREFIX + file] = { composerHeight: ui.composerHeight };
       }
       return out;
     },
@@ -1238,6 +1245,7 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
     }
     closeChatView(sessionId);
     delete state.drafts[sessionId];
+    delete windowUi[sessionId];
     saveDrafts();
     await refreshList();
     return true;

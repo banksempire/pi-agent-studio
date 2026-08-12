@@ -941,7 +941,14 @@ onMounted(() => {
       if (prevListH === 0) {
         anchorBottom = el.scrollTop + h; // first observation: seed the anchor
       } else if (h !== prevListH) {
-        el.scrollTop = Math.max(0, Math.min(anchorBottom - h, el.scrollHeight - el.clientHeight));
+        if (sticky) {
+          // At the bottom: stay pinned. (Mobile send clears + shrinks the
+          // composer AFTER the scroll, so the anchor math would yank the
+          // view back up by the shrink amount and disarm sticky.)
+          el.scrollTop = el.scrollHeight;
+        } else {
+          el.scrollTop = Math.max(0, Math.min(anchorBottom - h, el.scrollHeight - el.clientHeight));
+        }
       }
       prevListH = h;
     });

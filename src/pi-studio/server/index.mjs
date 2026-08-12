@@ -503,10 +503,28 @@ async function reloadSessionCache(file, st, cached) {
         else { pendingRaw = chunk.slice(nl + 1); chunk = chunk.slice(0, nl + 1); }
       }
       const newEntries = [];
+      let boundaryOk = true;
       for (const line of chunk.split('\n')) {
         const t = line.trim();
         if (!t) continue;
-        try { newEntries.push(JSON.parse(t)); } catch { /* skip malformed */ }
+        try { newEntries.push(JSON.parse(t)); } catch { boundaryOk = false; break; }
+      }
+      // A malformed line means cached.size no longer sits at a line start —
+      // the file was rewritten under us (e.g. the TUI resumed/reloaded it).
+      // Merging stale + partial entries would drop the newest ones and break
+      // the parent chain, silently freezing open chat windows until a full
+      // re-parse — fall back to one instead.
+      if (!boundaryOk) {
+        const content = await readFile(file, 'utf8').catch(() => null);
+        if (content === null) return null;
+        const entries = parseEntries(content);
+        return {
+          mtime: st.mtimeMs,
+          size: st.size,
+          pendingRaw: '',
+          entries,
+          ...deriveSession(entries, st),
+        };
       }
       // Boundary sanity: with no pending line the appended chunk starts at a
       // fresh entry, so it must contain one. A weird boundary (rewrite) →

@@ -210,12 +210,7 @@
     "tabs": []
   },
   "status": {
-    "left": [
-      {
-        "id": "brand",
-        "label": "pi-agent-studio"
-      }
-    ],
+    "left": [],
     "right": [
       {
         "id": "backend",

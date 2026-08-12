@@ -17,11 +17,11 @@ const dotClass = computed(() => {
 
 const label = computed(() => {
   if (store.backend !== 'online') {
-    return store.backend === 'connecting' ? 'pi agent · connecting…' : 'pi agent · offline';
+    return store.backend === 'connecting' ? 'connecting…' : 'offline';
   }
   // The live ping, refreshed every 5s (the store's fixed ping interval);
   // the dot color carries the status (green ≤500ms, yellow above).
-  return store.backendPing !== null ? `pi agent · ${store.backendPing}ms` : 'pi agent · live';
+  return store.backendPing !== null ? `${store.backendPing}ms` : 'live';
 });
 
 const title = computed(() => {

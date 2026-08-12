@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
-import { marked } from 'marked';
 import DOMPurify from 'dompurify';
+import { marked } from 'marked';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import {
-  useChatStore, fmtTime, type ChatSession, type DisplayMessage,
-} from '../store/chat';
-import {
-  allSlashCommands, parseSlash, runSlash,
-  type ParsedSlash, type SlashCommandInfo, type SlashPicker, type SlashResult,
+  allSlashCommands,
+  type ParsedSlash,
+  parseSlash,
+  runSlash,
+  type SlashCommandInfo,
+  type SlashPicker,
+  type SlashResult,
 } from '../slash/commands';
+import { type ChatSession, type DisplayMessage, fmtTime, useChatStore } from '../store/chat';
 
 const props = defineProps<{ sessionId: string }>();
 const store = useChatStore();
@@ -51,7 +54,7 @@ function summaryPreview(text: string): string {
   const t = text.trim();
   const capped = t.length > 300 ? t.slice(0, 300) : t;
   const flat = capped.replace(/\s+/g, ' ');
-  return (t.length > 300 ? flat + '…' : flat) || '…';
+  return (t.length > 300 ? `${flat}…` : flat) || '…';
 }
 /** Composer text lives in the store PER SESSION: the framework reuses the
  *  same ChatWindow instance across tab switches (only the sessionId prop
@@ -78,13 +81,13 @@ function formatTokens(n: number): string {
 
 const contextDisplay = computed(() => {
   const ctx = session.value?.context;
-  if (!ctx || !ctx.window) return '';
+  if (!ctx?.window) return '';
   const win = formatTokens(ctx.window);
   return ctx.percent === null ? `?/${win}` : `${ctx.percent.toFixed(1)}%/${win}`;
 });
 const contextTitle = computed(() => {
   const ctx = session.value?.context;
-  if (!ctx || !ctx.window) return '';
+  if (!ctx?.window) return '';
   const win = formatTokens(ctx.window);
   // The gauge doubles as the click-to-compact affordance (unless a
   // compaction is already running — then it is disabled).
@@ -139,25 +142,29 @@ async function loadOlder() {
 // tail message's toolCalls in place (id/text/thinking unchanged) — without
 // it the scroll never re-anchors while a tool runs. The DOM must be updated
 // before measuring, so scroll runs after the render flush.
-const keepBottom = () => { if (sticky) nextTick(scrollToBottom); };
-watch(
-  () => {
-    const s = session.value;
-    if (!s) return '';
-    const last = s.messages[s.messages.length - 1];
-    const tcs = last?.toolCalls;
-    const tcKey = tcs && tcs.length
-      ? tcs.map((t) => `${t.id}:${t.name}:${(t.args ?? '').length}:${(t.result ?? '').length}${t.isError ? ':e' : ''}`).join('|')
-      : '';
-    const key = last
-      ? `${s.messages.length}:${last.id}:${last.text.length}:${(last.thinking ?? '').length}:${tcKey}:${last.error ?? ''}`
-      : `${s.messages.length}:`;
-    // The /compact box appears/disappears without messages changing — the
-    // compacting flag is part of the key so it still re-anchors the scroll.
-    return key + (s.compacting ? ':c' : '');
-  },
-  keepBottom,
-);
+const keepBottom = () => {
+  if (sticky) nextTick(scrollToBottom);
+};
+watch(() => {
+  const s = session.value;
+  if (!s) return '';
+  const last = s.messages[s.messages.length - 1];
+  const tcs = last?.toolCalls;
+  const tcKey = tcs?.length
+    ? tcs
+        .map(
+          (t) =>
+            `${t.id}:${t.name}:${(t.args ?? '').length}:${(t.result ?? '').length}${t.isError ? ':e' : ''}`,
+        )
+        .join('|')
+    : '';
+  const key = last
+    ? `${s.messages.length}:${last.id}:${last.text.length}:${(last.thinking ?? '').length}:${tcKey}:${last.error ?? ''}`
+    : `${s.messages.length}:`;
+  // The /compact box appears/disappears without messages changing — the
+  // compacting flag is part of the key so it still re-anchors the scroll.
+  return key + (s.compacting ? ':c' : '');
+}, keepBottom);
 
 const lastMessage = computed<DisplayMessage | undefined>(() => {
   const msgs = session.value?.messages ?? [];
@@ -165,14 +172,20 @@ const lastMessage = computed<DisplayMessage | undefined>(() => {
 });
 
 /** The agent is producing the tail message right now. */
-const streaming = computed(() =>
-  session.value?.status === 'running' && lastMessage.value?.role === 'assistant',
+const streaming = computed(
+  () => session.value?.status === 'running' && lastMessage.value?.role === 'assistant',
 );
 
 const ROLE_LABELS: Record<string, string> = {
-  user: 'You', assistant: 'pi', summary: 'summary', bash: 'bash', system: 'system',
+  user: 'You',
+  assistant: 'pi',
+  summary: 'summary',
+  bash: 'bash',
+  system: 'system',
 };
-function roleLabel(m: DisplayMessage): string { return ROLE_LABELS[m.role] ?? 'custom'; }
+function roleLabel(m: DisplayMessage): string {
+  return ROLE_LABELS[m.role] ?? 'custom';
+}
 
 // ── ActionBubble work groups ─────────────────────────────────────────────
 // Consecutive "unofficial" replies (thinking blocks + tool calls) between a
@@ -182,11 +195,9 @@ function roleLabel(m: DisplayMessage): string { return ROLE_LABELS[m.role] ?? 'c
 //   - group finished:    "n actions done" + total elapsed — click to expand
 //     the stacked sub-bubbles; a sub-bubble click reveals its detail.
 
-import { ActionBubble, ActionGroup, actionName, type ActionKind, type ActionStatus } from '../actionBubble';
+import { ActionBubble, ActionGroup, type ActionKind, type ActionStatus, actionName } from '../actionBubble';
 
-export type AgentPart =
-  | { kind: 'group'; group: ActionGroup }
-  | { kind: 'reply'; msg: DisplayMessage };
+export type AgentPart = { kind: 'group'; group: ActionGroup } | { kind: 'reply'; msg: DisplayMessage };
 
 export type ChatItem =
   | { kind: 'user' | 'system' | 'summary' | 'custom'; msg: DisplayMessage }
@@ -243,7 +254,6 @@ function fmtMsgTime(ts: number): string {
     : `${MONTHS[d.getMonth()]} ${d.getDate()}, ${hhmm}`;
 }
 
-
 /** Turn identity from an assistant message. */
 function ensureHeader(header: TurnHeader, m: DisplayMessage) {
   if (!header.provider && m.provider) header.provider = m.provider;
@@ -254,7 +264,8 @@ function ensureHeader(header: TurnHeader, m: DisplayMessage) {
 /** Agent-turn separator label: "pi · provider/model/level". */
 function agentSepLabel(h: TurnHeader): string {
   const id = [h.provider, h.model, h.thinkingLevel && h.thinkingLevel !== 'off' ? h.thinkingLevel : '']
-    .filter(Boolean).join('/');
+    .filter(Boolean)
+    .join('/');
   return `pi · ${id}`;
 }
 
@@ -286,7 +297,7 @@ function jumpToSep(e: MouseEvent) {
   el.scrollTop = Math.max(0, Math.min(top, el.scrollHeight - el.clientHeight));
 }
 
-/** Short duration: "<1s" / "12.3s" / "1m 30s". */function fmtSec(ms: number): string {
+/** Short duration: "<1s" / "12.3s" / "1m 30s". */ function fmtSec(ms: number): string {
   if (ms <= 0) return '';
   const s = ms / 1000;
   if (s < 1) return '<1s';
@@ -362,8 +373,13 @@ const items = computed<ChatItem[]>(() => {
   /** Fill the turn's separator identity from any available source message. */
   const ensureTurnHeader = (m: DisplayMessage) => ensureHeader(header, m);
 
-  const addMove = (src: number, msgId: string, kind: ActionKind, mv: Omit<PendingMove, 'kind' | 'name'> & { name?: string }) => {
-    if (!workId) workId = 'work-' + msgId;
+  const addMove = (
+    src: number,
+    msgId: string,
+    kind: ActionKind,
+    mv: Omit<PendingMove, 'kind' | 'name'> & { name?: string },
+  ) => {
+    if (!workId) workId = `work-${msgId}`;
     ensureTurnHeader(msgs[src]);
     work.push({ src, mv: { ...mv, kind, name: actionName(kind, mv.name) } });
   };
@@ -382,7 +398,10 @@ const items = computed<ChatItem[]>(() => {
     }
     if (m.role === 'assistant') {
       let added = false;
-      if (m.thinking) { addMove(i, m.id, 'thinking', { thinking: m.thinking }); added = true; }
+      if (m.thinking) {
+        addMove(i, m.id, 'thinking', { thinking: m.thinking });
+        added = true;
+      }
       for (const tc of m.toolCalls ?? []) {
         addMove(i, m.id, 'tool', { name: tc.name, args: tc.args, result: tc.result, isError: tc.isError });
         added = true;
@@ -444,8 +463,7 @@ watch(
     const last = items.value[items.value.length - 1];
     // The /compact WIP group is an agent item with one group part and no
     // header — its presence is covered by this check too.
-    return last?.kind === 'agent'
-      && last.parts.some((p) => p.kind === 'group' && p.group.wip);
+    return last?.kind === 'agent' && last.parts.some((p) => p.kind === 'group' && p.group.wip);
   },
   (active) => {
     if (active && nowTimer === null) {
@@ -480,7 +498,7 @@ watch(
   (res) => {
     if (!res) return;
     if (res === 'done') {
-      session.value!.compactResult = null;
+      if (session.value) session.value.compactResult = null;
       resetCompactOpen();
     } else {
       // Same flash mechanism as bubble completion (flash is defined below):
@@ -503,7 +521,6 @@ watch(
   },
 );
 
-
 /**
  * Flash the work box green/red when an action bubble completes (success/
  * failure). Detects pending → ok/fail transitions on every bubble kind; the
@@ -511,32 +528,29 @@ watch(
  */
 const flash = ref<Record<string, 'ok' | 'fail'>>({});
 const prevBubbleStatus = new Map<string, ActionStatus>();
-watch(
-  items,
-  (list) => {
-    for (const item of list) {
-      if (item.kind !== 'agent') continue;
-      for (const part of item.parts) {
-        if (part.kind !== 'group') continue;
-        for (const b of part.group.bubbles) {
-          const prev = prevBubbleStatus.get(b.key);
-          if (prev === 'pending' && b.status !== 'pending') {
-            const kind = b.status === 'ok' ? 'ok' : 'fail';
-            flash.value = { ...flash.value, [part.group.id]: kind };
-            window.setTimeout(() => {
-              if (flash.value[part.group.id]) {
-                const next = { ...flash.value };
-                delete next[part.group.id];
-                flash.value = next;
-              }
-            }, 1400);
-          }
-          prevBubbleStatus.set(b.key, b.status);
+watch(items, (list) => {
+  for (const item of list) {
+    if (item.kind !== 'agent') continue;
+    for (const part of item.parts) {
+      if (part.kind !== 'group') continue;
+      for (const b of part.group.bubbles) {
+        const prev = prevBubbleStatus.get(b.key);
+        if (prev === 'pending' && b.status !== 'pending') {
+          const kind = b.status === 'ok' ? 'ok' : 'fail';
+          flash.value = { ...flash.value, [part.group.id]: kind };
+          window.setTimeout(() => {
+            if (flash.value[part.group.id]) {
+              const next = { ...flash.value };
+              delete next[part.group.id];
+              flash.value = next;
+            }
+          }, 1400);
         }
+        prevBubbleStatus.set(b.key, b.status);
       }
     }
-  },
-);
+  }
+});
 
 /** work-group id → expanded (audit view) */
 const workOpen = ref<Record<string, boolean>>({});
@@ -598,7 +612,10 @@ function updateCompletions() {
   completionOpen.value = items.length > 0;
 }
 
-watch(input, () => { ensureCatalog(); updateCompletions(); });
+watch(input, () => {
+  ensureCatalog();
+  updateCompletions();
+});
 
 function completeWith(cmd: SlashCommandInfo) {
   input.value = `/${cmd.name} `;
@@ -634,7 +651,9 @@ async function handleSlashResult(r: SlashResult) {
         store.appendLocalMessage(props.sessionId, { text: 'Copied last agent message to clipboard.' });
       } catch {
         // Clipboard denied (permissions) — show the content inline instead.
-        store.appendLocalMessage(props.sessionId, { text: `Clipboard unavailable — last agent message:\n\n${r.text}` });
+        store.appendLocalMessage(props.sessionId, {
+          text: `Clipboard unavailable — last agent message:\n\n${r.text}`,
+        });
       }
       break;
     case 'download': {
@@ -733,17 +752,45 @@ function send() {
 function onKeydown(e: KeyboardEvent) {
   // Picker dialog takes over the keyboard while open.
   if (picker.value) {
-    if (e.key === 'ArrowDown') { e.preventDefault(); pickerIndex.value = (pickerIndex.value + 1) % picker.value.items.length; return; }
-    if (e.key === 'ArrowUp') { e.preventDefault(); pickerIndex.value = (pickerIndex.value - 1 + picker.value.items.length) % picker.value.items.length; return; }
-    if (e.key === 'Enter') { e.preventDefault(); void onPickerSelect(picker.value.items[pickerIndex.value].id); return; }
-    if (e.key === 'Escape') { e.preventDefault(); picker.value = null; return; }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      pickerIndex.value = (pickerIndex.value + 1) % picker.value.items.length;
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      pickerIndex.value = (pickerIndex.value - 1 + picker.value.items.length) % picker.value.items.length;
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      void onPickerSelect(picker.value.items[pickerIndex.value].id);
+      return;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      picker.value = null;
+      return;
+    }
     return;
   }
 
   if (completionOpen.value) {
-    if (e.key === 'ArrowDown') { e.preventDefault(); moveCompletion(1); return; }
-    if (e.key === 'ArrowUp') { e.preventDefault(); moveCompletion(-1); return; }
-    if (e.key === 'Escape') { e.preventDefault(); completionOpen.value = false; return; }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      moveCompletion(1);
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      moveCompletion(-1);
+      return;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      completionOpen.value = false;
+      return;
+    }
     if (e.key === 'Tab') {
       e.preventDefault();
       const items = completionItems.value;
@@ -754,12 +801,16 @@ function onKeydown(e: KeyboardEvent) {
 
   // Send-key mode (global preference): 'enter' → Enter sends, Shift+Enter
   // newline; 'shiftEnter' → Shift+Enter sends, Enter newline (textarea default).
-  const sendPressed = e.key === 'Enter'
-    && (store.prefs.sendKey === 'enter' ? !e.shiftKey : e.shiftKey);
+  const sendPressed = e.key === 'Enter' && (store.prefs.sendKey === 'enter' ? !e.shiftKey : e.shiftKey);
   if (sendPressed) {
     e.preventDefault();
     const parsed = parseSlash(input.value);
-    if (completionOpen.value && parsed && !isKnownCommand(parsed.command) && completionItems.value.length > 0) {
+    if (
+      completionOpen.value &&
+      parsed &&
+      !isKnownCommand(parsed.command) &&
+      completionItems.value.length > 0
+    ) {
       // Partial command: fill in the highlighted name, then run on next send key.
       completeWith(completionItems.value[completionIndex.value]);
       return;
@@ -800,7 +851,7 @@ let resizeCleanup: (() => void) | null = null;
 function startResize(e: MouseEvent) {
   e.preventDefault();
   const startY = e.clientY;
-  const startH = manualHeight.value ?? (inputEl.value?.offsetHeight ?? 80);
+  const startH = manualHeight.value ?? inputEl.value?.offsetHeight ?? 80;
   const el = inputEl.value;
   const fs = parseFloat(el ? getComputedStyle(el).fontSize : '') || 16;
   const minH = fs * MIN_INPUT_EM;
@@ -844,7 +895,7 @@ onMounted(() => {
       // (delta-based shifting accumulated sub-pixel drift).
       const h = el.clientHeight;
       if (prevListH === 0) {
-        anchorBottom = el.scrollTop + h;   // first observation: seed the anchor
+        anchorBottom = el.scrollTop + h; // first observation: seed the anchor
       } else if (h !== prevListH) {
         el.scrollTop = Math.max(0, Math.min(anchorBottom - h, el.scrollHeight - el.clientHeight));
       }
@@ -854,7 +905,10 @@ onMounted(() => {
   }
 });
 
-onUnmounted(() => { resizeCleanup?.(); listObserver?.disconnect(); });
+onUnmounted(() => {
+  resizeCleanup?.();
+  listObserver?.disconnect();
+});
 
 let listObserver: ResizeObserver | null = null;
 let prevListH = 0;

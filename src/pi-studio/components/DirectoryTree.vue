@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue';
-import { useChatStore, type DirNode } from '../store/chat';
+import { type DirNode, useChatStore } from '../store/chat';
 
 const store = useChatStore();
 

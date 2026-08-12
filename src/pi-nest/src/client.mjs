@@ -20,7 +20,10 @@ const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
 const piNest = grpc.loadPackageDefinition(packageDefinition).pi_nest;
 
 export class PiNestClient {
-  constructor({ host = process.env.PI_NEST_HOST ?? '127.0.0.1', port = Number(process.env.PI_NEST_PORT ?? 7495) } = {}) {
+  constructor({
+    host = process.env.PI_NEST_HOST ?? '127.0.0.1',
+    port = Number(process.env.PI_NEST_PORT ?? 7495),
+  } = {}) {
     // Keepalive pings make the channel notice a dead connection (e.g. after a
     // pi-nest restart) within keepalive_time_ms + keepalive_timeout_ms, so
     // Subscribe streams fire 'error' and consumers (the gateway relay) can

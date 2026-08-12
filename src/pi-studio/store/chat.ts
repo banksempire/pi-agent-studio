@@ -8,10 +8,11 @@
  * - Closing a chat window only closes the *view* — a running session
  *   keeps generating in the backend and the sessions list reflects it
  */
-import { reactive, watch } from 'vue';
-import { collectAllTabs, firstTile } from '@sf/workspace/tree';
-import { BLANK_CONTENT, type WorkspaceApi, type ExternalDropTarget } from '@sf/composables/useWorkspace';
+
+import { BLANK_CONTENT, type ExternalDropTarget, type WorkspaceApi } from '@sf/composables/useWorkspace';
 import type { WorkspaceTabDef } from '@sf/types/layout';
+import { collectAllTabs, firstTile } from '@sf/workspace/tree';
+import { reactive, watch } from 'vue';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -181,11 +182,17 @@ function loadPrefs(): ChatState['prefs'] {
         renderMarkdown: j.renderMarkdown !== false,
       };
     }
-  } catch { /* corrupted or unavailable — use defaults */ }
+  } catch {
+    /* corrupted or unavailable — use defaults */
+  }
   return { sendKey: 'enter', renderMarkdown: true };
 }
 function savePrefs() {
-  try { localStorage.setItem(PREFS_KEY, JSON.stringify(state.prefs)); } catch { /* storage unavailable */ }
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(state.prefs));
+  } catch {
+    /* storage unavailable */
+  }
 }
 function setSendKey(mode: SendKeyMode) {
   state.prefs.sendKey = mode;
@@ -202,7 +209,9 @@ function loadDrafts(): Record<string, string> {
       const j = JSON.parse(raw);
       if (j && typeof j === 'object') return j;
     }
-  } catch { /* corrupted or unavailable — start empty */ }
+  } catch {
+    /* corrupted or unavailable — start empty */
+  }
   return {};
 }
 function saveDrafts() {
@@ -216,7 +225,9 @@ function saveDrafts() {
       }
     }
     localStorage.setItem(DRAFTS_KEY, JSON.stringify(state.drafts));
-  } catch { /* storage unavailable */ }
+  } catch {
+    /* storage unavailable */
+  }
 }
 
 // ── Per-window UI state (survives workspace persistence) ───────────────────
@@ -297,31 +308,60 @@ function loadPendingChats(): PendingChatInfo[] {
         return j.filter((p) => p && typeof p.file === 'string');
       }
     }
-  } catch { /* corrupted or unavailable — start empty */ }
+  } catch {
+    /* corrupted or unavailable — start empty */
+  }
   return [];
 }
 
 function persistPendingChats(list: PendingChatInfo[]) {
   try {
     localStorage.setItem(PENDING_KEY, JSON.stringify(list.slice(-20)));
-  } catch { /* storage unavailable */ }
+  } catch {
+    /* storage unavailable */
+  }
 }
 
 /** Build the local session entry for a not-yet-materialized chat. */
 function pendingSessionEntry(file: string, cwd: string, createdAt: number): ChatSession {
   return {
     id: encodeURIComponent(file),
-    sessionId: null, file, title: 'New Chat', cwd,
-    createdAt, lastActivity: createdAt,
-    status: 'idle', compacting: false, compactResult: null, compactStartedAt: 0, compactEndedAt: 0, compactError: null, preview: '',
+    sessionId: null,
+    file,
+    title: 'New Chat',
+    cwd,
+    createdAt,
+    lastActivity: createdAt,
+    status: 'idle',
+    compacting: false,
+    compactResult: null,
+    compactStartedAt: 0,
+    compactEndedAt: 0,
+    compactError: null,
+    preview: '',
     stats: {
-      model: null, tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0, promptTokens: 0,
-      costUsd: 0, costBreakdown: [], cacheWaste: { missedCost: 0, missedTokens: 0, missCount: 0 },
-      startedAt: createdAt, lastActivity: createdAt, messageCount: 0, userMessages: 0,
-      assistantMessages: 0, toolCalls: 0, toolResults: 0,
+      model: null,
+      tokensIn: 0,
+      tokensOut: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      promptTokens: 0,
+      costUsd: 0,
+      costBreakdown: [],
+      cacheWaste: { missedCost: 0, missedTokens: 0, missCount: 0 },
+      startedAt: createdAt,
+      lastActivity: createdAt,
+      messageCount: 0,
+      userMessages: 0,
+      assistantMessages: 0,
+      toolCalls: 0,
+      toolResults: 0,
     },
-    messages: [], messagesLoaded: true,
-    hasMoreOlder: false, oldestId: null, loadingOlder: false,
+    messages: [],
+    messagesLoaded: true,
+    hasMoreOlder: false,
+    oldestId: null,
+    loadingOlder: false,
     context: null,
     onDisk: false,
   };
@@ -406,7 +446,14 @@ interface SessionInfo {
   firstMessage: string;
   preview: string;
   model: string | null;
-  tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; prompt: number; total: number };
+  tokens: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    prompt: number;
+    total: number;
+  };
   cost: number;
   costBreakdown: { key: string; cost: number; tokens: number }[];
   cacheWaste: { missedCost: number; missedTokens: number; missCount: number };
@@ -464,25 +511,49 @@ function toSession(raw: SessionInfo): ChatSession {
 
 /** List-row title: session name, else the first message (truncated). */
 function sessionTitle(raw: SessionInfo): string {
-  return raw.name
-    ?? (raw.firstMessage ? (raw.firstMessage.length > 60 ? raw.firstMessage.slice(0, 60) + '…' : raw.firstMessage) : 'Untitled chat');
+  return (
+    raw.name ??
+    (raw.firstMessage
+      ? raw.firstMessage.length > 60
+        ? `${raw.firstMessage.slice(0, 60)}…`
+        : raw.firstMessage
+      : 'Untitled chat')
+  );
 }
 
 /** The fields a session list row renders, as a comparable string. Used to
  *  skip fetchList's object replacement when nothing observable changed. */
 function listSignature(raw: SessionInfo): string {
   return [
-    raw.file, raw.modified, raw.running, raw.messageCount, raw.model ?? '',
-    raw.preview, sessionTitle(raw), raw.tokens.input, raw.tokens.output,
-    raw.cost, raw.cwd, JSON.stringify(raw.context ?? ''),
+    raw.file,
+    raw.modified,
+    raw.running,
+    raw.messageCount,
+    raw.model ?? '',
+    raw.preview,
+    sessionTitle(raw),
+    raw.tokens.input,
+    raw.tokens.output,
+    raw.cost,
+    raw.cwd,
+    JSON.stringify(raw.context ?? ''),
   ].join('|');
 }
 
 function oldListSignature(s: ChatSession): string {
   return [
-    s.file, s.lastActivity, s.status === 'running', s.stats.messageCount,
-    s.stats.model ?? '', s.preview, s.title, s.stats.tokensIn, s.stats.tokensOut,
-    s.stats.costUsd, s.cwd, JSON.stringify(s.context ?? ''),
+    s.file,
+    s.lastActivity,
+    s.status === 'running',
+    s.stats.messageCount,
+    s.stats.model ?? '',
+    s.preview,
+    s.title,
+    s.stats.tokensIn,
+    s.stats.tokensOut,
+    s.stats.costUsd,
+    s.cwd,
+    JSON.stringify(s.context ?? ''),
   ].join('|');
 }
 
@@ -506,11 +577,14 @@ async function fetchList() {
     // Nothing observable changed (poll timer, refresh-event bursts) → keep
     // the existing session objects and the array reference, so panels and
     // watchers don't re-render for a no-op refresh.
-    if (memoryOnly.length === 0 && sessions.length === prev.size
-        && sessions.every((raw) => {
-          const old = prev.get(raw.file);
-          return old && oldListSignature(old) === listSignature(raw);
-        })) {
+    if (
+      memoryOnly.length === 0 &&
+      sessions.length === prev.size &&
+      sessions.every((raw) => {
+        const old = prev.get(raw.file);
+        return old && oldListSignature(old) === listSignature(raw);
+      })
+    ) {
       state.backend = 'online';
       return;
     }
@@ -538,7 +612,7 @@ async function fetchList() {
       }),
     ];
     state.backend = 'online';
-  } catch (e) {
+  } catch (_e) {
     state.backend = 'offline';
   }
 }
@@ -590,7 +664,8 @@ export function toggleDir(path: string) {
   const willCheck = !state.selectedDirs.has(path);
   const next = new Set(state.selectedDirs);
   for (const p of paths) {
-    if (willCheck) next.add(p); else next.delete(p);
+    if (willCheck) next.add(p);
+    else next.delete(p);
   }
   state.selectedDirs = next;
 }
@@ -601,7 +676,9 @@ export async function loadTree() {
     const res = await fetch('/api/tree');
     const j = await res.json();
     if (j && typeof j.name === 'string') applyTree(j);
-  } catch { /* backend offline — the SSE push will fill it in */ }
+  } catch {
+    /* backend offline — the SSE push will fill it in */
+  }
 }
 
 export function toggleTreeCollapsed(path: string) {
@@ -638,7 +715,11 @@ function lastAssistant(s: ChatSession): DisplayMessage | undefined {
 function mergeToolResult(s: ChatSession, toolCallId: string, text: string, isError: boolean) {
   for (let i = s.messages.length - 1; i >= 0; i--) {
     const tc = s.messages[i].toolCalls?.find((t) => t.id === toolCallId);
-    if (tc) { tc.result = text; tc.isError = isError; return; }
+    if (tc) {
+      tc.result = text;
+      tc.isError = isError;
+      return;
+    }
   }
 }
 
@@ -740,7 +821,7 @@ function handleEvent(ev: any) {
       // Anything new on disk (our own appends OR external writers like the
       // pi TUI) — refresh the list and pull new messages into loaded views.
       const s = byFile(ev.file);
-      if (s && s.messagesLoaded) void syncTail(s.id);
+      if (s?.messagesLoaded) void syncTail(s.id);
       void fetchList();
       break;
     }
@@ -763,9 +844,15 @@ function connectEvents() {
     // Reconnect (or first connect): heal any events missed while offline.
     syncAllTails();
   };
-  es.onerror = () => { state.backend = 'offline'; }; // EventSource auto-reconnects
+  es.onerror = () => {
+    state.backend = 'offline';
+  }; // EventSource auto-reconnects
   es.onmessage = (e) => {
-    try { handleEvent(JSON.parse(e.data)); } catch { /* ignore malformed */ }
+    try {
+      handleEvent(JSON.parse(e.data));
+    } catch {
+      /* ignore malformed */
+    }
   };
 
   // Connectivity + latency: a 5s /api/health round-trip (the check includes
@@ -866,9 +953,7 @@ export function bindWorkspace(api: WorkspaceApi) {
   watch(
     () => activeTabOfFocusedTile(),
     (tabId) => {
-      state.activeChatId = tabId && tabId.startsWith(TAB_PREFIX)
-        ? tabId.slice(TAB_PREFIX.length)
-        : null;
+      state.activeChatId = tabId?.startsWith(TAB_PREFIX) ? tabId.slice(TAB_PREFIX.length) : null;
     },
     { immediate: true },
   );
@@ -889,7 +974,9 @@ export function bindWorkspace(api: WorkspaceApi) {
   // Tile-strip "+" = start a new chat. The framework's default "+" creates
   // an editor-style "Untitled" tab; a chat product has no use for that, so
   // the app decides what a new workspace item means here.
-  api.setNewTabHandler(() => { void newChat(); }, 'New Chat');
+  api.setNewTabHandler(() => {
+    void newChat();
+  }, 'New Chat');
 
   // Clicking a TAB is a real user gesture (the framework distinguishes it
   // from programmatic activation): interacting with the review window this
@@ -1008,7 +1095,7 @@ export function isViewOpen(sessionId: string): boolean {
 function cwdMatches(s: ChatSession, dirs: Set<string>): boolean {
   if (dirs.size === 0) return true;
   for (const d of dirs) {
-    if (s.cwd === d || s.cwd.startsWith(d + '/')) return true;
+    if (s.cwd === d || s.cwd.startsWith(`${d}/`)) return true;
   }
   return false;
 }
@@ -1223,7 +1310,9 @@ export async function stopSession(sessionId: string) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ file: s.file }),
     });
-  } catch { /* session not running — fine */ }
+  } catch {
+    /* session not running — fine */
+  }
 }
 
 /** Append a local-only system message (slash command output) to a session. */
@@ -1355,19 +1444,27 @@ export async function loadOlder(sessionId: string) {
  */
 export async function syncTail(sessionId: string) {
   const s = findSession(sessionId);
-  if (!s || !s.messagesLoaded) return;
+  if (!s?.messagesLoaded) return;
   // Cursor: the last message that has a stable file entry id.
   let lastEntryId: string | null = null;
   for (let i = s.messages.length - 1; i >= 0; i--) {
     const id = s.messages[i].id;
-    if (id && !id.startsWith('pending-') && !id.startsWith('asst-') && !id.startsWith('toolresult-') && !id.startsWith('msg-')) {
+    if (
+      id &&
+      !id.startsWith('pending-') &&
+      !id.startsWith('asst-') &&
+      !id.startsWith('toolresult-') &&
+      !id.startsWith('msg-')
+    ) {
       lastEntryId = id;
       break;
     }
   }
   if (!lastEntryId) return;
   try {
-    const data = await api<any>(`/api/sessions/messages?file=${encodeURIComponent(s.file)}&after=${encodeURIComponent(lastEntryId)}`);
+    const data = await api<any>(
+      `/api/sessions/messages?file=${encodeURIComponent(s.file)}&after=${encodeURIComponent(lastEntryId)}`,
+    );
     const incoming = (data.messages ?? []) as DisplayMessage[];
     if (incoming.length > 0) {
       // Dedupe by id, or by (role, timestamp): streamed messages carry live
@@ -1380,7 +1477,9 @@ export async function syncTail(sessionId: string) {
     }
     // Full-session info rides along — keep stats fresh too.
     applySessionInfo(s, data);
-  } catch { /* transient — next refresh/connect will retry */ }
+  } catch {
+    /* transient — next refresh/connect will retry */
+  }
 }
 
 /** Merge the full-session info that rides along on message responses. */
@@ -1405,25 +1504,47 @@ function applySessionInfo(s: ChatSession, data: any) {
 // ── Public API ─────────────────────────────────────────────────────────────
 
 export const store = {
-  get sessions() { return state.sessions; },
+  get sessions() {
+    return state.sessions;
+  },
   /** sessions honoring the directory filter (cwd under the selected path) */
   get filteredSessions() {
     return state.sessions.filter((s) => cwdMatches(s, state.selectedDirs));
   },
-  get selectedDirs() { return state.selectedDirs; },
+  get selectedDirs() {
+    return state.selectedDirs;
+  },
   toggleDir,
-  get tree() { return state.tree; },
-  get treeCollapsed() { return state.treeCollapsed; },
+  get tree() {
+    return state.tree;
+  },
+  get treeCollapsed() {
+    return state.treeCollapsed;
+  },
   loadTree,
   toggleTreeCollapsed,
-  get activeChatId() { return state.activeChatId; },
-  get openViewTabIds() { return state.openViewTabIds; },
-  get backend() { return state.backend; },
-  get backendPing() { return state.backendPing; },
-  get lastError() { return state.lastError; },
-  clearLastError() { state.lastError = ''; },
+  get activeChatId() {
+    return state.activeChatId;
+  },
+  get openViewTabIds() {
+    return state.openViewTabIds;
+  },
+  get backend() {
+    return state.backend;
+  },
+  get backendPing() {
+    return state.backendPing;
+  },
+  get lastError() {
+    return state.lastError;
+  },
+  clearLastError() {
+    state.lastError = '';
+  },
   /** unsent composer text of a session's chat window ('' if none) */
-  draftOf(sessionId: string): string { return state.drafts[sessionId] ?? ''; },
+  draftOf(sessionId: string): string {
+    return state.drafts[sessionId] ?? '';
+  },
   setDraft(sessionId: string, text: string) {
     state.drafts[sessionId] = text;
     saveDrafts();
@@ -1443,7 +1564,9 @@ export const store = {
   closeChatView,
   renameSession,
   deleteSession,
-  get prefs() { return state.prefs; },
+  get prefs() {
+    return state.prefs;
+  },
   setSendKey,
   setRenderMarkdown,
   loadOlder,
@@ -1483,7 +1606,11 @@ export function fmtDateTime(ts: number): string {
   const hh = String(d.getHours()).padStart(2, '0');
   const mm = String(d.getMinutes()).padStart(2, '0');
   const time = `${hh}:${mm}`;
-  if (d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()) {
+  if (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  ) {
     return time;
   }
   const mo = String(d.getMonth() + 1).padStart(2, '0');

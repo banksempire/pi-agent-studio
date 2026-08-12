@@ -5,9 +5,9 @@
  */
 import grpc from '@grpc/grpc-js';
 import { AgentRegistry, WATCHDOG_INTERVAL_MS } from './registry.mjs';
+import { NEW_CHAT_CWD, SESSIONS_ROOT, sdkDir } from './sdk-bridge.mjs';
 import { createServer } from './server.mjs';
-import { slashCatalog, listSkills } from './slash.mjs';
-import { sdkDir, SESSIONS_ROOT, NEW_CHAT_CWD } from './sdk-bridge.mjs';
+import { listSkills, slashCatalog } from './slash.mjs';
 
 const HOST = process.env.PI_NEST_HOST ?? '127.0.0.1';
 const PORT = Number(process.env.PI_NEST_PORT ?? 7495);

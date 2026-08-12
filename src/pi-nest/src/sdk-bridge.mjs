@@ -7,8 +7,8 @@
 import { execSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import path from 'node:path';
 import os from 'node:os';
+import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export const SESSIONS_ROOT = path.join(os.homedir(), '.pi', 'agent', 'sessions');
@@ -21,7 +21,9 @@ export function findSdkDir() {
     const root = execSync('npm root -g', { encoding: 'utf8' }).trim();
     const p = path.join(root, '@earendil-works', 'pi-coding-agent');
     if (existsSync(path.join(p, 'dist', 'index.js'))) return p;
-  } catch { /* fall through */ }
+  } catch {
+    /* fall through */
+  }
   return null;
 }
 
@@ -35,7 +37,7 @@ const { BUILTIN_SLASH_COMMANDS } = await import(
   pathToFileURL(path.join(sdkDir, 'dist', 'core', 'slash-commands.js')).href
 );
 
-export { sdk, sdkDir, BUILTIN_SLASH_COMMANDS };
+export { BUILTIN_SLASH_COMMANDS, sdk, sdkDir };
 
 /** Stable id for compaction/branch summaries: derived from the text, so the
  *  live SSE copy and the file-parse copy upsert to the same message. */
@@ -115,7 +117,8 @@ export function toDisplayMessage(message) {
 export function messageId(message) {
   if (message.role === 'assistant') return `asst-${message.timestamp ?? Date.now()}`;
   if (message.role === 'user') return `user-${message.timestamp ?? Date.now()}`;
-  if (message.role === 'toolResult') return `toolresult-${message.toolCallId ?? message.timestamp ?? Date.now()}`;
+  if (message.role === 'toolResult')
+    return `toolresult-${message.toolCallId ?? message.timestamp ?? Date.now()}`;
   if (message.role === 'compactionSummary' || message.role === 'branchSummary') {
     return `summary-${hashId(message.summary ?? '')}`;
   }
@@ -138,7 +141,7 @@ export function extractText(result) {
 const EXTENDED_THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
 export function supportedThinkingLevels(model) {
-  if (!model || !model.reasoning) return ['off'];
+  if (!model?.reasoning) return ['off'];
   return EXTENDED_THINKING_LEVELS.filter((level) => {
     const mapped = model.thinkingLevelMap?.[level];
     if (mapped === null) return false;

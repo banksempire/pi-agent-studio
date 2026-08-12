@@ -1,24 +1,22 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue';
 import Menu from '@sf/components/Menu.vue';
 import type { MenuNodeDef } from '@sf/types/layout';
-import { useChatStore, timeAgo, startSessionDrag, endExternalDrag, type ChatSession } from '../store/chat';
+import { computed, nextTick, ref } from 'vue';
+import { type ChatSession, endExternalDrag, startSessionDrag, timeAgo, useChatStore } from '../store/chat';
 
 const store = useChatStore();
 
-const sessions = computed(() =>
-  [...store.filteredSessions].sort((a, b) => b.lastActivity - a.lastActivity),
-);
+const sessions = computed(() => [...store.filteredSessions].sort((a, b) => b.lastActivity - a.lastActivity));
 
 function preview(s: ChatSession): string {
   const t = (s.preview || s.title).replace(/\s+/g, ' ').trim();
-  return t.length > 56 ? t.slice(0, 56) + '…' : t;
+  return t.length > 56 ? `${t.slice(0, 56)}…` : t;
 }
 
 /** Which row's ⋮ action menu is open (session id; null = none). */
 const menuOpenFor = ref<string | null>(null);
 
-function menuItems(s: ChatSession): MenuNodeDef[] {
+function menuItems(_s: ChatSession): MenuNodeDef[] {
   return [
     { id: 'rename', label: 'Rename' },
     { id: 'delete', label: 'Delete' },
@@ -26,9 +24,7 @@ function menuItems(s: ChatSession): MenuNodeDef[] {
 }
 
 /** Inline themed dialog (no browser popups): rename input or delete confirm. */
-type RowDialog =
-  | { kind: 'rename'; session: ChatSession }
-  | { kind: 'delete'; session: ChatSession };
+type RowDialog = { kind: 'rename'; session: ChatSession } | { kind: 'delete'; session: ChatSession };
 const dialog = ref<RowDialog | null>(null);
 const dialogEl = ref<HTMLElement | null>(null);
 const renameEl = ref<HTMLInputElement | null>(null);

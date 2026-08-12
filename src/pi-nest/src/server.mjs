@@ -7,8 +7,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import grpc from '@grpc/grpc-js';
 import protoLoader from '@grpc/proto-loader';
-import { AgentRegistry, WATCHDOG_INTERVAL_MS } from './registry.mjs';
-import { execSlash, slashCatalog, listSkills } from './slash.mjs';
+import { AgentRegistry } from './registry.mjs';
+import { execSlash, listSkills, slashCatalog } from './slash.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROTO_PATH = path.join(__dirname, '..', 'proto', 'pi_nest.proto');
@@ -21,7 +21,7 @@ const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
 });
 const piNest = grpc.loadPackageDefinition(packageDefinition).pi_nest;
 
-export function createServer({ registry = new AgentRegistry(), onStateChange } = {}) {
+export function createServer({ registry = new AgentRegistry(), onStateChange: _onStateChange } = {}) {
   const server = new grpc.Server();
   const handlers = {
     Ping: (_call, cb) => cb(null, { ok: true }),
@@ -89,7 +89,11 @@ export function createServer({ registry = new AgentRegistry(), onStateChange } =
           command: call.request.command ?? '',
         });
         let extra = {};
-        try { extra = call.request.extraJson ? JSON.parse(call.request.extraJson) : {}; } catch { /* ignore */ }
+        try {
+          extra = call.request.extraJson ? JSON.parse(call.request.extraJson) : {};
+        } catch {
+          /* ignore */
+        }
         const r = await execSlash(registry, {
           agentId: call.request.agentId,
           command: call.request.command,
@@ -141,14 +145,20 @@ export function createServer({ registry = new AgentRegistry(), onStateChange } =
         try {
           // broadcast() pre-stringified the payload once for all subscribers
           call.write({ type: ev.type, file: ev.file, json: ev.json });
-        } catch { /* client gone */ }
+        } catch {
+          /* client gone */
+        }
       };
       registry.on('event', handler);
       // Replay the current per-agent state: a (re)connecting relay must not
       // lose in-flight transient events (compaction WIP, run status flips)
       // that were broadcast while its stream was down.
       for (const snap of registry.snapshot(filter)) {
-        try { call.write(snap); } catch { /* client gone */ }
+        try {
+          call.write(snap);
+        } catch {
+          /* client gone */
+        }
       }
       call.on('cancelled', () => registry.off('event', handler));
       call.on('error', () => registry.off('event', handler));

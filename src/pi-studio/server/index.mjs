@@ -14,9 +14,10 @@
  * No SDK import here — pi-nest owns the SDK. The only SDK-derived logic that
  * survives is the (stateless) session-file parser below.
  */
-import { createServer } from 'node:http';
+
 import { createReadStream, existsSync } from 'node:fs';
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { createClient, waitForNest } from '../../pi-nest/src/client.mjs';
@@ -37,7 +38,11 @@ function parseEntries(content) {
   for (const line of content.split('\n')) {
     const t = line.trim();
     if (!t) continue;
-    try { out.push(JSON.parse(t)); } catch { /* skip malformed line */ }
+    try {
+      out.push(JSON.parse(t));
+    } catch {
+      /* skip malformed line */
+    }
   }
   return out;
 }
@@ -109,7 +114,7 @@ function estimateEntryTokens(entry) {
 function validAssistantUsage(entry) {
   if (entry.type !== 'message') return null;
   const m = entry.message;
-  if (!m || m.role !== 'assistant' || m.stopReason === 'aborted' || m.stopReason === 'error') return null;
+  if (m?.role !== 'assistant' || m.stopReason === 'aborted' || m.stopReason === 'error') return null;
   return m.usage && usageTokensOf(m.usage) > 0 ? m.usage : null;
 }
 
@@ -183,20 +188,26 @@ function deriveSessionStats(entries) {
         addUsage(bucket(breakdown, `${msg.provider}/${msg.responseModel ?? msg.model}`), msg.usage);
         // Cache-miss detection for this turn (cache-stats.detectMiss).
         const promptTokens = msg.usage.input + msg.usage.cacheRead + msg.usage.cacheWrite;
-        if (prev && promptTokens > 0
-            && (msg.usage.cacheRead + msg.usage.cacheWrite > 0 || prev.reportedCache)) {
+        if (
+          prev &&
+          promptTokens > 0 &&
+          (msg.usage.cacheRead + msg.usage.cacheWrite > 0 || prev.reportedCache)
+        ) {
           const missedTokens = Math.min(prev.promptTokens, promptTokens) - msg.usage.cacheRead;
-          if (missedTokens > 1024) { // NOISE_FLOOR_TOKENS
+          if (missedTokens > 1024) {
+            // NOISE_FLOOR_TOKENS
             // Extra cost = missed tokens billed at the paid rate (input/cacheWrite)
             // instead of the cache-read rate.
             const paidTokens = msg.usage.input + msg.usage.cacheWrite;
-            const paidPerToken = paidTokens > 0
-              ? ((msg.usage.cost?.input ?? 0) + (msg.usage.cost?.cacheWrite ?? 0)) / paidTokens
-              : 0;
+            const paidPerToken =
+              paidTokens > 0
+                ? ((msg.usage.cost?.input ?? 0) + (msg.usage.cost?.cacheWrite ?? 0)) / paidTokens
+                : 0;
             const rate = modelCostRates.get(`${msg.provider}/${msg.model}`);
-            const readPerToken = msg.usage.cacheRead > 0
-              ? (msg.usage.cost?.cacheRead ?? 0) / msg.usage.cacheRead
-              : (rate?.cacheRead ?? 0) / 1_000_000;
+            const readPerToken =
+              msg.usage.cacheRead > 0
+                ? (msg.usage.cost?.cacheRead ?? 0) / msg.usage.cacheRead
+                : (rate?.cacheRead ?? 0) / 1_000_000;
             waste.missedTokens += missedTokens;
             waste.missedCost += missedTokens * Math.max(0, paidPerToken - readPerToken);
             waste.missCount += 1;
@@ -256,7 +267,10 @@ function bucket(map, key) {
 function estimateContextTokens(chain) {
   let compIdx = -1;
   for (let i = chain.length - 1; i >= 0; i--) {
-    if (chain[i].type === 'compaction') { compIdx = i; break; }
+    if (chain[i].type === 'compaction') {
+      compIdx = i;
+      break;
+    }
   }
   // The message set the SDK would feed the LLM (buildContextEntries):
   // compaction summary + kept tail (firstKeptEntryId … compaction) + every
@@ -277,7 +291,10 @@ function estimateContextTokens(chain) {
     // next response (TUI "?/window" state).
     let hasPost = false;
     for (let i = compIdx + 1; i < chain.length; i++) {
-      if (validAssistantUsage(chain[i])) { hasPost = true; break; }
+      if (validAssistantUsage(chain[i])) {
+        hasPost = true;
+        break;
+      }
     }
     if (!hasPost) return null;
   }
@@ -285,7 +302,11 @@ function estimateContextTokens(chain) {
   let anchorTokens = 0;
   for (let i = ctx.length - 1; i >= 0; i--) {
     const usage = validAssistantUsage(ctx[i]);
-    if (usage) { anchor = i; anchorTokens = usageTokensOf(usage); break; }
+    if (usage) {
+      anchor = i;
+      anchorTokens = usageTokensOf(usage);
+      break;
+    }
   }
   let trailing = 0;
   for (let i = anchor + 1; i < ctx.length; i++) trailing += estimateEntryTokens(ctx[i]);
@@ -440,7 +461,10 @@ function deriveSession(entries, st) {
       const idx = toolCallIndex.get(dm.toolCallId);
       if (idx !== undefined) {
         const tc = messages[idx].toolCalls?.find((t) => t.id === dm.toolCallId);
-        if (tc) { tc.result = dm.text; tc.isError = dm.isError; }
+        if (tc) {
+          tc.result = dm.text;
+          tc.isError = dm.isError;
+        }
         dm.merged = true;
       }
     }
@@ -482,7 +506,9 @@ function readTail(file, start) {
   return new Promise((resolve, reject) => {
     let data = '';
     const rs = createReadStream(file, { start, encoding: 'utf8' });
-    rs.on('data', (c) => { data += c; });
+    rs.on('data', (c) => {
+      data += c;
+    });
     rs.on('end', () => resolve(data));
     rs.on('error', reject);
   });
@@ -499,15 +525,25 @@ async function reloadSessionCache(file, st, cached) {
       let pendingRaw = '';
       if (chunk && !chunk.endsWith('\n')) {
         const nl = chunk.lastIndexOf('\n');
-        if (nl < 0) { pendingRaw = chunk; chunk = ''; }
-        else { pendingRaw = chunk.slice(nl + 1); chunk = chunk.slice(0, nl + 1); }
+        if (nl < 0) {
+          pendingRaw = chunk;
+          chunk = '';
+        } else {
+          pendingRaw = chunk.slice(nl + 1);
+          chunk = chunk.slice(0, nl + 1);
+        }
       }
       const newEntries = [];
       let boundaryOk = true;
       for (const line of chunk.split('\n')) {
         const t = line.trim();
         if (!t) continue;
-        try { newEntries.push(JSON.parse(t)); } catch { boundaryOk = false; break; }
+        try {
+          newEntries.push(JSON.parse(t));
+        } catch {
+          boundaryOk = false;
+          break;
+        }
       }
       // A malformed line means cached.size no longer sits at a line start —
       // the file was rewritten under us (e.g. the TUI resumed/reloaded it).
@@ -702,19 +738,38 @@ async function withContext(info) {
  *  RECURSIVE — how many chats live under that folder — matching the filter
  *  semantics (a click filters to every session under the path). */
 
-const TREE_SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next', '.cache', '.venv', '__pycache__', 'coverage', 'target']);
+const TREE_SKIP_DIRS = new Set([
+  'node_modules',
+  '.git',
+  'dist',
+  'build',
+  '.next',
+  '.cache',
+  '.venv',
+  '__pycache__',
+  'coverage',
+  'target',
+]);
 const TREE_MAX_DEPTH = 6;
 
 /** cwd → number of session files started there (cached parses). */
 async function sessionCwdCounts() {
   const counts = new Map();
   let dirs = [];
-  try { dirs = await readdir(SESSIONS_ROOT, { withFileTypes: true }); } catch { return counts; }
+  try {
+    dirs = await readdir(SESSIONS_ROOT, { withFileTypes: true });
+  } catch {
+    return counts;
+  }
   for (const dirEntry of dirs) {
     if (!dirEntry.isDirectory()) continue;
     const dir = path.join(SESSIONS_ROOT, dirEntry.name);
     let files = [];
-    try { files = await readdir(dir); } catch { continue; }
+    try {
+      files = await readdir(dir);
+    } catch {
+      continue;
+    }
     for (const f of files) {
       if (!f.endsWith('.jsonl')) continue;
       const info = await analyzeSession(path.join(dir, f));
@@ -728,7 +783,11 @@ async function buildTree(dir, depth, counts) {
   const node = { name: path.basename(dir), path: dir, count: 0, children: [] };
   if (depth < TREE_MAX_DEPTH) {
     let entries = [];
-    try { entries = await readdir(dir, { withFileTypes: true }); } catch { /* unreadable */ }
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      /* unreadable */
+    }
     for (const e of entries) {
       if (!e.isDirectory() || TREE_SKIP_DIRS.has(e.name)) continue;
       node.children.push(await buildTree(path.join(dir, e.name), depth + 1, counts));
@@ -750,7 +809,11 @@ const clients = new Set();
 function emit(event) {
   const data = `data: ${JSON.stringify(event)}\n\n`;
   for (const res of clients) {
-    try { res.write(data); } catch { /* client gone */ }
+    try {
+      res.write(data);
+    } catch {
+      /* client gone */
+    }
   }
 }
 
@@ -763,13 +826,16 @@ const refreshTimers = new Map();
 function emitRefresh(file) {
   const existing = refreshTimers.get(file);
   if (existing) clearTimeout(existing);
-  refreshTimers.set(file, setTimeout(() => {
-    refreshTimers.delete(file);
-    emit({ type: 'refresh', file });
-    // The folder tree's session counts changed — push the rebuilt tree so
-    // clients don't refetch on every section flip.
-    scheduleTreePush();
-  }, 250));
+  refreshTimers.set(
+    file,
+    setTimeout(() => {
+      refreshTimers.delete(file);
+      emit({ type: 'refresh', file });
+      // The folder tree's session counts changed — push the rebuilt tree so
+      // clients don't refetch on every section flip.
+      scheduleTreePush();
+    }, 250),
+  );
 }
 
 /** Coalesced tree push: rebuild + broadcast the Directory tree shortly after
@@ -781,7 +847,11 @@ function scheduleTreePush() {
   if (treeTimer) return;
   treeTimer = setTimeout(async () => {
     treeTimer = null;
-    try { emit({ type: 'tree', tree: await buildSessionTree() }); } catch { /* ignore */ }
+    try {
+      emit({ type: 'tree', tree: await buildSessionTree() });
+    } catch {
+      /* ignore */
+    }
   }, 500);
 }
 
@@ -798,7 +868,11 @@ async function relayNestEvents() {
       await new Promise((resolve) => {
         stream.on('data', (ev) => {
           let payload = {};
-          try { payload = ev.json ? JSON.parse(ev.json) : {}; } catch { /* ignore */ }
+          try {
+            payload = ev.json ? JSON.parse(ev.json) : {};
+          } catch {
+            /* ignore */
+          }
           // Preserve the SSE vocabulary the frontend expects: message events
           // carry the display message under `message`; everything else is
           // spread at top level (status, tool info, ...).
@@ -806,10 +880,18 @@ async function relayNestEvents() {
           else if (ev.type === 'refresh') emitRefresh(ev.file);
           else emit({ type: ev.type, file: ev.file, ...payload });
         });
-        stream.once('error', () => { console.log('[gateway] relay stream dropped — reconnecting'); resolve(); });
-        stream.once('end', () => { console.log('[gateway] relay stream ended — reconnecting'); resolve(); });
+        stream.once('error', () => {
+          console.log('[gateway] relay stream dropped — reconnecting');
+          resolve();
+        });
+        stream.once('end', () => {
+          console.log('[gateway] relay stream ended — reconnecting');
+          resolve();
+        });
       });
-    } catch { /* keepalive retry */ }
+    } catch {
+      /* keepalive retry */
+    }
     await new Promise((r) => setTimeout(r, 1000));
   }
 }
@@ -829,9 +911,16 @@ function sendJson(res, code, obj) {
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let data = '';
-    req.on('data', (c) => { data += c; if (data.length > 1e6) req.destroy(); });
+    req.on('data', (c) => {
+      data += c;
+      if (data.length > 1e6) req.destroy();
+    });
     req.on('end', () => {
-      try { resolve(data ? JSON.parse(data) : {}); } catch { reject(new Error('invalid JSON body')); }
+      try {
+        resolve(data ? JSON.parse(data) : {});
+      } catch {
+        reject(new Error('invalid JSON body'));
+      }
     });
     req.on('error', reject);
   });
@@ -868,7 +957,7 @@ const server = createServer(async (req, res) => {
       // Live-state overlay comes from pi-nest (the agent owner), not from this
       // process — so `running` survives any restart of this server.
       const states = new Map(
-        (await client.listStates().catch(() => ({ states: [] }))).states.map((s) => [s.agentId, s])
+        (await client.listStates().catch(() => ({ states: [] }))).states.map((s) => [s.agentId, s]),
       );
       // Parallel parse (cache makes re-reads cheap; cold starts split across cores).
       // The catalog is ensured BEFORE parsing so deriveSessionStats' cache-waste
@@ -893,7 +982,30 @@ const server = createServer(async (req, res) => {
       if (!existsSync(file)) {
         const st = await client.getAgentState({ agentId: file }).catch(() => null);
         if (st?.state?.status) {
-          sendJson(res, 200, { file, name: null, cwd: NEW_CHAT_CWD, created: Date.now(), modified: Date.now(), messageCount: 0, userMessages: 0, assistantMessages: 0, toolCalls: 0, toolResults: 0, firstMessage: '', preview: '', model: null, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, prompt: 0, total: 0 }, cost: 0, costBreakdown: [], cacheWaste: { missedTokens: 0, missedCost: 0, missCount: 0 }, running: st.state.status === 'running', context: { tokens: null, window: 0, percent: null }, messages: [], oldestId: null, hasMore: false });
+          sendJson(res, 200, {
+            file,
+            name: null,
+            cwd: NEW_CHAT_CWD,
+            created: Date.now(),
+            modified: Date.now(),
+            messageCount: 0,
+            userMessages: 0,
+            assistantMessages: 0,
+            toolCalls: 0,
+            toolResults: 0,
+            firstMessage: '',
+            preview: '',
+            model: null,
+            tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, prompt: 0, total: 0 },
+            cost: 0,
+            costBreakdown: [],
+            cacheWaste: { missedTokens: 0, missedCost: 0, missCount: 0 },
+            running: st.state.status === 'running',
+            context: { tokens: null, window: 0, percent: null },
+            messages: [],
+            oldestId: null,
+            hasMore: false,
+          });
           return;
         }
         return sendJson(res, 404, { error: 'session file not found' });
@@ -986,7 +1098,11 @@ const server = createServer(async (req, res) => {
 
     if (p === '/api/health') {
       let nest = false;
-      try { nest = (await client.ping()).ok; } catch { /* nest down */ }
+      try {
+        nest = (await client.ping()).ok;
+      } catch {
+        /* nest down */
+      }
       sendJson(res, 200, { ok: true, nest });
       return;
     }
@@ -1004,9 +1120,13 @@ const server = createServer(async (req, res) => {
 });
 
 // Heartbeat keeps SSE connections alive through proxies.
-const heartbeat = setInterval(() => {
+const _heartbeat = setInterval(() => {
   for (const res of clients) {
-    try { res.write(': ping\n\n'); } catch { /* ignore */ }
+    try {
+      res.write(': ping\n\n');
+    } catch {
+      /* ignore */
+    }
   }
 }, 15000);
 
@@ -1019,12 +1139,20 @@ const fileMtimes = new Map();
 
 async function watchSessionFiles() {
   let dirs = [];
-  try { dirs = await readdir(SESSIONS_ROOT, { withFileTypes: true }); } catch { return; }
+  try {
+    dirs = await readdir(SESSIONS_ROOT, { withFileTypes: true });
+  } catch {
+    return;
+  }
   for (const dirEntry of dirs) {
     if (!dirEntry.isDirectory()) continue;
     const dir = path.join(SESSIONS_ROOT, dirEntry.name);
     let files = [];
-    try { files = await readdir(dir); } catch { continue; } // one bad dir must not abort the pass
+    try {
+      files = await readdir(dir);
+    } catch {
+      continue;
+    } // one bad dir must not abort the pass
     for (const f of files) {
       if (!f.endsWith('.jsonl')) continue;
       const file = path.join(dir, f);
@@ -1032,7 +1160,7 @@ async function watchSessionFiles() {
       if (!st) continue;
       const m = st.mtimeMs;
       if (fileMtimes.get(file) !== m) {
-        const known = fileMtimes.has(file);
+        const _known = fileMtimes.has(file);
         fileMtimes.set(file, m);
         emitRefresh(file);
       }

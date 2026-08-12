@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
-import Menu from '@sf/components/Menu.vue';
 import KeyValueList from '@sf/components/KeyValueList.vue';
-import type { KeyValueItem } from '@sf/types/panel';
+import Menu from '@sf/components/Menu.vue';
 import type { MenuNodeDef } from '@sf/types/layout';
-import { useChatStore, api } from '../store/chat';
+import type { KeyValueItem } from '@sf/types/panel';
+import { computed, onMounted, ref, watch } from 'vue';
+import { api, useChatStore } from '../store/chat';
 
 interface ModelInfo {
   id: string;
@@ -40,9 +40,7 @@ const busy = ref(false);
 const error = ref('');
 const open = ref(false);
 
-const active = computed(() =>
-  store.activeChatId ? store.findSession(store.activeChatId) ?? null : null,
-);
+const active = computed(() => (store.activeChatId ? (store.findSession(store.activeChatId) ?? null) : null));
 
 async function load() {
   const s = active.value;
@@ -85,7 +83,10 @@ watch(activeFile, () => {
   void load();
 });
 // The model can also change from outside the menu (e.g. /model in chat).
-watch(() => active.value?.stats.model ?? null, () => void load());
+watch(
+  () => active.value?.stats.model ?? null,
+  () => void load(),
+);
 onMounted(() => void load());
 
 // ── Menu items: Provider → Model → Think level ────────────────────────────
@@ -97,8 +98,7 @@ const providers = computed(() => {
   return [...seen].sort();
 });
 
-const modelsOf = (p: string) =>
-  catalog.value?.models.filter((m) => m.provider === p) ?? [];
+const modelsOf = (p: string) => catalog.value?.models.filter((m) => m.provider === p) ?? [];
 
 const menuItems = computed<MenuNodeDef[]>(() =>
   providers.value.map((p) => ({

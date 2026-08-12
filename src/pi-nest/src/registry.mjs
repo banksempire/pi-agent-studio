@@ -10,9 +10,9 @@
  */
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
-import { sdk, toDisplayMessage, messageId, extractText, newSessionPath, hashId } from './sdk-bridge.mjs';
+import { extractText, hashId, messageId, newSessionPath, sdk, toDisplayMessage } from './sdk-bridge.mjs';
 
-export const STALE_RUN_MS = 20 * 60 * 1000;   // no agent events for 20 min → force-settle
+export const STALE_RUN_MS = 20 * 60 * 1000; // no agent events for 20 min → force-settle
 /** Idle agents are disposed after this (memory bound; reopening is seamless
  *  and file-backed). Env PI_NEST_IDLE_EVICT_MS, 0 disables. */
 export const IDLE_EVICT_MS = Number(process.env.PI_NEST_IDLE_EVICT_MS ?? 60 * 60 * 1000);
@@ -60,7 +60,7 @@ export class AgentRegistry extends EventEmitter {
 
   /** Idempotent open: return the live agent, or materialize one. */
   async open(agentId) {
-    let live = this.#live.get(agentId);
+    const live = this.#live.get(agentId);
     if (live) return live;
     if (this.#pending.has(agentId)) {
       // Lazy start: the reserved virtual new-chat becomes real here, pinned
@@ -72,13 +72,20 @@ export class AgentRegistry extends EventEmitter {
       // A model chosen in the UI while the chat was still lazy applies now,
       // before the first message runs.
       if (model) {
-        try { await session.setModel(model); } catch (e) {
+        try {
+          await session.setModel(model);
+        } catch (e) {
           console.error(`[pi-nest] applying pending model pref failed (${agentId.split('/').pop()}):`, e);
         }
       }
       if (thinkLevel) {
-        try { session.setThinkingLevel(thinkLevel); } catch (e) {
-          console.error(`[pi-nest] applying pending think-level pref failed (${agentId.split('/').pop()}):`, e);
+        try {
+          session.setThinkingLevel(thinkLevel);
+        } catch (e) {
+          console.error(
+            `[pi-nest] applying pending think-level pref failed (${agentId.split('/').pop()}):`,
+            e,
+          );
         }
       }
       return this.#register(agentId, session);
@@ -94,7 +101,11 @@ export class AgentRegistry extends EventEmitter {
     const live = this.#live.get(agentId);
     if (live) {
       this.#live.delete(agentId);
-      try { live.session.dispose(); } catch { /* ignore */ }
+      try {
+        live.session.dispose();
+      } catch {
+        /* ignore */
+      }
     }
     this.#pending.delete(agentId);
     return { ok: true };
@@ -181,7 +192,14 @@ export class AgentRegistry extends EventEmitter {
       };
     }
     if (this.#pending.has(agentId)) {
-      return { agentId, status: 'pending', runningSinceMs: 0, lastEventAtMs: 0, queueDepth: 0, lastError: '' };
+      return {
+        agentId,
+        status: 'pending',
+        runningSinceMs: 0,
+        lastEventAtMs: 0,
+        queueDepth: 0,
+        lastError: '',
+      };
     }
     return { agentId, status: '', runningSinceMs: 0, lastEventAtMs: 0, queueDepth: 0, lastError: '' };
   }
@@ -203,7 +221,7 @@ export class AgentRegistry extends EventEmitter {
       if (live.status === 'running') {
         if (now - live.lastEventAt <= STALE_RUN_MS) continue;
         console.log(
-          `[pi-nest][watchdog] force-settling stale run ${agentId.split('/').pop()} (no events for ${Math.round((now - live.lastEventAt) / 60000)}m)`
+          `[pi-nest][watchdog] force-settling stale run ${agentId.split('/').pop()} (no events for ${Math.round((now - live.lastEventAt) / 60000)}m)`,
         );
         live.status = 'idle';
         live.runningSince = null;
@@ -213,7 +231,11 @@ export class AgentRegistry extends EventEmitter {
       }
       if (IDLE_EVICT_MS > 0 && live.pendingOps === 0 && now - live.lastEventAt > IDLE_EVICT_MS) {
         this.#live.delete(agentId);
-        try { live.session.dispose(); } catch { /* ignore */ }
+        try {
+          live.session.dispose();
+        } catch {
+          /* ignore */
+        }
         console.log(`[pi-nest][watchdog] evicted idle agent ${agentId.split('/').pop()}`);
       }
     }
@@ -222,7 +244,11 @@ export class AgentRegistry extends EventEmitter {
   /** Dispose every live agent (pi-nest shutdown only — never on app restarts). */
   shutdown() {
     for (const live of this.#live.values()) {
-      try { live.session.dispose(); } catch { /* ignore */ }
+      try {
+        live.session.dispose();
+      } catch {
+        /* ignore */
+      }
     }
     this.#live.clear();
     this.#pending.clear();
@@ -237,7 +263,11 @@ export class AgentRegistry extends EventEmitter {
     const n = this.listenerCount('event');
     if (n === 0) return; // nobody connected — skip the stringify entirely
     let json = '{}';
-    try { json = JSON.stringify(payload ?? {}); } catch { /* unstringifiable payload */ }
+    try {
+      json = JSON.stringify(payload ?? {});
+    } catch {
+      /* unstringifiable payload */
+    }
     try {
       this.emit('event', { type, file, json });
     } catch (e) {
@@ -274,96 +304,96 @@ export class AgentRegistry extends EventEmitter {
       live.lastEventAt = Date.now();
       try {
         switch (ev.type) {
-        case 'agent_start':
-          live.status = 'running';
-          live.runningSince = Date.now();
-          this.broadcast('session_status', agentId, { status: 'running', runningSince: live.runningSince });
-          break;
-        case 'agent_settled':
-          live.status = 'idle';
-          live.runningSince = null;
-          this.broadcast('session_status', agentId, { status: 'idle' });
-          this.broadcast('refresh', agentId, {});
-          break;
-        case 'message_start':
-        case 'message_update':
-        case 'message_end': {
-          const dm = toDisplayMessage(ev.message);
-          dm.id = messageId(ev.message);
-          // The SDK message carries provider/model; the thinking level is
-          // session state, so stamp it from the live session here.
-          dm.thinkingLevel = live.session.thinkingLevel ?? null;
-          this.broadcast('message', agentId, dm);
-          break;
-        }
-        case 'turn_end': {
-          const dm = toDisplayMessage(ev.message);
-          dm.id = messageId(ev.message);
-          dm.thinkingLevel = live.session.thinkingLevel ?? null;
-          this.broadcast('message', agentId, dm);
-          for (const tr of ev.toolResults ?? []) {
+          case 'agent_start':
+            live.status = 'running';
+            live.runningSince = Date.now();
+            this.broadcast('session_status', agentId, { status: 'running', runningSince: live.runningSince });
+            break;
+          case 'agent_settled':
+            live.status = 'idle';
+            live.runningSince = null;
+            this.broadcast('session_status', agentId, { status: 'idle' });
+            this.broadcast('refresh', agentId, {});
+            break;
+          case 'message_start':
+          case 'message_update':
+          case 'message_end': {
+            const dm = toDisplayMessage(ev.message);
+            dm.id = messageId(ev.message);
+            // The SDK message carries provider/model; the thinking level is
+            // session state, so stamp it from the live session here.
+            dm.thinkingLevel = live.session.thinkingLevel ?? null;
+            this.broadcast('message', agentId, dm);
+            break;
+          }
+          case 'turn_end': {
+            const dm = toDisplayMessage(ev.message);
+            dm.id = messageId(ev.message);
+            dm.thinkingLevel = live.session.thinkingLevel ?? null;
+            this.broadcast('message', agentId, dm);
+            for (const tr of ev.toolResults ?? []) {
+              this.broadcast('tool_result', agentId, {
+                toolCallId: tr.toolCallId,
+                toolName: tr.toolName,
+                text: extractText(tr),
+                isError: !!tr.isError,
+              });
+            }
+            break;
+          }
+          case 'tool_execution_start':
+            this.broadcast('tool_start', agentId, {
+              toolCallId: ev.toolCallId,
+              toolName: ev.toolName,
+              args: ev.args,
+            });
+            break;
+          case 'tool_execution_update':
+            this.broadcast('tool_partial', agentId, {
+              toolCallId: ev.toolCallId,
+              text: extractText(ev.partialResult),
+            });
+            break;
+          case 'tool_execution_end':
             this.broadcast('tool_result', agentId, {
-              toolCallId: tr.toolCallId,
-              toolName: tr.toolName,
-              text: extractText(tr),
-              isError: !!tr.isError,
+              toolCallId: ev.toolCallId,
+              toolName: ev.toolName,
+              text: extractText(ev.result),
+              isError: !!ev.isError,
             });
-          }
-          break;
-        }
-        case 'tool_execution_start':
-          this.broadcast('tool_start', agentId, {
-            toolCallId: ev.toolCallId,
-            toolName: ev.toolName,
-            args: ev.args,
-          });
-          break;
-        case 'tool_execution_update':
-          this.broadcast('tool_partial', agentId, {
-            toolCallId: ev.toolCallId,
-            text: extractText(ev.partialResult),
-          });
-          break;
-        case 'tool_execution_end':
-          this.broadcast('tool_result', agentId, {
-            toolCallId: ev.toolCallId,
-            toolName: ev.toolName,
-            text: extractText(ev.result),
-            isError: !!ev.isError,
-          });
-          break;
-        case 'entry_appended':
-          this.broadcast('refresh', agentId, {});
-          break;
-        case 'compaction_start':
-          live.compacting = true;
-          this.broadcast('compaction_status', agentId, { status: 'started' });
-          break;
-        case 'compaction_end': {
-          live.compacting = false;
-          // The SDK reports "Already compacted" as an error, but for the user
-          // the outcome is positive — the summary exists in the conversation,
-          // so show the done box (click-to-audit) instead of a failed one.
-          const already = !!ev.errorMessage && /already compacted/i.test(ev.errorMessage);
-          this.broadcast('compaction_status', agentId, {
-            status: !ev.errorMessage || already ? 'done' : 'failed',
-            // the reason the summarizer failed — the frontend shows it in
-            // the transient failed bubble's body (failures were silent).
-            error: !ev.errorMessage || already ? '' : ev.errorMessage,
-          });
-          if (!ev.errorMessage && ev.result?.summary) {
-            this.broadcast('message', agentId, {
-              id: `summary-${hashId(ev.result.summary)}`,
-              role: 'summary',
-              text: ev.result.summary,
-              ts: Date.now(),
+            break;
+          case 'entry_appended':
+            this.broadcast('refresh', agentId, {});
+            break;
+          case 'compaction_start':
+            live.compacting = true;
+            this.broadcast('compaction_status', agentId, { status: 'started' });
+            break;
+          case 'compaction_end': {
+            live.compacting = false;
+            // The SDK reports "Already compacted" as an error, but for the user
+            // the outcome is positive — the summary exists in the conversation,
+            // so show the done box (click-to-audit) instead of a failed one.
+            const already = !!ev.errorMessage && /already compacted/i.test(ev.errorMessage);
+            this.broadcast('compaction_status', agentId, {
+              status: !ev.errorMessage || already ? 'done' : 'failed',
+              // the reason the summarizer failed — the frontend shows it in
+              // the transient failed bubble's body (failures were silent).
+              error: !ev.errorMessage || already ? '' : ev.errorMessage,
             });
+            if (!ev.errorMessage && ev.result?.summary) {
+              this.broadcast('message', agentId, {
+                id: `summary-${hashId(ev.result.summary)}`,
+                role: 'summary',
+                text: ev.result.summary,
+                ts: Date.now(),
+              });
+            }
+            break;
           }
-          break;
+          default:
+            break;
         }
-        default:
-          break;
-      }
       } catch (e) {
         // A malformed SDK event must never kill the daemon.
         console.error(`[pi-nest] event handling error (${ev?.type}):`, e);

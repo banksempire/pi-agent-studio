@@ -1,14 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import {
-  useChatStore, fmtDateTime, fmtTokens, fmtCompactTokens,
-  type ChatSession,
-} from '../store/chat';
+import { type ChatSession, fmtCompactTokens, fmtDateTime, fmtTokens, useChatStore } from '../store/chat';
 
 const store = useChatStore();
 
-const session = computed<ChatSession | null>(
-  () => (store.activeChatId ? store.findSession(store.activeChatId) ?? null : null),
+const session = computed<ChatSession | null>(() =>
+  store.activeChatId ? (store.findSession(store.activeChatId) ?? null) : null,
 );
 
 /** Middle-truncate the full session-file path (the TUI prints it whole;
@@ -17,7 +14,7 @@ function truncateMiddle(text: string, head: number, tail: number): string {
   return text.length <= head + tail + 1 ? text : `${text.slice(0, head)}…${text.slice(-tail)}`;
 }
 
-const shortFile = computed(() => session.value ? truncateMiddle(session.value.file, 34, 34) : '');
+const shortFile = computed(() => (session.value ? truncateMiddle(session.value.file, 34, 34) : ''));
 const shortId = computed(() => {
   const id = session.value?.sessionId;
   if (!id) return '—';
@@ -55,7 +52,9 @@ function legacyCopy(text: string, done: () => void) {
     document.execCommand('copy');
     document.body.removeChild(ta);
     done();
-  } catch { /* clipboard unavailable */ }
+  } catch {
+    /* clipboard unavailable */
+  }
 }
 
 /** Click a stat row → copy "key: value" (full untruncated values) to the
@@ -65,16 +64,23 @@ function copyRow(row: StatRow, index: number) {
   const done = () => {
     copiedIndex.value = index;
     if (copyTimer) clearTimeout(copyTimer);
-    copyTimer = window.setTimeout(() => { copiedIndex.value = null; }, 1200);
+    copyTimer = window.setTimeout(() => {
+      copiedIndex.value = null;
+    }, 1200);
   };
   try {
     if (navigator.clipboard?.writeText) {
       // Clipboard API present (secure context) — but a rejected promise
       // (e.g. permission denied) still falls back to the textarea copy.
-      navigator.clipboard.writeText(text).then(done).catch(() => legacyCopy(text, done));
+      navigator.clipboard
+        .writeText(text)
+        .then(done)
+        .catch(() => legacyCopy(text, done));
       return;
     }
-  } catch { /* fall through to legacy */ }
+  } catch {
+    /* fall through to legacy */
+  }
   legacyCopy(text, done);
 }
 
@@ -84,7 +90,8 @@ const rows = computed<StatRow[]>(() => {
   const st = s.stats;
   const out: StatRow[] = [];
   const section = (label: string) => out.push({ label, value: '', section: true });
-  const push = (label: string, value: string, extra?: Partial<StatRow>) => out.push({ label, value, ...extra });
+  const push = (label: string, value: string, extra?: Partial<StatRow>) =>
+    out.push({ label, value, ...extra });
 
   // ── General (first): File / ID / Working dir / Started / Last activity ──
   section('General');
@@ -126,9 +133,12 @@ const rows = computed<StatRow[]>(() => {
       }
     }
     if (st.cacheWaste.missedTokens > 0) {
-      push('  Cache Re-billed', st.cacheWaste.missedCost >= 0.0001
-        ? `${tuiCost(st.cacheWaste.missedCost)} (${fmtCompactTokens(st.cacheWaste.missedTokens)})`
-        : `(${fmtCompactTokens(st.cacheWaste.missedTokens)})`);
+      push(
+        '  Cache Re-billed',
+        st.cacheWaste.missedCost >= 0.0001
+          ? `${tuiCost(st.cacheWaste.missedCost)} (${fmtCompactTokens(st.cacheWaste.missedTokens)})`
+          : `(${fmtCompactTokens(st.cacheWaste.missedTokens)})`,
+      );
     }
   }
   return out;

@@ -38,6 +38,7 @@ export interface SlashPicker {
   kind: 'picker';
   title: string;
   items: PickerItem[];
+  // biome-ignore lint/suspicious/noConfusingVoidType: picker rows may resolve nothing (void, e.g. open a chat) or return a slash result.
   onSelect: (id: string) => void | Promise<SlashResult | void>;
 }
 
@@ -145,7 +146,10 @@ export async function runSlash(sessionId: string, parsed: ParsedSlash): Promise<
     return { kind: 'none' };
   }
   if (command === 'hotkeys') {
-    const sendKey = store.prefs.sendKey === 'shiftEnter' ? 'Shift+Enter — send message\nEnter — new line' : 'Enter — send message\nShift+Enter — new line';
+    const sendKey =
+      store.prefs.sendKey === 'shiftEnter'
+        ? 'Shift+Enter — send message\nEnter — new line'
+        : 'Enter — send message\nShift+Enter — new line';
     return {
       kind: 'notice',
       text: [
@@ -173,7 +177,19 @@ export async function runSlash(sessionId: string, parsed: ParsedSlash): Promise<
   }
 
   // ── Commands that need an open session window ──
-  const needsSession = ['session', 'name', 'compact', 'copy', 'model', 'scoped-models', 'tree', 'fork', 'clone', 'export', 'reload'];
+  const needsSession = [
+    'session',
+    'name',
+    'compact',
+    'copy',
+    'model',
+    'scoped-models',
+    'tree',
+    'fork',
+    'clone',
+    'export',
+    'reload',
+  ];
   if (needsSession.includes(command)) {
     if (!file) {
       return { kind: 'error', text: `/${command} needs an open chat window — open one first.` };
@@ -215,14 +231,14 @@ export async function runSlash(sessionId: string, parsed: ParsedSlash): Promise<
     if (r.data?.models) {
       if (command === 'model') {
         const current = r.data.current;
-        const cur = current ? `${current.provider}/${current.id}` : null;
+        const _cur = current ? `${current.provider}/${current.id}` : null;
         return {
           kind: 'picker',
           title: 'Switch model',
           items: r.data.models.map((m: any) => ({
             id: `${m.provider}/${m.id}`,
             label: `${m.id} (${m.provider})`,
-            detail: `${m.reasoning ? 'reasoning · ' : ''}${m.contextWindow ? m.contextWindow.toLocaleString() + ' ctx' : ''}`,
+            detail: `${m.reasoning ? 'reasoning · ' : ''}${m.contextWindow ? `${m.contextWindow.toLocaleString()} ctx` : ''}`,
           })),
           onSelect: async (id) => {
             const rr = await postSlash({ file, command: 'model', args: id });
@@ -242,7 +258,7 @@ export async function runSlash(sessionId: string, parsed: ParsedSlash): Promise<
             return {
               id,
               label: `${scoped.includes(id) ? '✓ ' : ''}${m.id} (${m.provider})`,
-              detail: `${m.reasoning ? 'reasoning · ' : ''}${m.contextWindow ? m.contextWindow.toLocaleString() + ' ctx' : ''}`,
+              detail: `${m.reasoning ? 'reasoning · ' : ''}${m.contextWindow ? `${m.contextWindow.toLocaleString()} ctx` : ''}`,
             };
           }),
           onSelect: async (id) => {

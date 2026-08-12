@@ -6,10 +6,18 @@
  * Returns { ok, notice?, error?, data? } with data always JSON-serializable
  * (the gRPC layer stringifies it as data_json).
  */
-import path from 'node:path';
+
 import { existsSync, readFileSync } from 'node:fs';
-import { readFile, mkdir, writeFile, unlink } from 'node:fs/promises';
-import { sdk, sdkDir, BUILTIN_SLASH_COMMANDS, SESSIONS_ROOT, NEW_CHAT_CWD, supportedThinkingLevels } from './sdk-bridge.mjs';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import {
+  BUILTIN_SLASH_COMMANDS,
+  NEW_CHAT_CWD,
+  SESSIONS_ROOT,
+  sdk,
+  sdkDir,
+  supportedThinkingLevels,
+} from './sdk-bridge.mjs';
 
 /** Builtin commands that only make sense in the pi TUI — answered with a reason. */
 const NA_COMMANDS = {
@@ -31,12 +39,14 @@ function serializeModel(m) {
     contextWindow: m.contextWindow ?? 0,
     // Per-1M-token price list (cache-waste fallback in the gateway's
     // session-stats derivation needs the cacheRead rate).
-    cost: m.cost ? {
-      input: m.cost.input ?? 0,
-      output: m.cost.output ?? 0,
-      cacheRead: m.cost.cacheRead ?? 0,
-      cacheWrite: m.cost.cacheWrite ?? 0,
-    } : undefined,
+    cost: m.cost
+      ? {
+          input: m.cost.input ?? 0,
+          output: m.cost.output ?? 0,
+          cacheRead: m.cost.cacheRead ?? 0,
+          cacheWrite: m.cost.cacheWrite ?? 0,
+        }
+      : undefined,
     // Per-model thinking levels from the model configuration — a model that
     // doesn't support reasoning offers only ['off'] (the UI shows "(None)").
     thinkingLevels: supportedThinkingLevels(m),
@@ -84,7 +94,11 @@ async function catalogOf(cwd) {
       defaultLevel: session.thinkingLevel ?? null,
     };
   } finally {
-    try { session.dispose(); } catch { /* ignore */ }
+    try {
+      session.dispose();
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -120,7 +134,9 @@ function findModel(models, term) {
  * parsed extra_json from the request (entryId, modelIds, ...).
  */
 export async function execSlash(registry, { agentId, command, args, extra = {} }) {
-  const name = String(command ?? '').replace(/^\/+/, '').trim();
+  const name = String(command ?? '')
+    .replace(/^\/+/, '')
+    .trim();
   if (!name) return { ok: false, error: 'empty slash command' };
   if (NA_COMMANDS[name]) return { ok: true, notice: NA_COMMANDS[name] };
   const file = agentId || undefined;
@@ -132,7 +148,9 @@ export async function execSlash(registry, { agentId, command, args, extra = {} }
       // windows through this. Never materializes a session (catalog comes
       // from the same cached throwaway read as the lazy-chat picker).
       const { models, defaultModel } = await pendingCatalog({
-        cwd: NEW_CHAT_CWD, model: null, thinkLevel: null,
+        cwd: NEW_CHAT_CWD,
+        model: null,
+        thinkLevel: null,
       });
       return {
         ok: true,
@@ -190,7 +208,10 @@ export async function execSlash(registry, { agentId, command, args, extra = {} }
       live.session.setSessionName(requested);
       const normalized = live.session.sessionManager.getSessionName();
       registry.broadcast('refresh', file, {});
-      return { ok: true, notice: normalized ? `Session name set: ${normalized}` : `Session name set: ${requested}` };
+      return {
+        ok: true,
+        notice: normalized ? `Session name set: ${normalized}` : `Session name set: ${requested}`,
+      };
     }
 
     case 'compact': {
@@ -206,7 +227,10 @@ export async function execSlash(registry, { agentId, command, args, extra = {} }
         // compaction. That's a fine outcome — the summary is in the chat, and
         // compaction_end was mapped to the done box, so the user can audit it.
         if (e instanceof Error && /already compacted/i.test(e.message)) {
-          return { ok: true, notice: 'The conversation is already compacted — the latest summary is in the chat.' };
+          return {
+            ok: true,
+            notice: 'The conversation is already compacted — the latest summary is in the chat.',
+          };
         }
         throw e;
       }
@@ -322,9 +346,13 @@ export async function execSlash(registry, { agentId, command, args, extra = {} }
         const ids = new Set(extra.modelIds);
         const picked = models.filter((m) => ids.has(`${m.provider}/${m.id}`));
         live.session.setScopedModels(picked.map((m) => ({ model: m })));
-        return { ok: true, notice: picked.length > 0
-          ? `Scoped models: ${picked.map((m) => m.id).join(', ')}`
-          : 'Scoped models cleared (all models available)' };
+        return {
+          ok: true,
+          notice:
+            picked.length > 0
+              ? `Scoped models: ${picked.map((m) => m.id).join(', ')}`
+              : 'Scoped models cleared (all models available)',
+        };
       }
       return {
         ok: true,
@@ -343,7 +371,10 @@ export async function execSlash(registry, { agentId, command, args, extra = {} }
         if (!target) return { ok: false, error: 'Entry not found in this session.' };
         await live.session.navigateTree(extra.entryId);
         registry.broadcast('refresh', file, {});
-        return { ok: true, notice: `Switched to ${target.type === 'message' ? target.message?.role ?? 'entry' : target.type} at ${extra.entryId.slice(0, 8)}…` };
+        return {
+          ok: true,
+          notice: `Switched to ${target.type === 'message' ? (target.message?.role ?? 'entry') : target.type} at ${extra.entryId.slice(0, 8)}…`,
+        };
       }
       return {
         ok: true,
@@ -359,7 +390,7 @@ export async function execSlash(registry, { agentId, command, args, extra = {} }
       const live = await registry.open(file);
       if (extra.entryId) {
         const entry = live.session.sessionManager.getEntry(extra.entryId);
-        if (!entry || entry.type !== 'message' || entry.message?.role !== 'user') {
+        if (entry?.type !== 'message' || entry.message?.role !== 'user') {
           return { ok: false, error: 'Pick a user message to fork from.' };
         }
         if (!entry.parentId) return { ok: false, error: 'Cannot fork from the first message.' };
@@ -405,7 +436,7 @@ export async function execSlash(registry, { agentId, command, args, extra = {} }
       }
       const header = entries.find((e) => e.type === 'session');
       const cwd = header?.cwd || NEW_CHAT_CWD;
-      const dir = path.join(SESSIONS_ROOT, '--' + cwd.replace(/^\//, '').replaceAll('/', '-') + '--');
+      const dir = path.join(SESSIONS_ROOT, `--${cwd.replace(/^\//, '').replaceAll('/', '-')}--`);
       const id = header?.id ?? `imported-${Date.now().toString(36)}`;
       const ts = new Date().toISOString().replace(/[:.]/g, '-');
       const dest = path.join(dir, `${ts}_${id}.jsonl`);
@@ -458,7 +489,7 @@ export async function execSlash(registry, { agentId, command, args, extra = {} }
   }
 }
 
-export { NA_COMMANDS, BUILTIN_SLASH_COMMANDS };
+export { BUILTIN_SLASH_COMMANDS, NA_COMMANDS };
 
 /** Builtin command catalog + skill list for the app's autocomplete. */
 export function slashCatalog() {

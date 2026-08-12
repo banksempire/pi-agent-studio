@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { useChatStore, endExternalDrag, startSessionDrag, type ChatSession } from '../store/chat';
+import { type ChatSession, endExternalDrag, startSessionDrag, useChatStore } from '../store/chat';
 
 const store = useChatStore();
 

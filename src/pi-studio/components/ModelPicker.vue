@@ -178,7 +178,7 @@ async function commit(m: ModelInfo, thinkLevel: string) {
          layout as the stats rows above — the unified KeyValueList). -->
     <KeyValueList :items="modelRows" />
 
-    <Menu :items="menuItems" :open="open" @update:open="(v) => (open = v)" @select="onSelect">
+    <Menu :items="menuItems" :open="open" title="Change Model" @update:open="(v) => (open = v)" @select="onSelect">
       <template #trigger="{ toggle }">
         <button class="model-menu-btn" :disabled="busy" @click="toggle">
           Change Model

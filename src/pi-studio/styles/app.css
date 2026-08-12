@@ -624,6 +624,17 @@
   border-color: var(--sf-accent);
 }
 
+/* Mobile: the input auto-grows with its content up to the cap, then
+   scrolls internally (height driven by ChatWindow's autoGrow, which caps
+   at the same 120px). The drag-resize handle is a desktop feature. */
+.sf-root--mobile .chat-input {
+  max-height: 120px;
+}
+
+.sf-root--mobile .chat-composer-handle {
+  display: none;
+}
+
 /* Bottom action row: scroll-to-bottom + Send, right-aligned (never wraps). */
 .chat-composer-actions {
   display: flex;

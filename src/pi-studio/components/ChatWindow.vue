@@ -713,6 +713,44 @@ async function onPickerSelect(id: string) {
 
 // ── Composer ───────────────────────────────────────────────────────────────
 
+/** Mobile auto-grow cap for the input box (px); the box grows with content
+ *  up to this height, then scrolls internally. Desktop keeps its fixed
+ *  one-line box + drag handle. */
+const MOBILE_INPUT_MAX_PX = 120;
+const isMobile = ref(window.innerWidth < 500);
+
+/** Grow the textarea to fit its content, capped at MOBILE_INPUT_MAX_PX. */
+function autoGrowMobileInput() {
+  const el = inputEl.value;
+  if (!el || !isMobile.value) return;
+  el.style.height = 'auto';
+  el.style.height = `${Math.min(el.scrollHeight, MOBILE_INPUT_MAX_PX)}px`;
+  el.style.overflowY = el.scrollHeight > MOBILE_INPUT_MAX_PX ? 'auto' : 'hidden';
+}
+
+/** Back to the stylesheet's fixed one-line box (also on desktop). */
+function resetMobileInputHeight() {
+  const el = inputEl.value;
+  if (!el) return;
+  el.style.height = '';
+  el.style.overflowY = '';
+}
+
+function onViewportResize() {
+  isMobile.value = window.innerWidth < 500;
+  if (isMobile.value) autoGrowMobileInput();
+  else resetMobileInputHeight();
+}
+
+// Typing / programmatic changes (send clears input, completions insert
+// text) re-measure the box; an empty box returns to one line.
+watch(input, () => {
+  nextTick(() => {
+    if (input.value) autoGrowMobileInput();
+    else resetMobileInputHeight();
+  });
+});
+
 function send() {
   const text = input.value.trim();
   if (!text || !session.value) return;
@@ -850,6 +888,7 @@ let resizeCleanup: (() => void) | null = null;
 
 /** Drag the composer's top handle to set a fixed input height. */
 function startResize(e: MouseEvent) {
+  if (isMobile.value) return; // mobile auto-grows; no drag handle
   e.preventDefault();
   const startY = e.clientY;
   const startH = manualHeight.value ?? inputEl.value?.offsetHeight ?? 80;
@@ -883,6 +922,10 @@ onMounted(() => {
   now.value = Date.now();
   scrollToBottom();
   inputEl.value?.focus();
+  window.addEventListener('resize', onViewportResize);
+  // Mobile layout swaps remount this component (flat tile) — the mount
+  // happens after the resize event, so re-apply the auto-grow height.
+  if (isMobile.value) nextTick(autoGrowMobileInput);
   // When the messages area resizes (e.g. the composer grows/shrinks via its
   // drag handle), keep the bottom edge of the visible text anchored in both
   // directions: the content moves UP as the area shrinks and DOWN as it
@@ -907,6 +950,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  window.removeEventListener('resize', onViewportResize);
   resizeCleanup?.();
   listObserver?.disconnect();
 });
@@ -1130,7 +1174,7 @@ let anchorBottom = 0;
           v-model="input"
           class="chat-input"
           rows="1"
-          :style="manualHeight !== null ? { height: manualHeight + 'px', maxHeight: manualHeight + 'px' } : {}"
+          :style="!isMobile && manualHeight !== null ? { height: manualHeight + 'px', maxHeight: manualHeight + 'px' } : {}"
           @keydown="onKeydown"
           @input="onComposerInput"
         />

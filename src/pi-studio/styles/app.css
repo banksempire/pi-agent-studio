@@ -614,11 +614,26 @@
 .chat-context {
   margin-right: auto;
   align-self: center;
+  background: none;
+  border: none;
+  padding: 0;
   color: var(--sf-text-muted);
+  font-family: var(--sf-font);
   font-size: 16px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  cursor: pointer;
+}
+/* Hover affordance for click-to-compact (warn/error keep their color —
+   their rules below win on equal specificity). */
+.chat-context:hover {
+  color: var(--sf-text-bright);
+  text-decoration: underline;
+}
+.chat-context:disabled {
   cursor: default;
+  opacity: 0.55;
+  text-decoration: none;
 }
 .chat-context--warn {
   color: var(--sf-status-warn);

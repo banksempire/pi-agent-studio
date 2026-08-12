@@ -86,9 +86,12 @@ const contextTitle = computed(() => {
   const ctx = session.value?.context;
   if (!ctx || !ctx.window) return '';
   const win = formatTokens(ctx.window);
+  // The gauge doubles as the click-to-compact affordance (unless a
+  // compaction is already running — then it is disabled).
+  const hint = session.value?.compacting ? '' : ' Click to compact the context.';
   return ctx.percent === null
-    ? `Context in use: unknown until the next response (${win} window)`
-    : `${Math.round(ctx.tokens ?? 0).toLocaleString()} of ${win} tokens (${ctx.percent.toFixed(1)}%)`;
+    ? `Context in use: unknown until the next response (${win} window).${hint}`
+    : `${Math.round(ctx.tokens ?? 0).toLocaleString()} of ${win} tokens (${ctx.percent.toFixed(1)}%).${hint}`;
 });
 const contextClass = computed(() => {
   const p = session.value?.context?.percent;
@@ -653,10 +656,26 @@ async function handleSlashResult(r: SlashResult) {
 }
 
 /** Route the composer: slash command → backend, otherwise a normal message. */
-async function runCommand(parsed: ParsedSlash) {
+function runCommand(parsed: ParsedSlash) {
   store.clearLastError();
   input.value = '';
   completionOpen.value = false;
+  void runCommandAsync(parsed);
+}
+
+/** The context gauge is click-to-compact — same /compact pipeline as the
+ *  composer (backend decides; the WIP bubble shows progress, failures
+ *  flash the bubble red). */
+function compactContext() {
+  const s = session.value;
+  if (!s || s.compacting) return;
+  const parsed = parseSlash('/compact');
+  if (!parsed) return;
+  store.clearLastError();
+  void runCommandAsync(parsed);
+}
+
+async function runCommandAsync(parsed: ParsedSlash) {
   const r = await runSlash(props.sessionId, parsed);
   await handleSlashResult(r);
   sticky = true;
@@ -1055,12 +1074,14 @@ let anchorBottom = 0;
           @input="onComposerInput"
         />
         <div class="chat-composer-actions">
-          <span
+          <button
             v-if="contextDisplay"
             class="chat-context"
             :class="contextClass"
             :title="contextTitle"
-          >{{ contextDisplay }}</span>
+            :disabled="session?.compacting"
+            @click="compactContext"
+          >{{ contextDisplay }}</button>
           <button
             class="chat-scroll-btn"
             title="Scroll to bottom"

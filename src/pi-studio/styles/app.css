@@ -39,19 +39,19 @@
 }
 
 .chat-status-dot--running {
-  background: #4ec9b0;
-  box-shadow: 0 0 0 0 rgba(78, 201, 176, 0.5);
+  background: var(--sf-status-ok);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--sf-status-ok) 50%, transparent);
   animation: chat-pulse 1.4s infinite;
 }
 
 .chat-status-dot--stopped {
-  background: #d7ba7d;
+  background: var(--sf-status-warn);
 }
 
 @keyframes chat-pulse {
-  0% { box-shadow: 0 0 0 0 rgba(78, 201, 176, 0.45); }
-  70% { box-shadow: 0 0 0 5px rgba(78, 201, 176, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(78, 201, 176, 0); }
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--sf-status-ok) 45%, transparent); }
+  70% { box-shadow: 0 0 0 5px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
 }
 
 /* ── Chat window (workspace tab content) ────────────────────────────────── */
@@ -108,7 +108,7 @@
   background: none;
   border: 1px solid var(--sf-border);
   border-radius: 3px;
-  color: #d7ba7d;
+  color: var(--sf-status-warn);
   font-size: 16px;
   padding: 2px 8px;
   cursor: pointer;
@@ -245,7 +245,7 @@
 }
 
 .chat-msg--error {
-  color: #f48771;
+  color: var(--sf-danger);
 }
 
 .chat-msg-meta {
@@ -336,7 +336,7 @@
 
 /* /compact failed state: a transient red box (the flash dismisses it). */
 .chat-compacting--failed .chat-ab-name {
-  color: #f87171;
+  color: var(--sf-status-err);
 }
 
 /* The /compact bubble is a group part of an agent item with no header —
@@ -350,12 +350,12 @@
 
 /* Action-completion flash: green on success, red on failure, then settle. */
 @keyframes chat-work-flash-ok {
-  0%   { border-color: rgba(78, 201, 176, 0.95); background: rgba(78, 201, 176, 0.18); }
+  0%   { border-color: color-mix(in srgb, var(--sf-status-ok) 95%, transparent); background: color-mix(in srgb, var(--sf-status-ok) 18%, transparent); }
   100% { border-color: var(--sf-border);        background: var(--sf-bg-dark); }
 }
 
 @keyframes chat-work-flash-fail {
-  0%   { border-color: rgba(244, 135, 113, 0.95); background: rgba(244, 135, 113, 0.22); }
+  0%   { border-color: color-mix(in srgb, var(--sf-danger) 95%, transparent); background: color-mix(in srgb, var(--sf-danger) 22%, transparent); }
   100% { border-color: var(--sf-border);          background: var(--sf-bg-dark); }
 }
 
@@ -379,19 +379,19 @@
 .chat-ab-sub {
   border: 1px solid var(--sf-border);
   border-radius: 5px;
-  background: rgba(255, 255, 255, 0.02);
+  background: color-mix(in srgb, var(--sf-text-bright) 2%, transparent);
   overflow: hidden;
 }
 
 /* Tool-call outcome tint: green on success, red on failure (no status icon). */
 .chat-ab-sub--ok {
-  border-color: rgba(78, 201, 176, 0.5);
-  background: rgba(78, 201, 176, 0.06);
+  border-color: color-mix(in srgb, var(--sf-status-ok) 50%, transparent);
+  background: color-mix(in srgb, var(--sf-status-ok) 6%, transparent);
 }
 
 .chat-ab-sub--fail {
-  border-color: rgba(244, 135, 113, 0.6);
-  background: rgba(244, 135, 113, 0.07);
+  border-color: color-mix(in srgb, var(--sf-danger) 60%, transparent);
+  background: color-mix(in srgb, var(--sf-danger) 7%, transparent);
 }
 
 .chat-ab-sub-head {
@@ -463,7 +463,7 @@
 }
 
 .chat-ab-result--error {
-  border-color: rgba(244, 135, 113, 0.5);
+  border-color: color-mix(in srgb, var(--sf-danger) 50%, transparent);
 }
 
 .chat-ab-result-body {
@@ -493,7 +493,7 @@
 }
 
 .chat-aborted--error {
-  color: #f48771;
+  color: var(--sf-danger);
   white-space: pre-wrap;
 }
 
@@ -503,16 +503,16 @@
   gap: 6px;
   margin-top: 4px;
   font-size: 16px;
-  color: #f48771;
+  color: var(--sf-danger);
 }
 
 .chat-resend-btn {
   margin-left: 4px;
   padding: 2px 10px;
-  border: 1px solid rgba(244, 135, 113, 0.45);
+  border: 1px solid color-mix(in srgb, var(--sf-danger) 45%, transparent);
   border-radius: 4px;
-  background: rgba(244, 135, 113, 0.08);
-  color: #f48771;
+  background: color-mix(in srgb, var(--sf-danger) 8%, transparent);
+  color: var(--sf-danger);
   font-size: 16px;
   cursor: pointer;
 }
@@ -523,19 +523,19 @@
 
 .chat-banner {
   padding: 4px 10px;
-  background: rgba(215, 186, 125, 0.1);
-  border: 1px solid rgba(215, 186, 125, 0.3);
+  background: color-mix(in srgb, var(--sf-status-warn) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sf-status-warn) 30%, transparent);
   border-radius: 4px;
-  color: #d7ba7d;
+  color: var(--sf-status-warn);
   font-size: 16px;
   margin-bottom: 6px;
   flex-basis: 100%;
 }
 
 .chat-banner--error {
-  background: rgba(244, 135, 113, 0.08);
-  border-color: rgba(244, 135, 113, 0.35);
-  color: #f48771;
+  background: color-mix(in srgb, var(--sf-danger) 8%, transparent);
+  border-color: color-mix(in srgb, var(--sf-danger) 35%, transparent);
+  color: var(--sf-danger);
   cursor: pointer;
 }
 
@@ -621,10 +621,10 @@
   cursor: default;
 }
 .chat-context--warn {
-  color: #e5c07b;
+  color: var(--sf-status-warn);
 }
 .chat-context--error {
-  color: #f87171;
+  color: var(--sf-status-err);
 }
 
 .chat-send-btn {
@@ -674,8 +674,8 @@
   max-width: 96%;
   margin: 2px 0;
   padding: 6px 10px;
-  background: rgba(0, 122, 204, 0.07);
-  border: 1px solid rgba(0, 122, 204, 0.25);
+  background: color-mix(in srgb, var(--sf-accent) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sf-accent) 25%, transparent);
   border-radius: 6px;
   color: var(--sf-text);
   font-size: 16px;
@@ -686,9 +686,9 @@
 }
 
 .chat-msg--system.chat-msg--error .chat-system {
-  border-color: rgba(244, 135, 113, 0.4);
-  background: rgba(244, 135, 113, 0.08);
-  color: #f48771;
+  border-color: color-mix(in srgb, var(--sf-danger) 40%, transparent);
+  background: color-mix(in srgb, var(--sf-danger) 8%, transparent);
+  color: var(--sf-danger);
 }
 
 /* ── Slash command autocomplete ────────────────────────────────────────── */
@@ -746,7 +746,7 @@
 .chat-picker-backdrop {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--sf-backdrop);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -939,7 +939,7 @@
 .chat-dialog-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--sf-backdrop);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1012,9 +1012,9 @@
 
 /* Destructive confirm uses the theme's error red. */
 .chat-dialog-btn--danger {
-  background: #e5484d;
-  border-color: #e5484d;
-  color: #fff;
+  background: var(--sf-status-err);
+  border-color: var(--sf-status-err);
+  color: var(--sf-text-on-accent);
 }
 
 .chat-dialog-btn--danger:hover {
@@ -1133,8 +1133,8 @@
 }
 
 .chat-list-badge--running {
-  background: rgba(78, 201, 176, 0.18);
-  color: #4ec9b0;
+  background: color-mix(in srgb, var(--sf-status-ok) 18%, transparent);
+  color: var(--sf-status-ok);
 }
 
 .chat-list-badge--open {
@@ -1145,7 +1145,7 @@
 .chat-list-error {
   margin-top: 4px;
   font-size: 16px;
-  color: #f48771;
+  color: var(--sf-danger);
   word-break: break-word;
 }
 
@@ -1308,7 +1308,7 @@
 }
 
 .welcome-status--online {
-  color: #4ec9b0;
+  color: var(--sf-status-ok);
 }
 
 .welcome-status--connecting {
@@ -1316,7 +1316,7 @@
 }
 
 .welcome-status--offline {
-  color: #f48771;
+  color: var(--sf-danger);
 }
 
 /* ── Per-window markdown toggle (right panel) ───────────────────────────── */
@@ -1385,7 +1385,7 @@
 .chat-msg-md code {
   font-family: var(--sf-mono);
   font-size: 1em;
-  background: rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, var(--sf-text-bright) 8%, transparent);
   border-radius: 3px;
   padding: 0.1em 0.35em;
 }
@@ -1408,7 +1408,7 @@
   border-left: 3px solid var(--sf-border);
   color: var(--sf-text-muted);
 }
-.chat-msg-md a { color: #4fc1ff; }
+.chat-msg-md a { color: var(--sf-link); }
 .chat-msg-md table { border-collapse: collapse; margin: 0.5em 0; font-size: 1em; }
 .chat-msg-md th, .chat-msg-md td {
   border: 1px solid var(--sf-border);
@@ -1434,8 +1434,8 @@
   justify-content: center;
   gap: 6px;
   width: 100%;
-  background: rgba(128, 128, 128, 0.12);
-  border: 1px solid rgba(128, 128, 128, 0.25);
+  background: color-mix(in srgb, var(--sf-text-muted) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sf-text-muted) 25%, transparent);
   border-radius: 4px;
   padding: 3px 6px;
   font: inherit;
@@ -1459,13 +1459,13 @@
   white-space: nowrap;
 }
 .model-menu-note--err {
-  color: #e5484d;
+  color: var(--sf-status-err);
 }
 
 /* App-specific kv-pill tones (base + generic tones live in the framework). */
 .kv-pill--running {
-  background: rgba(78, 201, 176, 0.18);
-  color: #4ec9b0;
+  background: color-mix(in srgb, var(--sf-status-ok) 18%, transparent);
+  color: var(--sf-status-ok);
 }
 .kv-pill--idle {
   background: var(--sf-bg-lighter);
@@ -1476,8 +1476,8 @@
   color: var(--sf-accent-dim);
 }
 .kv-pill--bg {
-  background: rgba(215, 186, 125, 0.12);
-  color: #d7ba7d;
+  background: color-mix(in srgb, var(--sf-status-warn) 12%, transparent);
+  color: var(--sf-status-warn);
 }
 
 /* The model block sits inside the stats sub-section: same side padding. */

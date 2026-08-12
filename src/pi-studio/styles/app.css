@@ -1172,6 +1172,34 @@
   word-break: break-word;
 }
 
+/* ── Backend connectivity (status bar, replaces static "pi agent · live") ──
+   Dot: green = connected & fast, yellow = high ping, red = disconnected. */
+
+.status-backend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-backend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-backend-dot--ok {
+  background: var(--sf-status-ok);
+}
+
+.status-backend-dot--highping {
+  background: var(--sf-status-warn);
+}
+
+.status-backend-dot--err {
+  background: var(--sf-status-err);
+}
+
 /* ── Session stats (right panel) ────────────────────────────────────────── */
 
 .session-stats {
@@ -1323,23 +1351,6 @@
 .welcome-btn:disabled {
   opacity: 0.5;
   cursor: default;
-}
-
-.welcome-status {
-  font-size: 16px;
-  margin-bottom: 24px;
-}
-
-.welcome-status--online {
-  color: var(--sf-status-ok);
-}
-
-.welcome-status--connecting {
-  color: var(--sf-text-muted);
-}
-
-.welcome-status--offline {
-  color: var(--sf-danger);
 }
 
 /* ── Per-window markdown toggle (right panel) ───────────────────────────── */

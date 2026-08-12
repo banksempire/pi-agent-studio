@@ -223,7 +223,7 @@
     "right": [
       {
         "id": "backend",
-        "label": "⚡ pi agent · live"
+        "component": "backend-status"
       },
       {
         "id": "cwd",

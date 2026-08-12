@@ -147,7 +147,8 @@ interface ChatState {
    *  survives switching sections/panels (the component remounts) */
   treeCollapsed: Set<string>;
   backend: BackendStatus;
-  backendError: string;
+  /** last /api/health round-trip in ms (null = no measurement yet) */
+  backendPing: number | null;
   /** last send failure, shown in chat windows */
   lastError: string;
   /** unsent composer text per session (tab content instances are REUSED by
@@ -266,7 +267,7 @@ const state = reactive<ChatState>({
   tree: null,
   treeCollapsed: new Set(),
   backend: 'connecting',
-  backendError: '',
+  backendPing: null,
   lastError: '',
   drafts: loadDrafts(),
   prefs: loadPrefs(),
@@ -500,7 +501,6 @@ async function fetchList() {
           return old && oldListSignature(old) === listSignature(raw);
         })) {
       state.backend = 'online';
-      state.backendError = '';
       return;
     }
     state.sessions = [
@@ -527,10 +527,8 @@ async function fetchList() {
       }),
     ];
     state.backend = 'online';
-    state.backendError = '';
   } catch (e) {
     state.backend = 'offline';
-    state.backendError = e instanceof Error ? e.message : String(e);
   }
 }
 
@@ -758,6 +756,28 @@ function connectEvents() {
   es.onmessage = (e) => {
     try { handleEvent(JSON.parse(e.data)); } catch { /* ignore malformed */ }
   };
+
+  // Connectivity + latency: a 5s /api/health round-trip (the check includes
+  // pi-nest, so a dead daemon reads as offline too). The status-bar dot is
+  // green when fast, yellow when the ping is high, red when unreachable.
+  const PING_INTERVAL_MS = 5000;
+  function pingBackend() {
+    const t0 = performance.now();
+    fetch('/api/health')
+      .then((r) => r.json())
+      .then((j) => {
+        state.backendPing = Math.round(performance.now() - t0);
+        state.backend = j.nest === false ? 'offline' : 'online';
+      })
+      .catch(() => {
+        state.backend = 'offline';
+        state.backendPing = null;
+      });
+  }
+  pingBackend();
+  const pingTimer = window.setInterval(pingBackend, PING_INTERVAL_MS);
+  // The connection is tied to the app's lifetime; a page unload kills it.
+  window.addEventListener('beforeunload', () => window.clearInterval(pingTimer));
 }
 
 /** Pull messages newer than the last loaded one into every loaded session. */
@@ -1374,7 +1394,7 @@ export const store = {
   get activeChatId() { return state.activeChatId; },
   get openViewTabIds() { return state.openViewTabIds; },
   get backend() { return state.backend; },
-  get backendError() { return state.backendError; },
+  get backendPing() { return state.backendPing; },
   get lastError() { return state.lastError; },
   clearLastError() { state.lastError = ''; },
   /** unsent composer text of a session's chat window ('' if none) */

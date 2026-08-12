@@ -14,10 +14,6 @@ const store = useChatStore();
         💬 Start a new chat
       </button>
 
-      <div class="welcome-status" :class="'welcome-status--' + store.backend">
-        {{ store.backend === 'online' ? '● connected to the pi agent' : store.backend === 'connecting' ? '◌ connecting…' : '○ backend offline' }}
-      </div>
-
       <div class="sf-welcome-shortcuts">
         <div class="sf-shortcut"><kbd>Ctrl+N</kbd> New Chat</div>
         <div class="sf-shortcut"><kbd>Click</kbd> a Chat History entry opens its window</div>

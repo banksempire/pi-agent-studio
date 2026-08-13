@@ -145,10 +145,6 @@
   display: block;
 }
 
-.chat-msg + .chat-msg {
-  margin-top: 10px;
-}
-
 .chat-empty {
   width: fit-content;
   margin: 30vh auto 0;
@@ -180,7 +176,6 @@
   animation: chat-blink 1.2s steps(1) infinite;
 }
 
-/* biome-ignore lint/style/noDescendingSpecificity: deliberate section ordering — different properties, not overrides */
 .chat-msg {
   /* Messages (user + AI) take the full width of the window. */
   font-size: 16px;
@@ -233,9 +228,17 @@
   box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
 }
 
-/* Agent turns: full width, NO box — one row holds the separator plus all
-   of the turn's work runs and replies (grouped so the sticky separator's
-   pin spans the whole turn). */
+/* Row spacing: messages are direct siblings of the separators, so the gap
+   lands between a message and the NEXT separator (and between separator-
+   less rows). The separator→message gap is the separator's own
+   margin-bottom. */
+.chat-msg + .chat-msg,
+.chat-msg + .chat-sep {
+  margin-top: 10px;
+}
+
+/* Agent turns: full width, NO box — one row holds all of the turn's
+   work runs and replies (its separator is the list sibling above). */
 .chat-msg--agent {
   padding: 2px 0;
 }

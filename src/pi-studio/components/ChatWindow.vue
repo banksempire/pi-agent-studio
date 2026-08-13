@@ -275,6 +275,14 @@ function userSepLabel(m: DisplayMessage): string {
   return `User · ${fmtMsgTime(m.ts)}`;
 }
 
+/** Separator label by row kind: agent turns show identity, user messages
+ *  show the time (only those two kinds render a separator). */
+function sepLabel(item: ChatItem): string {
+  if (item.kind === 'user') return userSepLabel(item.msg);
+  if (item.kind === 'agent' && item.header) return agentSepLabel(item.header);
+  return '';
+}
+
 /** Stable row key: user/system/summary/custom rows by message id; agent
  *  turns by their FIRST part (group or reply id) — fixed once the turn
  *  starts, so streaming parts never remount the row (open/flash state
@@ -291,7 +299,8 @@ function rowKey(item: ChatItem): string {
  *  aligns with the list's content top, where the separator pins). */
 function jumpToSep(e: MouseEvent) {
   const el = listEl.value;
-  const row = (e.currentTarget as HTMLElement).closest('.chat-msg') as HTMLElement | null;
+  // The separator is a list sibling directly ABOVE its message row.
+  const row = (e.currentTarget as HTMLElement).nextElementSibling as HTMLElement | null;
   if (!el || !row) return;
   const padTop = parseFloat(getComputedStyle(el).paddingTop) || 0;
   const top = row.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop - padTop;
@@ -997,30 +1006,34 @@ let anchorBottom = 0;
           @click="loadOlder()"
         ><SvgIcon name="↑" /> older messages</div>
         <div v-if="session.loadingOlder" class="chat-load-older chat-load-older--loading">loading older messages…</div>
-        <div
-          v-for="item in items"
-          :key="rowKey(item)"
-          class="chat-msg"
-          :data-msg-id="rowKey(item)"
-          :class="[
-            item.kind === 'user' ? '' : 'chat-msg--' + item.kind,
-            { 'chat-msg--error': item.kind === 'system' && item.msg.isError },
-          ]"
-        >
-          <!-- Agent turn: ONE separator for the whole turn. Every work run
-               and reply of the turn is a PART of this single row, so the
-               sticky separator's containing block spans the entire turn —
-               the line stays pinned at the top even through a very long
-               multi-reply. -->
+        <template v-for="item in items" :key="rowKey(item)">
+          <!-- Sticky separator: a DIRECT child of the list, so its
+               containing block spans to the NEXT separator — it stays
+               pinned until the next line slides up and covers it (the
+               panel headers behave the same way, their subsections are
+               tall). A separator inside its own message row was pushed
+               away as soon as that short row scrolled past, while the
+               next line was still far below. -->
+          <div
+            v-if="item.kind === 'user' || (item.kind === 'agent' && item.header)"
+            class="chat-sep"
+            title="Jump to the start of this message"
+            @click="jumpToSep"
+          >
+            <span class="chat-sep-line" /><span class="chat-sep-text">{{ sepLabel(item) }}</span><span class="chat-sep-line" />
+          </div>
+          <div
+            class="chat-msg"
+            :data-msg-id="rowKey(item)"
+            :class="[
+              item.kind === 'user' ? '' : 'chat-msg--' + item.kind,
+              { 'chat-msg--error': item.kind === 'system' && item.msg.isError },
+            ]"
+          >
+          <!-- Agent turn: ONE separator for the whole turn (rendered above
+               as a list sibling). Every work run and reply of the turn is a
+               PART of this single row. -->
           <template v-if="item.kind === 'agent'">
-            <div
-              v-if="item.header"
-              class="chat-sep"
-              title="Jump to the start of this message"
-              @click="jumpToSep"
-            >
-              <span class="chat-sep-line" /><span class="chat-sep-text">{{ agentSepLabel(item.header) }}</span><span class="chat-sep-line" />
-            </div>
             <div
               v-for="part in item.parts"
               :key="part.kind === 'group' ? part.group.id : part.msg.id"
@@ -1096,15 +1109,9 @@ let anchorBottom = 0;
             </div>
           </template>
 
-          <!-- User message: sticky separator + blue bubble -->
+          <!-- User message: blue bubble (the separator above is the row's
+               header, rendered as a list sibling) -->
           <template v-else-if="item.kind === 'user'">
-            <div
-              class="chat-sep"
-              title="Jump to the start of this message"
-              @click="jumpToSep"
-            >
-              <span class="chat-sep-line" /><span class="chat-sep-text">{{ userSepLabel(item.msg) }}</span><span class="chat-sep-line" />
-            </div>
             <div class="chat-user-bubble">
               <div v-if="renderMd" class="chat-msg-md" v-html="md(item.msg)" />
               <template v-else>{{ item.msg.text }}</template>
@@ -1152,6 +1159,7 @@ let anchorBottom = 0;
           </div>
 
         </div>
+        </template>
       </template>
     </div>
 

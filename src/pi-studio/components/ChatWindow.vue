@@ -1006,14 +1006,14 @@ let anchorBottom = 0;
           @click="loadOlder()"
         ><SvgIcon name="↑" /> older messages</div>
         <div v-if="session.loadingOlder" class="chat-load-older chat-load-older--loading">loading older messages…</div>
-        <template v-for="item in items" :key="rowKey(item)">
-          <!-- Sticky separator: a DIRECT child of the list, so its
-               containing block spans to the NEXT separator — it stays
-               pinned until the next line slides up and covers it (the
-               panel headers behave the same way, their subsections are
-               tall). A separator inside its own message row was pushed
-               away as soon as that short row scrolled past, while the
-               next line was still far below. -->
+        <!-- One group per turn/message: the group is the separator's
+             CONTAINING BLOCK — it spans from the separator to the next
+             group's top, so the pinned line is pushed up exactly when the
+             next line touches it and the two slide up together (the panel
+             headers' behavior). A separator whose containing block ends
+             short of the next separator (its own message row, or the
+             whole list) either pushed early or never moved at all. -->
+        <div v-for="item in items" :key="rowKey(item)" class="chat-group">
           <div
             v-if="item.kind === 'user' || (item.kind === 'agent' && item.header)"
             class="chat-sep"
@@ -1159,7 +1159,7 @@ let anchorBottom = 0;
           </div>
 
         </div>
-        </template>
+        </div>
       </template>
     </div>
 

@@ -182,6 +182,20 @@
   line-height: 1.5;
   white-space: pre-wrap; /* plain-text messages keep newlines; .chat-msg-md overrides */
   word-break: break-word;
+  /* The gap to the NEXT group lives here (padding), not on the next
+     group as a margin: the group is the separator's containing block
+     and must end exactly at the next group's top — a margin would end
+     it 10px short and push the pinned line early. The 4px under the
+     separator comes from .chat-sep + .chat-msg below (a separator
+     margin counts toward the sticky constraint — it pushed the line
+     4px before the next one touched it). */
+  padding: 0 0 10px;
+}
+
+/* 4px gap between a separator and its message (was the separator's
+   margin-bottom, see the sticky-constraint note above). */
+.chat-sep + .chat-msg {
+  padding-top: 4px;
 }
 
 /* User input: blue bubble (the separator above is the row's header). */
@@ -204,7 +218,6 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 4px;
   padding: 2px 0;
   /* L3 — segregation lines sit on the chat window background */
   background: var(--sf-panel-bg);
@@ -222,25 +235,8 @@
   border-top: 1px solid var(--sf-border);
 }
 
-/* Whole-block hover, like buttons: the separator bar lights up (not just
-   the label text). */
 .chat-sep:hover {
   box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
-}
-
-/* Row spacing: messages are direct siblings of the separators, so the gap
-   lands between a message and the NEXT separator (and between separator-
-   less rows). The separator→message gap is the separator's own
-   margin-bottom. */
-.chat-msg + .chat-msg,
-.chat-msg + .chat-sep {
-  margin-top: 10px;
-}
-
-/* Agent turns: full width, NO box — one row holds all of the turn's
-   work runs and replies (its separator is the list sibling above). */
-.chat-msg--agent {
-  padding: 2px 0;
 }
 
 .chat-agent-part + .chat-agent-part {

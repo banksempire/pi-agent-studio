@@ -1027,13 +1027,22 @@ let anchorBottom = 0;
         No messages yet — say hello. Type <code>/</code> for slash commands.
       </div>
       <template v-else>
-        <!-- Scroll-up pagination: older messages load on demand -->
+        <!-- Scroll-up pagination: older messages load on demand. One
+             stable button (no placeholder swap): the ↑ icon becomes a
+             spinner while a page fetches — the box never changes, so the
+             list's top content can't shift or blink mid-load. -->
         <div
-          v-if="session.hasMoreOlder && !session.loadingOlder"
+          v-if="session.hasMoreOlder"
           class="chat-load-older"
+          :class="{ 'chat-load-older--loading': session.loadingOlder }"
           @click="loadOlder()"
-        ><SvgIcon name="↑" /> older messages</div>
-        <div v-if="session.loadingOlder" class="chat-load-older chat-load-older--loading">loading older messages…</div>
+        >
+          <span class="chat-load-older-icon">
+            <SvgIcon v-if="!session.loadingOlder" name="↑" />
+            <span v-else class="chat-load-older-spinner" />
+          </span>
+          older messages
+        </div>
         <!-- One group per turn/message: the group is the separator's
              CONTAINING BLOCK — it spans from the separator to the next
              group's top, so the pinned line is pushed up exactly when the

@@ -638,7 +638,16 @@ async function analyzeSession(file, opts = {}) {
       const idx = merged.findIndex((m) => m.id === opts.before);
       if (idx >= 0) end = idx; // unknown cursor → serve the newest slice
     }
-    const start = Math.max(0, end - (opts.limit ?? merged.length));
+    let start = Math.max(0, end - (opts.limit ?? merged.length));
+    // Round-based pagination: a page never splits a round (one user
+    // message + all of its replies). Walk the start back while the slice's
+    // oldest entry is itself a reply, so the page opens with the round's
+    // head message (user/system/summary/custom/standalone toolResult) and
+    // the client never renders a round's replies without their head — the
+    // same grouping the client renders turns with.
+    while (start > 0 && (merged[start].role === 'assistant' || merged[start].role === 'bash')) {
+      start--;
+    }
     oldestId = start < merged.length ? merged[start].id : null;
     hasMore = start > 0;
     // Keep only [start, end) — the requested slice.

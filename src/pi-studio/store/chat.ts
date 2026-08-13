@@ -1426,7 +1426,12 @@ export async function fetchMessages(sessionId: string, opts?: { older?: boolean 
     const incoming = (data.messages ?? []) as DisplayMessage[];
     if (opts?.older) {
       // Prepend, keeping any live/optimistic messages at the tail intact.
-      s.messages = [...incoming, ...s.messages];
+      // Dedupe by id: round-aligned pages never overlap in steady state,
+      // but a stale cursor (compaction rewrote the file, or a page loaded
+      // before the server's round-based slicing) can hand back entries we
+      // already hold.
+      const known = new Set(s.messages.map((m) => m.id).filter(Boolean));
+      s.messages = [...incoming.filter((m) => !m.id || !known.has(m.id)), ...s.messages];
     } else {
       s.messages = incoming;
       s.messagesLoaded = true;

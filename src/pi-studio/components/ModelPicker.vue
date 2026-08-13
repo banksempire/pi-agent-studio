@@ -180,7 +180,7 @@ async function commit(m: ModelInfo, thinkLevel: string) {
 
     <Menu :items="menuItems" :open="open" title="Change Model" @update:open="(v) => (open = v)" @select="onSelect">
       <template #trigger="{ toggle }">
-        <button class="model-menu-btn" :disabled="busy" @click="toggle">
+        <button class="model-menu-btn sf-panel-btn" :disabled="busy" @click="toggle">
           Change Model
         </button>
       </template>

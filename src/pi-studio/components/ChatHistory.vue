@@ -97,7 +97,7 @@ function onMenuSelect(s: ChatSession, item: MenuNodeDef) {
         >
           <template #trigger="{ toggle }">
             <button
-              class="chat-item-menu"
+              class="chat-item-menu sf-panel-btn"
               :class="{ 'chat-item-menu--open': menuOpenFor === s.id }"
               title="Session actions"
               @click.stop="toggle"

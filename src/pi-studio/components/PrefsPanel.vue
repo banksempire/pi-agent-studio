@@ -12,7 +12,7 @@ const store = useChatStore();
       <span class="prefs-right">
         <span class="prefs-hint">{{ store.prefs.sendKey === 'enter' ? 'Enter ↵' : 'Shift+Enter' }}</span>
         <button
-          class="md-switch"
+          class="md-switch sf-panel-btn"
           :class="{ 'md-switch--on': store.prefs.sendKey === 'shiftEnter' }"
           role="switch"
           :aria-checked="store.prefs.sendKey === 'shiftEnter'"
@@ -28,7 +28,7 @@ const store = useChatStore();
       <span class="prefs-right">
         <span class="prefs-hint">{{ store.prefs.renderMarkdown ? 'md' : 'raw' }}</span>
         <button
-          class="md-switch"
+          class="md-switch sf-panel-btn"
           :class="{ 'md-switch--on': store.prefs.renderMarkdown }"
           role="switch"
           :aria-checked="store.prefs.renderMarkdown"

@@ -1091,10 +1091,11 @@
   cursor: pointer;
 }
 
-/* Row action menu (⋮): hidden until the row is hovered (or its menu open). */
+/* Row action menu (⋮): hidden until the row is hovered (or its menu open).
+   Panel buttons share the docker/chrome color (--sf-bar). */
 .chat-item-menu {
   visibility: hidden;
-  background: none;
+  background: var(--sf-bar);
   border: none;
   cursor: pointer;
   color: var(--sf-text-muted);
@@ -1398,7 +1399,9 @@
   padding: 0;
   border: 1px solid var(--sf-border);
   border-radius: 8px;
-  background: var(--sf-bg);
+  /* Panel buttons share the docker/chrome color (--sf-bar); the ON
+     state keeps the accent as the selection color. */
+  background: var(--sf-bar);
   position: relative;
   cursor: pointer;
   flex-shrink: 0;
@@ -1541,14 +1544,15 @@
   font-size: 16px;
 }
 
-/* [Change Model] — opens the unified Menu flyout */
+/* [Change Model] — opens the unified Menu flyout. Panel buttons share the
+   chrome bar color (--sf-bar): raised against the panel content bg. */
 .model-menu-btn {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
   width: 100%;
-  background: color-mix(in srgb, var(--sf-text-muted) 12%, transparent);
+  background: var(--sf-bar);
   border: 1px solid color-mix(in srgb, var(--sf-text-muted) 25%, transparent);
   border-radius: 4px;
   padding: 3px 6px;

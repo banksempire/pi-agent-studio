@@ -780,14 +780,31 @@ function handleEvent(ev: any) {
       }
       const m = ev.message as DisplayMessage;
       if (m.role === 'user') {
-        // Replace the optimistic pending message (same text). It may no longer
-        // be the last message: a queued message's turn starts only after the
-        // previous turn's stream has pushed more messages in between.
-        const opt = s.messages.findIndex(
+        // The optimistic pending row (same text) is replaced in place — it
+        // may no longer be the last message: a queued message's turn starts
+        // only after the previous turn's stream has pushed more messages in
+        // between. A FILE-backed row (the user entry that syncTail appended
+        // while the message was queued) is adopted instead of pushing a
+        // second row: it keeps its canonical entry id so the syncTail
+        // cursor stays file-backed.
+        const pendingIdx = s.messages.findIndex(
           (x) => x.role === 'user' && x.id.startsWith('pending-') && x.text === m.text,
         );
-        if (opt >= 0) s.messages[opt] = m;
-        else upsert(s, m);
+        const fileIdx = s.messages.findIndex(
+          (x) =>
+            x.role === 'user' &&
+            !x.id.startsWith('pending-') &&
+            !x.id.startsWith('user-') &&
+            x.text === m.text,
+        );
+        if (pendingIdx >= 0) {
+          s.messages[pendingIdx] = m;
+          // The file copy of this message is now redundant — drop it so the
+          // message shows exactly once regardless of arrival order.
+          if (fileIdx >= 0) s.messages.splice(fileIdx, 1);
+        } else if (fileIdx >= 0) {
+          s.messages[fileIdx] = { ...m, id: s.messages[fileIdx].id };
+        } else upsert(s, m);
       } else if (m.role === 'toolResult') {
         mergeToolResult(s, m.toolCallId ?? '', m.text, !!m.isError);
       } else {
@@ -1445,7 +1462,10 @@ export async function loadOlder(sessionId: string) {
 export async function syncTail(sessionId: string) {
   const s = findSession(sessionId);
   if (!s?.messagesLoaded) return;
-  // Cursor: the last message that has a stable file entry id.
+  // Cursor: the last message that has a stable file entry id (live rows
+  // carry asst-/user-/pending-/toolresult-/msg- ids that never exist in
+  // the file; summary- ids ARE canonical — both sides derive them from
+  // the same hash).
   let lastEntryId: string | null = null;
   for (let i = s.messages.length - 1; i >= 0; i--) {
     const id = s.messages[i].id;
@@ -1453,6 +1473,7 @@ export async function syncTail(sessionId: string) {
       id &&
       !id.startsWith('pending-') &&
       !id.startsWith('asst-') &&
+      !id.startsWith('user-') &&
       !id.startsWith('toolresult-') &&
       !id.startsWith('msg-')
     ) {
@@ -1472,7 +1493,24 @@ export async function syncTail(sessionId: string) {
       // avoids the old per-item O(n) scan over the loaded messages.
       const seenId = new Set(s.messages.map((m) => m.id));
       const seenTs = new Set(s.messages.map((m) => `${m.role}:${m.ts}`));
-      const fresh = incoming.filter((m) => !seenId.has(m.id) && !seenTs.has(`${m.role}:${m.ts}`));
+      const fresh: DisplayMessage[] = [];
+      for (const m of incoming) {
+        if (seenId.has(m.id) || seenTs.has(`${m.role}:${m.ts}`)) continue;
+        if (m.role === 'user') {
+          // The file entry for a queued user message lands BEFORE its live
+          // event (the entry is appended at queue time, the turn starts
+          // later). Adopt the optimistic row's slot instead of appending a
+          // second row — keeps one row per message while the turn waits.
+          const p = s.messages.findIndex(
+            (x) => x.role === 'user' && x.id.startsWith('pending-') && x.text === m.text,
+          );
+          if (p >= 0) {
+            s.messages[p] = m;
+            continue;
+          }
+        }
+        fresh.push(m);
+      }
       if (fresh.length > 0) s.messages = [...s.messages, ...fresh];
     }
     // Full-session info rides along — keep stats fresh too.

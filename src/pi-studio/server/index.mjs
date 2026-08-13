@@ -621,7 +621,17 @@ async function analyzeSession(file, opts = {}) {
   if (opts.after) {
     const idx = merged.findIndex((m) => m.id === opts.after);
     if (idx >= 0) merged = merged.slice(idx + 1);
-    // unknown cursor → return everything; the client dedupes by id
+    // A live-stream cursor (asst-/user-/pending-/toolresult-/msg-) is NEVER
+    // in the file — the entry for the streamed message hasn't landed yet.
+    // Returning everything here would hand the client the WHOLE history and
+    // its dedupe (loaded-window only) would append thousands of old rows
+    // after the live tail: the chat "flicks" to a previous message and the
+    // bottom stops showing the latest. Return nothing; the client re-syncs
+    // once its cursor is file-backed (next refresh).
+    else if (/^(asst|user|pending|toolresult|msg)-/.test(opts.after)) merged = [];
+    // An unknown FILE cursor (e.g. pre-compaction entry dropped from the
+    // active chain) serves the whole chain — post-compaction that list is
+    // short and the client dedupes by id.
   } else if (opts.limit || opts.before) {
     let end = merged.length;
     if (opts.before) {

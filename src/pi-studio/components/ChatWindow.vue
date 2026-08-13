@@ -723,9 +723,14 @@ const isMobile = ref(window.innerWidth < 500);
 function autoGrowMobileInput() {
   const el = inputEl.value;
   if (!el || !isMobile.value) return;
+  // scrollHeight excludes the 2px of borders, but the box is border-box:
+  // add them back or the one-line box shrinks by the border width (the
+  // CSS height includes them, the inline height wouldn't).
+  const borders = el.offsetHeight - el.clientHeight;
+  const contentH = el.scrollHeight + borders;
   el.style.height = 'auto';
-  el.style.height = `${Math.min(el.scrollHeight, MOBILE_INPUT_MAX_PX)}px`;
-  el.style.overflowY = el.scrollHeight > MOBILE_INPUT_MAX_PX ? 'auto' : 'hidden';
+  el.style.height = `${Math.min(contentH, MOBILE_INPUT_MAX_PX)}px`;
+  el.style.overflowY = contentH > MOBILE_INPUT_MAX_PX ? 'auto' : 'hidden';
 }
 
 /** Back to the stylesheet's fixed one-line box (also on desktop). */

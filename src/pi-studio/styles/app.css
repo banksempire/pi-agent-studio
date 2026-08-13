@@ -67,7 +67,11 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: var(--sf-bg);
+  /* L3 — chat window background matches the panel body */
+  background: var(--sf-panel-bg);
+  /* Both modes: 10px gutters on each side, matching the panel body inset
+     (mobile) — the window reads as a card within the tile. */
+  margin: 0 10px;
 }
 
 .chat-header {
@@ -77,7 +81,8 @@
   gap: 8px;
   padding: 6px 12px;
   border-bottom: 1px solid var(--sf-border);
-  background: var(--sf-bg-light);
+  /* L2 — chat window title bar matches the input panel */
+  background: var(--sf-control);
   flex-shrink: 0;
 }
 
@@ -205,7 +210,8 @@
   gap: 8px;
   margin-bottom: 4px;
   padding: 2px 0;
-  background: var(--sf-bg);
+  /* L3 — segregation lines sit on the chat window background */
+  background: var(--sf-panel-bg);
   font-size: 16px;
   letter-spacing: 0.3px;
   color: var(--sf-text-muted);
@@ -569,7 +575,8 @@
   gap: 8px;
   padding: 10px 12px;
   border-top: 1px solid var(--sf-border);
-  background: var(--sf-bg-light);
+  /* L2 — input panel sits one step above the chat window background */
+  background: var(--sf-control);
   flex-shrink: 0;
 }
 

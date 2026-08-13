@@ -130,9 +130,37 @@ async function loadOlder() {
   if (!s || !el || s.loadingOlder || !s.hasMoreOlder) return;
   const prevHeight = el.scrollHeight;
   const prevTop = el.scrollTop;
+  // Anchor the viewport on the LAST part of the first rendered row. Parts
+  // keep their keys across an older-page prepend (reply ids from the
+  // message, group ids from the first work message of their segment), so
+  // the anchor survives even when the page boundary falls mid-turn and the
+  // row itself is re-created with a new key. After the fetch the part's
+  // own screen offset is the true correction: it accounts for the
+  // prepended page AND anything streamed in while the fetch was in flight
+  // — the scrollHeight-delta math over-shoots by the streamed height and
+  // yanks the view down, losing the user's place.
+  const first = el.querySelector('[data-msg-id]') as HTMLElement | null;
+  let anchorSel: string | null = null;
+  const firstKey = first?.getAttribute('data-msg-id');
+  if (first && firstKey) {
+    const parts = first.querySelectorAll('[data-part-id]');
+    const partKey = parts.length > 0 ? parts[parts.length - 1].getAttribute('data-part-id') : null;
+    anchorSel = partKey
+      ? `[data-part-id="${CSS.escape(partKey)}"]`
+      : `[data-msg-id="${CSS.escape(firstKey)}"]`;
+  }
+  const anchorEl = anchorSel ? (el.querySelector(anchorSel) as HTMLElement | null) : null;
+  const anchorOffset = anchorEl ? anchorEl.getBoundingClientRect().top - el.getBoundingClientRect().top : 0;
   await store.loadOlder(s.id);
   await nextTick();
-  el.scrollTop = el.scrollHeight - prevHeight + prevTop;
+  const nowEl = anchorSel ? (el.querySelector(anchorSel) as HTMLElement | null) : null;
+  if (nowEl) {
+    const now = nowEl.getBoundingClientRect().top - el.getBoundingClientRect().top;
+    el.scrollTop = el.scrollTop + (now - anchorOffset);
+  } else {
+    // No stable anchor — plain scrollHeight delta.
+    el.scrollTop = el.scrollHeight - prevHeight + prevTop;
+  }
 }
 
 // Re-run on new messages and on streaming text/thinking growth. A cheap
@@ -1037,6 +1065,7 @@ let anchorBottom = 0;
             <div
               v-for="part in item.parts"
               :key="part.kind === 'group' ? part.group.id : part.msg.id"
+              :data-part-id="part.kind === 'group' ? part.group.id : part.msg.id"
               class="chat-agent-part"
             >
               <!-- ActionBubble group: consecutive thinking/tool/bash actions

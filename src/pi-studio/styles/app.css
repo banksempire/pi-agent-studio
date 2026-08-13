@@ -154,11 +154,18 @@
 
 .chat-load-older {
   width: fit-content;
+  /* Fixed height (incl. the 1px border): the loading placeholder swaps in
+     for the button while a page fetches, and a height change would shift
+     the list's top content by the difference mid-load. */
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   margin: 0 auto;
   font-size: 16px;
   color: var(--sf-text-muted);
   cursor: pointer;
-  padding: 2px 10px;
+  padding: 0 10px;
   border-radius: 8px;
   border: 1px solid transparent;
   user-select: none;

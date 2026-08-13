@@ -133,11 +133,11 @@
   overflow-y: auto;
   /* No TOP padding: the pinned separator must sit flush with the top of
      the window (row spacing comes from .chat-msg margins instead). */
-  padding: 0 10px 12px;
+  padding: 0 20px 12px;
   /* PADDING, not margin: the inset belongs to the messages area only
      (between the title bar and the input panel) and the scrollbar of
      this scroll container must stay flush at the window edge. Both
-     modes, matching the panel body's 10px gutters. */
+     modes, matching the panel body's gutters. */
   /* BLOCK layout, not flex: position:sticky on the message separators only
      pins when the sticky element's nearest scroll container is this box AND
      the element is not nested inside a flex item (Chromium: sticky inside a

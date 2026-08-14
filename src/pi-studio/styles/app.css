@@ -262,10 +262,6 @@
   letter-spacing: 0.3px;
 }
 
-.chat-cursor {
-  animation: chat-blink 1s steps(1) infinite;
-}
-
 @keyframes chat-blink {
   50% {
     opacity: 0;

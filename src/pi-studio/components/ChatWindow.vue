@@ -1133,7 +1133,6 @@ let anchorBottom = 0;
               <template v-else>
                 <div v-if="renderMd" class="chat-msg-md" v-html="md(part.msg)" />
                 <template v-else>{{ part.msg.text }}</template>
-                <span v-if="streaming && part.msg.id === lastMessage?.id" class="chat-cursor"><SvgIcon name="▌" /></span>
                 <div v-if="part.msg.error" class="chat-aborted chat-aborted--error"><SvgIcon name="⚠" /> {{ part.msg.error }}</div>
               </template>
             </div>

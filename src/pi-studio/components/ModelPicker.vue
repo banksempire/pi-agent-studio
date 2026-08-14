@@ -35,7 +35,6 @@ const LEVEL_DESCRIPTIONS: Record<string, string> = {
 const store = useChatStore();
 
 const catalog = ref<ModelCatalog | null>(null);
-const loading = ref(false);
 const busy = ref(false);
 const error = ref('');
 const open = ref(false);
@@ -48,7 +47,6 @@ async function load() {
     catalog.value = null;
     return;
   }
-  loading.value = true;
   error.value = '';
   try {
     const j = await api<{ ok: boolean; data?: ModelCatalog; error?: string }>('/api/slash', {
@@ -69,8 +67,6 @@ async function load() {
       error.value = String((e as Error)?.message ?? e);
     }
     catalog.value = null;
-  } finally {
-    loading.value = false;
   }
 }
 
@@ -188,7 +184,6 @@ async function commit(m: ModelInfo, thinkLevel: string) {
 
     <div v-if="busy" class="model-menu-note">Applying…</div>
     <div v-if="error" class="model-menu-note model-menu-note--err">{{ error }}</div>
-    <div v-else-if="loading" class="model-menu-note">Loading models…</div>
     <div v-else-if="!active" class="model-menu-note">Open a chat window to change its model.</div>
   </div>
 </template>

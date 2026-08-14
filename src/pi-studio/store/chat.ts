@@ -150,6 +150,9 @@ interface ChatState {
   backend: BackendStatus;
   /** last /api/health round-trip in ms (null = no measurement yet) */
   backendPing: number | null;
+  /** the latest heartbeat got no response within its timeout — reported as
+   *  a lost packet (the late answer is discarded, never a huge ping) */
+  backendLost: boolean;
   /** last send failure, shown in chat windows */
   lastError: string;
   /** unsent composer text per session (tab content instances are REUSED by
@@ -279,6 +282,7 @@ const state = reactive<ChatState>({
   treeCollapsed: new Set(),
   backend: 'connecting',
   backendPing: null,
+  backendLost: false,
   lastError: '',
   drafts: loadDrafts(),
   prefs: loadPrefs(),
@@ -902,17 +906,46 @@ function connectEvents() {
   // pi-nest, so a dead daemon reads as offline too). The status-bar dot is
   // green when fast, yellow when the ping is high, red when unreachable.
   const PING_INTERVAL_MS = 5000;
+  // A heartbeat with no response inside this window is a LOST packet: the
+  // probe aborts, so a late answer can never record a bogus huge ping, and
+  // the status bar reports the loss instead of the stale number. Two
+  // consecutive losses read as offline — a backend that never answers is
+  // as good as down even when the TCP connect itself succeeded.
+  const PING_TIMEOUT_MS = 3000;
+  let pingLostStreak = 0;
   function pingBackend() {
     const t0 = performance.now();
-    fetch('/api/health')
+    const ctrl = new AbortController();
+    let timedOut = false;
+    const timer = window.setTimeout(() => {
+      timedOut = true;
+      ctrl.abort();
+    }, PING_TIMEOUT_MS);
+    fetch('/api/health', { signal: ctrl.signal })
       .then((r) => r.json())
       .then((j) => {
+        window.clearTimeout(timer);
+        if (timedOut) return; // late answer to a lost heartbeat — discard
+        pingLostStreak = 0;
+        state.backendLost = false;
         state.backendPing = Math.round(performance.now() - t0);
         state.backend = j.nest === false ? 'offline' : 'online';
       })
       .catch(() => {
-        state.backend = 'offline';
-        state.backendPing = null;
+        window.clearTimeout(timer);
+        if (!timedOut) {
+          // Real failure (refused/DNS/network) — the backend is unreachable.
+          state.backend = 'offline';
+          state.backendPing = null;
+          state.backendLost = false;
+          return;
+        }
+        // Heartbeat lost — the backend may just be slow. Keep the last good
+        // ping on record, mark the loss, and only treat a repeated loss as
+        // down.
+        pingLostStreak += 1;
+        state.backendLost = true;
+        if (pingLostStreak >= 2) state.backend = 'offline';
       });
   }
   pingBackend();
@@ -1604,6 +1637,9 @@ export const store = {
   },
   get backendPing() {
     return state.backendPing;
+  },
+  get backendLost() {
+    return state.backendLost;
   },
   get lastError() {
     return state.lastError;

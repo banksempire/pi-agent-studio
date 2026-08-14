@@ -9,7 +9,6 @@ import ChatHistory from './components/ChatHistory.vue';
 import ChatSessions from './components/ChatSessions.vue';
 import ChatWindow from './components/ChatWindow.vue';
 import DirectoryTree from './components/DirectoryTree.vue';
-import ModelPicker from './components/ModelPicker.vue';
 import PrefsPanel from './components/PrefsPanel.vue';
 import SessionStats from './components/SessionStats.vue';
 import WelcomeContent from './components/WelcomeContent.vue';
@@ -27,7 +26,6 @@ registerPanelComponent('chat-sessions', ChatSessions);
 registerPanelComponent('directory-tree', DirectoryTree);
 registerPanelComponent('session-stats', SessionStats);
 registerStatusComponent('backend-status', BackendStatus);
-registerPanelComponent('model-picker', ModelPicker);
 registerPanelComponent('prefs', PrefsPanel);
 
 // The Workspace app (docker item "workspace") — saved-workspace management.

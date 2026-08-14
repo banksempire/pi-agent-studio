@@ -1252,6 +1252,14 @@
   cursor: default;
 }
 
+/* Left-side status items: anchor the popup's left edge to the indicator
+   (it extends rightward) instead of right — a right-anchored popup at the
+   screen's left edge would open off-screen. */
+.sf-status-left .status-backend-pop {
+  left: 0;
+  right: auto;
+}
+
 .status-backend-pop-title {
   font-size: 12px;
   font-weight: 600;

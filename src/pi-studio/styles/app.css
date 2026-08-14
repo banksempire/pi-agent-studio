@@ -131,6 +131,13 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* Native scroll anchoring is OFF: loadOlder restores the viewport
+     itself (its anchor-part math), and the browser's own anchor
+     adjustment — Blink and WebKit apply it at different phases, and a
+     late pass can paint a wrong frame mid-load — would fight that
+     restore and flick the content. The sticky bottom-follow is JS
+     driven (scrollToBottom when sticky) and never needed anchoring. */
+  overflow-anchor: none;
   /* No TOP padding: the pinned separator must sit flush with the top of
      the window (row spacing comes from .chat-msg margins instead). */
   padding: 0 20px 12px;

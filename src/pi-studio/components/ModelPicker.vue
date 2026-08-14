@@ -4,22 +4,9 @@ import Menu from '@sf/components/Menu.vue';
 import type { MenuNodeDef } from '@sf/types/layout';
 import type { KeyValueItem } from '@sf/types/panel';
 import { computed, onMounted, ref, watch } from 'vue';
+import type { ModelCatalog, ModelInfo } from '../modelInfo';
+import { cachedModelMatches, getModelInfo, setCachedModel } from '../modelInfo';
 import { api, useChatStore } from '../store/chat';
-
-interface ModelInfo {
-  id: string;
-  provider: string;
-  name: string;
-  reasoning: boolean;
-  contextWindow: number;
-  thinkingLevels: string[];
-}
-
-interface ModelCatalog {
-  models: ModelInfo[];
-  current: ModelInfo | null;
-  currentThinkingLevel: string | null;
-}
 
 /** Same descriptions as the pi TUI's thinking selector. */
 const LEVEL_DESCRIPTIONS: Record<string, string> = {
@@ -41,7 +28,7 @@ const open = ref(false);
 
 const active = computed(() => (store.activeChatId ? (store.findSession(store.activeChatId) ?? null) : null));
 
-async function load() {
+async function load(force = false) {
   const s = active.value;
   if (!s?.file) {
     catalog.value = null;
@@ -49,17 +36,9 @@ async function load() {
   }
   error.value = '';
   try {
-    const j = await api<{ ok: boolean; data?: ModelCatalog; error?: string }>('/api/slash', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file: s.file, command: 'model' }),
-    });
-    if (!j.ok) {
-      error.value = j.error || 'Failed to load models';
-      catalog.value = null;
-    } else {
-      catalog.value = j.data as ModelCatalog;
-    }
+    // Per-window cache: activating an already-visited window needs no
+    // backend round-trip (modelInfo.ts keeps the snapshot per file).
+    catalog.value = await getModelInfo(s.file, force);
   } catch (e) {
     // Connectivity failures are silent — the status-bar dot is the only
     // indicator; real backend rejections (j.ok === false) still show.
@@ -70,18 +49,25 @@ async function load() {
   }
 }
 
-// A new chat window (or none) resets and reloads. Watch the FILE PATH, not
-// the session object: a refresh re-syncs the session list (new object
-// identities) and would otherwise churn on every model change.
+// A new chat window (or none) resets and shows its cached model info.
+// Watch the FILE PATH, not the session object: a refresh re-syncs the
+// session list (new object identities) and would otherwise churn on
+// every model change.
 const activeFile = computed(() => active.value?.file ?? null);
 watch(activeFile, () => {
   open.value = false;
   void load();
 });
-// The model can also change from outside the menu (e.g. /model in chat).
+// The model can also change from outside the menu (e.g. /model in chat):
+// refresh that window's info. An SSE stats update that merely echoes the
+// picker's own commit matches the cache — no refetch for that.
 watch(
   () => active.value?.stats.model ?? null,
-  () => void load(),
+  (m) => {
+    const f = active.value?.file;
+    if (f && cachedModelMatches(f, m)) return;
+    void load(true);
+  },
 );
 onMounted(() => void load());
 
@@ -154,7 +140,9 @@ async function commit(m: ModelInfo, thinkLevel: string) {
     if (!j.ok) {
       error.value = j.error || 'Failed to apply model';
     } else {
-      void load();
+      // Record the commit in the cache — the SSE stats echo that follows
+      // then matches and skips the otherwise-redundant refetch.
+      setCachedModel(s.file, m, thinkLevel);
     }
   } catch (e) {
     // Connectivity failures are silent (the dot in the status bar says it

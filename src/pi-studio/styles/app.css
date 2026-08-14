@@ -1574,6 +1574,50 @@
   max-width: 100%;
   border-radius: 4px;
 }
+/* ── Model menu (Stats sub-section — unified Menu flyout) ───────────────── */
+
+.model-menu {
+  padding: 0 8px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 16px;
+}
+
+/* [Change Model] — opens the unified Menu flyout. Background/hover come
+   from the framework's .sf-panel-btn (chrome L1 color); shape only here. */
+.model-menu-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  border: 1px solid color-mix(in srgb, var(--sf-text-muted) 25%, transparent);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.model-menu-btn:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
+}
+.model-menu-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.model-menu-note {
+  font-size: 16px;
+  color: var(--sf-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-menu-note--err {
+  color: var(--sf-status-err);
+}
+
 /* App-specific kv-pill tones (base + generic tones live in the framework). */
 .kv-pill--running {
   background: color-mix(in srgb, var(--sf-status-ok) 18%, transparent);

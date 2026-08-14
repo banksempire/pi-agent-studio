@@ -161,6 +161,19 @@ async function loadOlder() {
     // No stable anchor — plain scrollHeight delta.
     el.scrollTop = el.scrollHeight - prevHeight + prevTop;
   }
+  // Re-settle one frame later: some engines (WebKit/iOS Safari) apply
+  // their own scroll-position adjustment AFTER script ran — a late pass
+  // can move the viewport a frame behind the restore and flick the
+  // content. Re-measuring the anchor in the next rAF (before its paint)
+  // cancels any such drift, so the anchored content never visibly moves.
+  requestAnimationFrame(() => {
+    const list = listEl.value;
+    if (!list || !anchorSel) return;
+    const settleEl = list.querySelector(anchorSel) as HTMLElement | null;
+    if (!settleEl) return;
+    const drift = settleEl.getBoundingClientRect().top - list.getBoundingClientRect().top - anchorOffset;
+    if (Math.abs(drift) > 1) list.scrollTop = list.scrollTop + drift;
+  });
 }
 
 // Re-run on new messages and on streaming text/thinking growth. A cheap

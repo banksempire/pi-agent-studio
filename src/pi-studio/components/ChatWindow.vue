@@ -1012,14 +1012,6 @@ let anchorBottom = 0;
 
 <template>
   <div class="chat-window">
-    <!-- Header -->
-    <div class="chat-header">
-      <div class="chat-header-title">
-        <span class="chat-status-dot" :class="'chat-status-dot--' + (session?.status ?? 'idle')" />
-        <span class="chat-title-text">{{ session?.title ?? 'Chat' }}</span>
-      </div>
-    </div>
-
     <!-- Messages -->
     <div ref="listEl" class="chat-messages" @scroll="onScroll">
       <div v-if="!session" class="chat-empty">Session not found.</div>

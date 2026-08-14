@@ -382,6 +382,14 @@ seedPendingSessions();
 const TAB_PREFIX = 'chat-';
 const chatTabId = (sessionId: string) => TAB_PREFIX + sessionId;
 
+/** Tab icon + state class for a session: the chat bubble while idle; a
+ *  large dot while the LLM works (green, pulsing — the chat-window header
+ *  dot moved to the tab). */
+function tabStatusOf(s: ChatSession): { icon: string; tabClass: string } {
+  if (s.status === 'running') return { icon: '◉', tabClass: 'chat-tab--running' };
+  return { icon: '💬', tabClass: '' };
+}
+
 /**
  * Workspace tab definition for a session's chat window. Shared by openChat
  * and the panel → workspace drag handler so both open identical views.
@@ -390,10 +398,24 @@ function chatTabDef(s: ChatSession): WorkspaceTabDef {
   return {
     id: chatTabId(s.id),
     label: s.title,
-    icon: '💬',
+    ...tabStatusOf(s),
     content: 'chat-window',
     props: { sessionId: s.id },
   };
+}
+
+/** Re-derive the status icon/class of every open chat tab from its
+ *  session (status changes arrive via SSE events and list refreshes). */
+function syncTabStatuses() {
+  if (!ws) return;
+  for (const [tabId, tab] of Object.entries(ws.tabDefs)) {
+    if (!tabId.startsWith(TAB_PREFIX)) continue;
+    const s = findSession(tabId.slice(TAB_PREFIX.length));
+    if (!s) continue;
+    const st = tabStatusOf(s);
+    tab.icon = st.icon;
+    tab.tabClass = st.tabClass;
+  }
 }
 
 /**
@@ -611,6 +633,7 @@ async function fetchList() {
         return s;
       }),
     ];
+    syncTabStatuses();
     state.backend = 'online';
   } catch (_e) {
     state.backend = 'offline';
@@ -727,7 +750,10 @@ function handleEvent(ev: any) {
   switch (ev.type) {
     case 'session_status': {
       const s = byFile(ev.file);
-      if (s) s.status = ev.status;
+      if (s) {
+        s.status = ev.status;
+        syncTabStatuses();
+      }
       break;
     }
     case 'ack': {
@@ -1542,6 +1568,7 @@ function applySessionInfo(s: ChatSession, data: any) {
   s.stats.toolResults = data.toolResults ?? s.stats.toolResults;
   s.status = data.running ? 'running' : s.status;
   if (data.context) s.context = data.context;
+  syncTabStatuses();
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────

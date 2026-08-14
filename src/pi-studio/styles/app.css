@@ -44,10 +44,6 @@
   animation: chat-pulse 1.4s infinite;
 }
 
-.chat-status-dot--stopped {
-  background: var(--sf-status-warn);
-}
-
 @keyframes chat-pulse {
   0% {
     box-shadow: 0 0 0 0 color-mix(in srgb, var(--sf-status-ok) 45%, transparent);
@@ -60,6 +56,20 @@
   }
 }
 
+/* Session status on the workspace tab — the chat-window title bar is
+   gone, so the state dot lives on the tab: the ◉ glyph replaces the chat
+   bubble while the LLM works (green, pulsing ring). Both the desktop tab
+   strip (.sf-tab) and the mobile title-bar label carry the state class
+   (tabClass in the tab def). */
+.sf-tab.chat-tab--running .sf-tab-icon,
+.sf-mobile-tab-label.chat-tab--running .sf-mobile-tab-icon {
+  width: 11px;
+  height: 11px;
+  color: var(--sf-status-ok);
+  border-radius: 50%;
+  animation: chat-pulse 1.4s infinite;
+}
+
 /* ── Chat window (workspace tab content) ────────────────────────────────── */
 
 .chat-window {
@@ -69,34 +79,6 @@
   min-height: 0;
   /* L3 — chat window background matches the panel body */
   background: var(--sf-panel-bg);
-}
-
-.chat-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--sf-border);
-  /* L2 — chat window title bar matches the input panel */
-  background: var(--sf-control);
-  flex-shrink: 0;
-}
-
-.chat-header-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.chat-title-text {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--sf-text-bright);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .chat-messages {

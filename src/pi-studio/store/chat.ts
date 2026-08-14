@@ -124,6 +124,9 @@ export interface ChatSession {
 
 export type BackendStatus = 'connecting' | 'online' | 'offline';
 
+/** One heartbeat outcome for the latency popup: good (ms) or lost (null). */
+export type PingSample = { t: number; ms: number | null };
+
 export type SendKeyMode = 'enter' | 'shiftEnter';
 
 interface ChatState {
@@ -153,6 +156,9 @@ interface ChatState {
   /** the latest heartbeat got no response within its timeout — reported as
    *  a lost packet (the late answer is discarded, never a huge ping) */
   backendLost: boolean;
+  /** rolling heartbeat window for the latency popup: every probe outcome,
+   *  good (ms) or lost (null), kept for PING_WINDOW_MS (5 min) */
+  pingSamples: PingSample[];
   /** last send failure, shown in chat windows */
   lastError: string;
   /** unsent composer text per session (tab content instances are REUSED by
@@ -283,6 +289,7 @@ const state = reactive<ChatState>({
   backend: 'connecting',
   backendPing: null,
   backendLost: false,
+  pingSamples: [],
   lastError: '',
   drafts: loadDrafts(),
   prefs: loadPrefs(),
@@ -912,7 +919,19 @@ function connectEvents() {
   // consecutive losses read as offline — a backend that never answers is
   // as good as down even when the TCP connect itself succeeded.
   const PING_TIMEOUT_MS = 3000;
+  /** Rolling latency window for the click-to-open stats popup. */
+  const PING_WINDOW_MS = 5 * 60_000;
   let pingLostStreak = 0;
+  /** Record one probe outcome (ms = round-trip, null = lost) and prune
+   *  anything older than the rolling window. */
+  function pushPingSample(ms: number | null) {
+    const now = performance.now();
+    const cutoff = now - PING_WINDOW_MS;
+    while (state.pingSamples.length > 0 && state.pingSamples[0].t < cutoff) {
+      state.pingSamples.shift();
+    }
+    state.pingSamples.push({ t: now, ms });
+  }
   function pingBackend() {
     const t0 = performance.now();
     const ctrl = new AbortController();
@@ -929,6 +948,7 @@ function connectEvents() {
         pingLostStreak = 0;
         state.backendLost = false;
         state.backendPing = Math.round(performance.now() - t0);
+        pushPingSample(state.backendPing);
         state.backend = j.nest === false ? 'offline' : 'online';
       })
       .catch(() => {
@@ -938,6 +958,7 @@ function connectEvents() {
           state.backend = 'offline';
           state.backendPing = null;
           state.backendLost = false;
+          pushPingSample(null);
           return;
         }
         // Heartbeat lost — the backend may just be slow. Keep the last good
@@ -945,6 +966,7 @@ function connectEvents() {
         // down.
         pingLostStreak += 1;
         state.backendLost = true;
+        pushPingSample(null);
         if (pingLostStreak >= 2) state.backend = 'offline';
       });
   }
@@ -1640,6 +1662,10 @@ export const store = {
   },
   get backendLost() {
     return state.backendLost;
+  },
+  /** Rolling 5-minute probe window (every outcome, good or lost). */
+  get pingSamples() {
+    return state.pingSamples;
   },
   get lastError() {
     return state.lastError;

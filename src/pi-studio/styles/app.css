@@ -1211,6 +1211,8 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  position: relative;
+  cursor: pointer;
 }
 
 .status-backend-dot {
@@ -1230,6 +1232,53 @@
 
 .status-backend-dot--err {
   background: var(--sf-status-err);
+}
+
+/* Latency popup — opens above the indicator on click; closes on outside
+   click or Escape. Anchored to the indicator itself (position: relative
+   above), so it works in any status-bar slot and on mobile. */
+.status-backend-pop {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 1000;
+  min-width: 196px;
+  padding: 10px 12px;
+  background: var(--sf-panel-bg);
+  border: 1px solid var(--sf-border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 25%);
+  user-select: none;
+  cursor: default;
+}
+
+.status-backend-pop-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sf-text-bright);
+  margin-bottom: 6px;
+}
+
+.status-backend-pop-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  font-size: 12px;
+  color: var(--sf-text);
+  padding: 2px 0;
+}
+
+.status-backend-pop-row span:last-child {
+  color: var(--sf-text-bright);
+  font-variant-numeric: tabular-nums;
+}
+
+.status-backend-pop-foot {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--sf-border);
+  font-size: 11px;
+  color: var(--sf-text-dim);
 }
 
 /* ── Session stats (right panel) ────────────────────────────────────────── */

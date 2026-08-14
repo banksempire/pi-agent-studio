@@ -40,19 +40,24 @@
 
 .chat-status-dot--running {
   background: var(--sf-status-ok);
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--sf-status-ok) 50%, transparent);
   animation: chat-pulse 1.4s infinite;
 }
 
+/* Breathing glow for the running indicators (tab dot + session-stats
+   dot). The pulse is a DROP-SHADOW, not a box-shadow: it follows the
+   element's own alpha shape, so it stays perfectly round on every
+   engine (box-shadow + border-radius on tiny elements can render with
+   square-corner artifacts, and the old keyframes also depended on
+   color-mix inside the animation). */
 @keyframes chat-pulse {
   0% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--sf-status-ok) 45%, transparent);
+    filter: drop-shadow(0 0 0 var(--sf-status-ok));
   }
   70% {
-    box-shadow: 0 0 0 5px transparent;
+    filter: drop-shadow(0 0 5px transparent);
   }
   100% {
-    box-shadow: 0 0 0 0 transparent;
+    filter: drop-shadow(0 0 0 transparent);
   }
 }
 
@@ -66,7 +71,6 @@
   width: 11px;
   height: 11px;
   color: var(--sf-status-ok);
-  border-radius: 50%;
   animation: chat-pulse 1.4s infinite;
 }
 

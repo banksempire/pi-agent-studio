@@ -3,6 +3,7 @@ import SvgIcon from '@sf/components/SvgIcon.vue';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { ActionBubble, ActionGroup, type ActionKind, type ActionStatus, actionName } from '../actionBubble';
 import {
   allSlashCommands,
   type ParsedSlash,
@@ -237,8 +238,6 @@ function roleLabel(m: DisplayMessage): string {
 //   - group finished:    "n actions done" + total elapsed — click to expand
 //     the stacked sub-bubbles; a sub-bubble click reveals its detail.
 
-import { ActionBubble, ActionGroup, type ActionKind, type ActionStatus, actionName } from '../actionBubble';
-
 export type AgentPart = { kind: 'group'; group: ActionGroup } | { kind: 'reply'; msg: DisplayMessage };
 
 export type ChatItem =
@@ -422,8 +421,6 @@ const items = computed<ChatItem[]>(() => {
   };
 
   /** Fill the turn's separator identity from any available source message. */
-  const ensureTurnHeader = (m: DisplayMessage) => ensureHeader(header, m);
-
   const addMove = (
     src: number,
     msgId: string,
@@ -431,7 +428,7 @@ const items = computed<ChatItem[]>(() => {
     mv: Omit<PendingMove, 'kind' | 'name'> & { name?: string },
   ) => {
     if (!workId) workId = `work-${msgId}`;
-    ensureTurnHeader(msgs[src]);
+    ensureHeader(header, msgs[src]);
     work.push({ src, mv: { ...mv, kind, name: actionName(kind, mv.name) } });
   };
 
@@ -463,7 +460,7 @@ const items = computed<ChatItem[]>(() => {
         // also contributed moves, the run ends at the next message's step
         // boundary (this message's own ts would measure 0).
         flush(added ? (msgs[i + 1]?.ts ?? m.ts) : m.ts, false);
-        ensureTurnHeader(m);
+        ensureHeader(header, m);
         parts.push({ kind: 'reply', msg: m });
       }
       continue;
@@ -603,18 +600,6 @@ watch(items, (list) => {
   }
 });
 
-/** work-group id → expanded (audit view) */
-const workOpen = ref<Record<string, boolean>>({});
-function toggleWork(id: string) {
-  workOpen.value = { ...workOpen.value, [id]: !workOpen.value[id] };
-}
-
-/** move key → details expanded */
-const moveOpen = ref<Record<string, boolean>>({});
-function toggleMove(key: string) {
-  moveOpen.value = { ...moveOpen.value, [key]: !moveOpen.value[key] };
-}
-
 // ── Slash commands: autocomplete ───────────────────────────────────────────
 
 const commandCatalog = ref<SlashCommandInfo[]>([]);
@@ -748,9 +733,7 @@ function compactContext() {
 async function runCommandAsync(parsed: ParsedSlash) {
   const r = await runSlash(props.sessionId, parsed);
   await handleSlashResult(r);
-  sticky = true;
-  nextTick(scrollToBottom);
-  inputEl.value?.focus();
+  pinToBottom();
 }
 
 async function onPickerSelect(id: string) {
@@ -826,9 +809,7 @@ function send() {
     store.clearLastError();
     void store.sendMessage(props.sessionId, rest, { wait: true });
     input.value = '';
-    sticky = true;
-    nextTick(scrollToBottom);
-    inputEl.value?.focus();
+    pinToBottom();
     return;
   }
   if (parsed) {
@@ -838,9 +819,7 @@ function send() {
   store.clearLastError();
   void store.sendMessage(props.sessionId, text);
   input.value = '';
-  sticky = true;
-  nextTick(scrollToBottom);
-  inputEl.value?.focus();
+  pinToBottom();
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -917,6 +896,14 @@ function onKeydown(e: KeyboardEvent) {
  *  in review mode. */
 function onComposerInput() {
   store.noteChatInteraction(props.sessionId);
+}
+
+/** Pin auto-scroll to the bottom and return focus to the composer
+ *  (the shared tail of every send/command path). */
+function pinToBottom() {
+  sticky = true;
+  nextTick(scrollToBottom);
+  inputEl.value?.focus();
 }
 
 /** Scroll the message list to the bottom and re-anchor auto-scroll so new
@@ -1101,7 +1088,7 @@ let anchorBottom = 0;
                 :class="[
                   flash[part.group.id] === 'ok' ? 'chat-work--flash-ok' : '',
                   flash[part.group.id] === 'fail' ? 'chat-work--flash-fail' : '',
-                  flash['compact'] === 'fail' ? 'chat-work--flash-fail' : '',
+                  part.group.id === 'compact' && flash.compact === 'fail' ? 'chat-work--flash-fail' : '',
                   part.group.id === 'compact' ? 'chat-compacting' : '',
                   part.group.id === 'compact' && !part.group.wip ? 'chat-compacting--failed' : '',
                 ]"

@@ -99,34 +99,6 @@
   white-space: nowrap;
 }
 
-.chat-header-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.chat-model {
-  font-size: 16px;
-  color: var(--sf-text-muted);
-  font-family: var(--sf-mono);
-}
-
-.chat-stop-btn {
-  background: none;
-  border: 1px solid var(--sf-border);
-  border-radius: 3px;
-  color: var(--sf-status-warn);
-  font-size: 16px;
-  padding: 2px 8px;
-  cursor: pointer;
-}
-
-.chat-stop-btn:hover {
-  box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
-  color: var(--sf-text-bright);
-}
-
 .chat-messages {
   flex: 1;
   min-height: 0;
@@ -1246,13 +1218,6 @@
   color: var(--sf-accent-dim);
 }
 
-.chat-list-error {
-  margin-top: 4px;
-  font-size: 16px;
-  color: var(--sf-danger);
-  word-break: break-word;
-}
-
 /* ── Backend connectivity (status bar, replaces static "pi agent · live") ──
    Dot: green = connected & fast, yellow = high ping, red = disconnected. */
 
@@ -1398,16 +1363,6 @@
   font-size: 16px;
   line-height: 1.6;
   padding: 8px;
-}
-
-.session-stats-file {
-  padding: 0 8px 4px 8px;
-  font-size: 16px;
-  color: var(--sf-text-muted);
-  font-family: var(--sf-mono);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* ── Welcome tab ────────────────────────────────────────────────────────── */

@@ -230,8 +230,6 @@ export async function runSlash(sessionId: string, parsed: ParsedSlash): Promise<
     }
     if (r.data?.models) {
       if (command === 'model') {
-        const current = r.data.current;
-        const _cur = current ? `${current.provider}/${current.id}` : null;
         return {
           kind: 'picker',
           title: 'Switch model',

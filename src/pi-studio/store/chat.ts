@@ -1662,11 +1662,6 @@ export function fmtDateTime(ts: number): string {
   return `${date} ${time}`;
 }
 
-export function fmtCost(usd: number): string {
-  if (usd < 0.01) return `$${usd.toFixed(4)}`;
-  return `$${usd.toFixed(2)}`;
-}
-
 export function fmtTokens(n: number): string {
   return n.toLocaleString('en-US');
 }

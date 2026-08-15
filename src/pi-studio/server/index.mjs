@@ -71,6 +71,34 @@ function textOf(content) {
   return '';
 }
 
+/** Image blocks of a message (user rows render them directly). Handles the
+ *  file shape ({ type:'image', data, mimeType }) and the prompt shape
+ *  ({ type:'image', source:{ mediaType, data } }) defensively. */
+function imagesOf(content) {
+  if (!Array.isArray(content)) return [];
+  const out = [];
+  for (const block of content) {
+    if (block?.type !== 'image') continue;
+    const data = block.data ?? block.source?.data;
+    const mimeType = block.mimeType ?? block.source?.mediaType;
+    if (typeof data === 'string' && data && typeof mimeType === 'string') out.push({ data, mimeType });
+  }
+  return out;
+}
+
+/** Text of the text blocks only — no [📷 …] marker (images render inline). */
+function plainTextOf(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((block) =>
+        block.type === 'text' ? block.text : block.type === 'input_text' ? (block.text ?? '') : '',
+      )
+      .join('\n');
+  }
+  return '';
+}
+
 // ── Context-window usage (mirror of the SDK's estimate) ───────────────────
 // The pi TUI footer's "12.3%/1M" comes from session.getContextUsage(): the
 // compaction-aware message set (latest compaction summary + its kept tail +
@@ -339,7 +367,9 @@ function toDisplayMessage(message) {
     d.thinking = thinking.length ? thinking.join('\n') : undefined;
     d.toolCalls = toolCalls.length ? toolCalls : undefined;
   } else if (message.role === 'user') {
-    d.text = textOf(message.content);
+    d.text = plainTextOf(message.content);
+    const imgs = imagesOf(message.content);
+    if (imgs.length) d.images = imgs;
   } else if (message.role === 'toolResult') {
     d.text = textOf(message.content);
     d.toolCallId = message.toolCallId ?? null;
@@ -1037,8 +1067,33 @@ const server = createServer(async (req, res) => {
 
     // ── Send a message to a session ──
     if (p === '/api/chat' && req.method === 'POST') {
-      const { file, message, wait, reqId } = await readBody(req);
-      if (!file || typeof message !== 'string' || !message.trim()) {
+      const { file, message, wait, reqId, images } = await readBody(req);
+      if (!file || typeof message !== 'string') {
+        return sendJson(res, 400, { error: 'file and message required' });
+      }
+      // Image attachments: [{ mimeType, data(base64) }]. Text may be empty
+      // when images are attached (an image-only message).
+      let attachments = [];
+      if (images !== undefined) {
+        if (!Array.isArray(images) || images.length > 4) {
+          return sendJson(res, 400, { error: 'images must be an array of at most 4 attachments' });
+        }
+        let totalBytes = 0;
+        for (const im of images) {
+          if (!im || typeof im.data !== 'string' || typeof im.mimeType !== 'string') {
+            return sendJson(res, 400, { error: 'each image needs { mimeType, data }' });
+          }
+          if (!/^image\//.test(im.mimeType)) {
+            return sendJson(res, 400, { error: 'only image/* attachments are allowed' });
+          }
+          totalBytes += im.data.length;
+        }
+        if (totalBytes > 8 * 1024 * 1024) {
+          return sendJson(res, 400, { error: 'attached images exceed 8 MB (base64)' });
+        }
+        attachments = images;
+      }
+      if (!message.trim() && !attachments.length) {
         return sendJson(res, 400, { error: 'file and message required' });
       }
       // Files we created/opened ourselves may not exist on disk yet (session
@@ -1064,7 +1119,13 @@ const server = createServer(async (req, res) => {
       // server mid-run leaves the agent untouched. pi-nest broadcasts an
       // 'ack' event (echoing reqId) the moment it accepts the message, so the
       // frontend doesn't wait on this response to light its pending UI.
-      await client.prompt({ agentId: file, message: text, interrupt, reqId: reqId ?? '' });
+      await client.prompt({
+        agentId: file,
+        message: text,
+        interrupt,
+        reqId: reqId ?? '',
+        images: attachments,
+      });
       sendJson(res, 200, { ok: true });
       return;
     }

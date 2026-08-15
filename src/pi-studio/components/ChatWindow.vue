@@ -4,6 +4,7 @@ import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ActionBubble, ActionGroup, type ActionKind, type ActionStatus, actionName } from '../actionBubble';
+import { dataUrlOf, processImageFile } from '../imageAttach';
 import {
   allSlashCommands,
   type ParsedSlash,
@@ -791,13 +792,14 @@ watch(input, () => {
 
 function send() {
   const text = input.value.trim();
-  if (!text || !session.value) return;
-  const parsed = parseSlash(text);
+  const imgs = attachments.value.map((a) => ({ data: a.data, mimeType: a.mimeType }));
+  if ((!text && !imgs.length) || !session.value) return;
+  const parsed = text ? parseSlash(text) : null;
   if (parsed && parsed.command === 'wait') {
     // /wait <message>: queue instead of interrupting. Default is interrupt:
     // a plain message cuts the current turn and runs promptly.
     const rest = parsed.args.trim();
-    if (!rest) {
+    if (!rest && !imgs.length) {
       store.appendLocalMessage(props.sessionId, {
         text: 'Usage: /wait <message> — the message queues and runs after the current turn finishes, instead of interrupting it.',
       });
@@ -807,19 +809,62 @@ function send() {
       return;
     }
     store.clearLastError();
-    void store.sendMessage(props.sessionId, rest, { wait: true });
+    void store.sendMessage(props.sessionId, rest, { wait: true, images: imgs });
     input.value = '';
+    attachments.value = [];
     pinToBottom();
     return;
   }
   if (parsed) {
+    // Slash commands ignore image attachments — keep them for the next
+    // plain send instead of silently dropping them.
     void runCommand(parsed);
     return;
   }
   store.clearLastError();
-  void store.sendMessage(props.sessionId, text);
+  void store.sendMessage(props.sessionId, text, { images: imgs });
   input.value = '';
+  attachments.value = [];
   pinToBottom();
+}
+
+// ── Image attachments ─────────────────────────────────────────────────────
+
+/** Up to 4 images ride along with the next plain message (or /wait). */
+const attachments = ref<Array<{ data: string; mimeType: string; url: string }>>([]);
+const fileInput = ref<HTMLInputElement | null>(null);
+
+function pickImages() {
+  fileInput.value?.click();
+}
+
+async function onFilesChosen(e: Event) {
+  const el = e.target as HTMLInputElement | null;
+  const files = el?.files ? Array.from(el.files) : [];
+  el && (el.value = ''); // re-picking the same file re-fires change
+  for (const f of files) {
+    if (attachments.value.length >= 4) {
+      store.setLastError('At most 4 images per message.');
+      return;
+    }
+    try {
+      const im = await processImageFile(f);
+      attachments.value.push({ ...im, url: dataUrlOf(im) });
+    } catch (err) {
+      // Real interaction: surface a readable reason, not a silent drop.
+      store.setLastError(
+        `Could not attach ${f.name}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+}
+
+function removeAttachment(i: number) {
+  attachments.value.splice(i, 1);
+}
+
+function imageUrl(im: { data: string; mimeType: string }): string {
+  return dataUrlOf(im);
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -1142,8 +1187,20 @@ let anchorBottom = 0;
                header, rendered as a list sibling) -->
           <template v-else-if="item.kind === 'user'">
             <div class="chat-user-bubble">
-              <div v-if="renderMd" class="chat-msg-md" v-html="md(item.msg)" />
-              <template v-else>{{ item.msg.text }}</template>
+              <div v-if="item.msg.images?.length" class="chat-msg-images">
+                <a
+                  v-for="(im, i) in item.msg.images"
+                  :key="i"
+                  class="chat-msg-image-link"
+                  :href="imageUrl(im)"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <img :src="imageUrl(im)" class="chat-msg-image" loading="lazy" />
+                </a>
+              </div>
+              <div v-if="item.msg.text && renderMd" class="chat-msg-md" v-html="md(item.msg)" />
+              <template v-else-if="item.msg.text">{{ item.msg.text }}</template>
             </div>
             <div v-if="item.msg.sendFailed" class="chat-resend" title="The backend did not accept this message — send it again">
               <span class="chat-resend-mark"><SvgIcon name="⚠" /></span> not sent
@@ -1218,6 +1275,17 @@ let anchorBottom = 0;
           </div>
         </div>
 
+        <div v-if="attachments.length" class="chat-attach-row">
+          <div v-for="(a, i) in attachments" :key="i" class="chat-attach-chip">
+            <img :src="a.url" class="chat-attach-thumb" alt="attachment" />
+            <button
+              class="chat-attach-remove"
+              :title="'Remove attachment ' + (i + 1)"
+              @click="removeAttachment(i)"
+            ><SvgIcon name="✕" /></button>
+          </div>
+        </div>
+
         <textarea
           ref="inputEl"
           v-model="input"
@@ -1242,8 +1310,22 @@ let anchorBottom = 0;
             @click="scrollToBottomNow"
           ><SvgIcon name="↓" /></button>
           <button
+            class="chat-image-btn"
+            :title="attachments.length ? `Attach another image (${attachments.length}/4)` : 'Attach an image to send with your message'"
+            :disabled="attachments.length >= 4"
+            @click="pickImages"
+          ><SvgIcon name="🖼" /></button>
+          <input
+            ref="fileInput"
+            type="file"
+            accept="image/*"
+            multiple
+            class="chat-image-input"
+            @change="onFilesChosen"
+          />
+          <button
             class="chat-send-btn"
-            :disabled="!input.trim()"
+            :disabled="!input.trim() && !attachments.length"
             @click="send"
           >Send</button>
         </div>

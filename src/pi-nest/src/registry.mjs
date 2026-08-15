@@ -154,8 +154,11 @@ export class AgentRegistry extends EventEmitter {
    * agent is busy CUTS the current turn short (abort), so the new message
    * runs promptly. `/wait` messages pass interrupt:false — they queue and
    * run after the current turn finishes naturally.
+   *
+   * `images` (optional) rides along as [{ mediaType, data }] (base64) and
+   * is handed to the SDK as ImageContent attachments.
    */
-  async prompt(agentId, message, { interrupt = true } = {}) {
+  async prompt(agentId, message, { interrupt = true, images = [] } = {}) {
     const live = await this.open(agentId);
     if (interrupt && live.status === 'running') {
       // Abort before enqueueing: this is the running op's own turn, so it
@@ -165,8 +168,20 @@ export class AgentRegistry extends EventEmitter {
     }
     await this.enqueue(live, async () => {
       const ts = Date.now();
-      this.broadcast('message', agentId, { id: `pending-${ts}`, role: 'user', text: message, ts });
-      await live.session.prompt(message);
+      const row = { id: `pending-${ts}`, role: 'user', text: message, ts };
+      if (images.length) row.images = images;
+      this.broadcast('message', agentId, row);
+      await live.session.prompt(
+        message,
+        images.length
+          ? {
+              // The SDK's own file/CLI image shape ({ type:'image', data,
+              // mimeType }) — provider APIs read block.mimeType directly
+              // (the source:{…} prompt shape would lose the media type).
+              images: images.map((i) => ({ type: 'image', data: i.data, mimeType: i.mimeType })),
+            }
+          : undefined,
+      );
     });
     return { ok: true };
   }

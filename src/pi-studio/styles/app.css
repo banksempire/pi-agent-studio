@@ -200,6 +200,27 @@
   border-radius: 8px;
   border-bottom-right-radius: 2px;
   padding: 8px 12px;
+  max-width: 78%;
+}
+
+/* Image attachments inside a user bubble: thumbnail grid, capped at ~380px
+   each so big screenshots stay readable without dominating the chat. */
+.chat-msg-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.chat-msg-image-link {
+  display: block;
+  line-height: 0;
+}
+.chat-msg-image {
+  display: block;
+  max-width: 380px;
+  max-height: 260px;
+  border-radius: 6px;
+  object-fit: cover;
 }
 
 /* Sticky message separator: ``---- User · 03:37 ----`` / ``---- pi ·
@@ -640,6 +661,51 @@
   gap: 8px;
 }
 
+/* Pending image attachments: thumbnail chips above the input box. */
+.chat-attach-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 4px 6px;
+}
+.chat-attach-chip {
+  position: relative;
+  line-height: 0;
+}
+.chat-attach-thumb {
+  display: block;
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--sf-border);
+}
+.chat-attach-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--sf-bg);
+  border: 1px solid var(--sf-border);
+  border-radius: 50%;
+  color: var(--sf-text);
+  cursor: pointer;
+  line-height: 0;
+}
+.chat-attach-remove:hover {
+  box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
+}
+
+/* Hidden file picker for image attachments (the 🖼 button triggers it). */
+.chat-image-input {
+  display: none;
+}
+
 /* Context gauge ("10.0%/1M"), left side under the input box — pushed to
    the left edge while the buttons stay right-aligned. The auto margin
    gives the gauge as much room as the row has, so its full text shows
@@ -695,7 +761,8 @@
 
 /* Scroll-to-bottom, left of the Send button (same height: text + padding +
    border ≈ the Send button's text + padding). */
-.chat-scroll-btn {
+.chat-scroll-btn,
+.chat-image-btn {
   background: var(--sf-bg);
   border: 1px solid var(--sf-border);
   border-radius: 5px;
@@ -708,8 +775,14 @@
   flex-shrink: 0;
 }
 
-.chat-scroll-btn:hover {
+.chat-scroll-btn:hover,
+.chat-image-btn:hover:not(:disabled) {
   box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
+}
+
+.chat-image-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .chat-send-btn:hover:not(:disabled) {

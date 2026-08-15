@@ -25,8 +25,10 @@ export default defineConfig({
     },
     proxy: {
       // pi-agent-studio backend (src/pi-studio/server/index.mjs) — real pi agent sessions
+      // PI_API_PROXY overrides the target for parallel test stacks (a second
+      // backend on another port while the product one keeps 7493).
       '/api': {
-        target: 'http://127.0.0.1:7493',
+        target: process.env.PI_API_PROXY ?? 'http://127.0.0.1:7493',
         changeOrigin: true,
       },
     },

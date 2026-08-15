@@ -65,6 +65,37 @@ function textOf(content) {
 
 export { textOf };
 
+/** Extract image blocks from message content. Handles both the storage
+ *  shape ({ type:'image', data, mimeType }) and the prompt shape
+ *  ({ type:'image', source:{ type:'base64', mediaType, data } }). */
+export function extractImages(content) {
+  if (!Array.isArray(content)) return [];
+  const out = [];
+  for (const block of content) {
+    if (block?.type !== 'image') continue;
+    const data = block.data ?? block.source?.data;
+    const mimeType = block.mimeType ?? block.source?.mediaType;
+    if (typeof data === 'string' && data && typeof mimeType === 'string') {
+      out.push({ data, mimeType });
+    }
+  }
+  return out;
+}
+
+/** Text of the text blocks only — no [📷 …] marker (the UI renders the
+ *  images themselves). */
+function plainText(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((block) =>
+        block.type === 'text' ? block.text : block.type === 'input_text' ? (block.text ?? '') : '',
+      )
+      .join('\n');
+  }
+  return '';
+}
+
 /** Convert an SDK AgentMessage into the wire/display shape. */
 export function toDisplayMessage(message) {
   const d = { role: message.role, text: '', ts: message.timestamp ?? Date.now() };
@@ -91,7 +122,11 @@ export function toDisplayMessage(message) {
     d.thinking = thinking.length ? thinking.join('\n') : undefined;
     d.toolCalls = toolCalls.length ? toolCalls : undefined;
   } else if (message.role === 'user') {
-    d.text = textOf(message.content);
+    // User messages may carry image attachments — the UI renders them
+    // directly (no [📷 N image] marker in the text).
+    d.text = plainText(message.content);
+    const imgs = extractImages(message.content);
+    if (imgs.length) d.images = imgs;
   } else if (message.role === 'toolResult') {
     d.text = textOf(message.content);
     d.toolCallId = message.toolCallId ?? null;

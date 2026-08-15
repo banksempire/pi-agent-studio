@@ -30,6 +30,8 @@ export interface DisplayMessage {
   text: string;
   thinking?: string;
   toolCalls?: ToolCallView[];
+  /** Image attachments of a user message: [{ data: base64, mimeType }] */
+  images?: { data: string; mimeType: string }[];
   model?: string | null;
   /** provider id of the assistant turn (from the SDK AssistantMessage) */
   provider?: string | null;
@@ -1329,10 +1331,15 @@ export function endExternalDrag() {
 }
 
 /** Send a user message; the real pi agent replies (streaming via SSE). */
-export async function sendMessage(sessionId: string, text: string, opts: { wait?: boolean } = {}) {
+export async function sendMessage(
+  sessionId: string,
+  text: string,
+  opts: { wait?: boolean; images?: { data: string; mimeType: string }[] } = {},
+) {
   const s = findSession(sessionId);
   const trimmed = text.trim();
-  if (!s || !trimmed) return;
+  const images = opts.images ?? [];
+  if (!s || (!trimmed && !images.length)) return;
   // Sending is a real interaction: pin the window if it was in review.
   noteChatInteraction(sessionId);
   state.lastError = '';
@@ -1344,12 +1351,24 @@ export async function sendMessage(sessionId: string, text: string, opts: { wait?
   const mid = `pending-${Date.now()}`;
   const reqId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   pendingSends.set(reqId, { sessionId, mid, acked: false });
-  s.messages.push({ id: mid, role: 'user', text: trimmed, ts: Date.now() });
+  s.messages.push({
+    id: mid,
+    role: 'user',
+    text: trimmed,
+    ts: Date.now(),
+    ...(images.length ? { images } : {}),
+  });
   try {
     await api('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file: s.file, message: trimmed, reqId, ...(opts.wait ? { wait: true } : {}) }),
+      body: JSON.stringify({
+        file: s.file,
+        message: trimmed,
+        reqId,
+        ...(images.length ? { images } : {}),
+        ...(opts.wait ? { wait: true } : {}),
+      }),
     });
     pendingSends.delete(reqId);
   } catch (e) {
@@ -1381,9 +1400,9 @@ export async function resendMessage(sessionId: string, mid: string) {
   if (!s) return;
   const i = s.messages.findIndex((m) => m.id === mid);
   if (i < 0) return;
-  const text = s.messages[i].text;
+  const { text, images } = s.messages[i];
   s.messages.splice(i, 1); // drop the failed copy; sendMessage re-appends it
-  await sendMessage(sessionId, text);
+  await sendMessage(sessionId, text, { images });
 }
 
 /** Mark the last /compact as failed (busy session, rejected command, ...).
@@ -1672,6 +1691,10 @@ export const store = {
   },
   clearLastError() {
     state.lastError = '';
+  },
+  /** Surface a transient banner error (attachment failures, etc.). */
+  setLastError(message: string) {
+    state.lastError = message;
   },
   /** unsent composer text of a session's chat window ('' if none) */
   draftOf(sessionId: string): string {

@@ -61,8 +61,24 @@ export function createServer({ registry = new AgentRegistry(), onStateChange: _o
           reqId: call.request.reqId ?? '',
           kind: 'message',
         });
+        // Image attachments ride as a JSON array of { mimeType, data }
+        // (base64). Malformed payloads degrade to a text-only prompt.
+        let images = [];
+        if (call.request.imagesJson) {
+          try {
+            const parsed = JSON.parse(call.request.imagesJson);
+            if (Array.isArray(parsed)) {
+              images = parsed.filter(
+                (i) => i && typeof i.data === 'string' && i.data && typeof i.mimeType === 'string',
+              );
+            }
+          } catch {
+            /* text-only */
+          }
+        }
         await registry.prompt(call.request.agentId, call.request.message, {
           interrupt: call.request.interrupt !== false,
+          images,
         });
         cb(null, { ok: true });
       } catch (e) {

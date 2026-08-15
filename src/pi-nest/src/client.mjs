@@ -56,8 +56,14 @@ export class PiNestClient {
     return this.#unary('closeAgent', { agentId });
   }
 
-  prompt({ agentId, message, interrupt = true, reqId = '' }) {
-    return this.#unary('prompt', { agentId, message, interrupt, reqId });
+  prompt({ agentId, message, interrupt = true, reqId = '', images = [] }) {
+    return this.#unary('prompt', {
+      agentId,
+      message,
+      interrupt,
+      reqId,
+      imagesJson: images.length ? JSON.stringify(images) : '',
+    });
   }
 
   abort({ agentId }) {

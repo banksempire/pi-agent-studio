@@ -81,6 +81,8 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  /* Containing block for the image-review overlay (absolute inset 0). */
+  position: relative;
   /* L3 — chat window background matches the panel body */
   background: var(--sf-panel-bg);
 }

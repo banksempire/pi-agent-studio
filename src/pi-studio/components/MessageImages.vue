@@ -15,6 +15,7 @@ export interface MessageImage {
 }
 
 const props = defineProps<{ images: MessageImage[] }>();
+const emit = defineEmits<{ open: [index: number] }>();
 
 const box = ref<HTMLElement | null>(null);
 const ratios = ref<number[]>([]);
@@ -98,6 +99,8 @@ onBeforeUnmount(() => ro?.disconnect());
         :href="urls[i]"
         target="_blank"
         rel="noreferrer"
+        title="Click to review"
+        @click.prevent="emit('open', i)"
       >
         <img :src="urls[i]" class="msg-image" loading="lazy" alt="attached image" />
       </a>
@@ -113,6 +116,8 @@ onBeforeUnmount(() => ro?.disconnect());
           :href="urls[i]"
           target="_blank"
           rel="noreferrer"
+          title="Click to review"
+          @click.prevent="emit('open', i)"
         >
           <img :src="urls[i]" loading="lazy" alt="attached image" />
         </a>
@@ -133,6 +138,7 @@ onBeforeUnmount(() => ro?.disconnect());
   display: block;
   line-height: 0;
   flex: 0 0 auto;
+  cursor: pointer;
 }
 .msg-image {
   display: block;
@@ -155,6 +161,7 @@ onBeforeUnmount(() => ro?.disconnect());
   left: 50%;
   display: block;
   line-height: 0;
+  cursor: pointer;
   border: 2px solid var(--sf-bg);
   border-radius: 10px;
   box-shadow: 0 3px 10px rgba(0, 0, 0, 0.28);

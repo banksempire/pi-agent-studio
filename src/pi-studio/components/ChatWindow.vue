@@ -15,7 +15,8 @@ import {
   type SlashResult,
 } from '../slash/commands';
 import { type ChatSession, type DisplayMessage, fmtTime, useChatStore } from '../store/chat';
-import MessageImages from './MessageImages.vue';
+import ImageReview from './ImageReview.vue';
+import MessageImages, { type MessageImage } from './MessageImages.vue';
 
 const props = defineProps<{ sessionId: string }>();
 const store = useChatStore();
@@ -673,6 +674,12 @@ function moveCompletion(delta: number) {
 const picker = ref<SlashPicker | null>(null);
 const pickerIndex = ref(0);
 
+/** Image review overlay: the clicked message's images + start index. */
+const review = ref<{ images: MessageImage[]; start: number } | null>(null);
+function openReview(images: MessageImage[], start: number) {
+  review.value = { images, start };
+}
+
 async function handleSlashResult(r: SlashResult) {
   switch (r.kind) {
     case 'none':
@@ -1191,7 +1198,11 @@ let anchorBottom = 0;
           <!-- User message: images ABOVE the blue text bubble (the bubble
                wraps text only); resend affordance below -->
           <template v-else-if="item.kind === 'user'">
-            <MessageImages v-if="item.msg.images?.length" :images="item.msg.images" />
+            <MessageImages
+              v-if="item.msg.images?.length"
+              :images="item.msg.images"
+              @open="openReview(item.msg.images, $event)"
+            />
             <div v-if="item.msg.text" class="chat-user-bubble">
               <div v-if="renderMd" class="chat-msg-md" v-html="md(item.msg)" />
               <template v-else>{{ item.msg.text }}</template>
@@ -1324,6 +1335,14 @@ let anchorBottom = 0;
           >Send</button>
         </div>
     </div>
+
+    <!-- Image review overlay: scoped to THIS chat window -->
+    <ImageReview
+      v-if="review"
+      :images="review.images"
+      :start="review.start"
+      @close="review = null"
+    />
 
     <!-- Picker dialog (model / scoped-models / tree / fork / resume) -->
     <div v-if="picker" class="chat-picker-backdrop" @click.self="picker = null">

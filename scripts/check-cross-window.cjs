@@ -517,6 +517,40 @@ function makeReporter() {
     })();
     report('T7 reload restores every window pinned to the bottom', t7.ok, t7.why);
 
+    // ── T8: reload then split — both windows must be at the bottom ───────
+
+    const t8 = await (async () => {
+      // Repro: 2 tabs restored by a reload, then one tab dragged out to a
+      // side-by-side split. Both windows must sit at the bottom.
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('.sf-tab-label:has-text("XWin-B:")', { timeout: 30000 });
+      await page.waitForSelector('.chat-messages', { timeout: 30000 });
+      await delay(3500);
+      // The failing path needs the dragged tab ACTIVE: the drag rebinds
+      // the shared tile instance B→A, capturing B's position, then the
+      // new tile mounts B from that capture.
+      await switchTab('XWin-B');
+      const ws = page.locator('.sf-workspace');
+      const wb = await ws.boundingBox();
+      const bIdx = await tabIndex('XWin-B');
+      await page
+        .locator('.sf-tab')
+        .nth(bIdx)
+        .dragTo(ws, { targetPosition: { x: wb.width - 8, y: Math.round(wb.height / 2) } });
+      await delay(2500);
+      const res = await page.evaluate(() => {
+        const els = Array.from(document.querySelectorAll('.chat-messages'));
+        return els.map((el) => ({
+          top: el.scrollTop,
+          max: el.scrollHeight - el.clientHeight,
+          sticky: el.scrollHeight - el.scrollTop - el.clientHeight < 48,
+        }));
+      });
+      const ok = res.length === 2 && res.every((s) => s.top >= s.max - 3);
+      return { ok, why: JSON.stringify(res) };
+    })();
+    report('T8 reload + split leaves both windows at the bottom', t8.ok, t8.why);
+
     // ── T5: split-tile windows scroll independently ───────────────────────
 
     const t5 = await (async () => {

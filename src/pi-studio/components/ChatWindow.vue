@@ -1076,13 +1076,17 @@ onMounted(() => {
   now.value = Date.now();
   const el = listEl.value;
   const st = chatScrollOf(props.sessionId);
-  if (st.top > 0 && el && el.scrollHeight > el.clientHeight) {
-    // This instance was (re)mounted for a window whose scroll position
-    // this component already knows — restore it after the first paint.
-    nextTick(() => restoreScroll(props.sessionId));
-  } else {
+  if (st.sticky) {
+    // Pinned at the bottom: mount at the bottom — synchronously, so the
+    // first paint never flashes the top of the list. Covers fresh memory
+    // (never scrolled ⇒ sticky) AND a sticky session remounted into a
+    // new tile (tab split): its remembered bottom pixel was measured at
+    // the old tile width and would sit mid-list at the new one — the
+    // bottom edge is the bottom edge at any width.
     scrollToBottom();
-    st.top = el?.scrollTop ?? 0;
+  } else if (el && el.scrollHeight > el.clientHeight) {
+    // A real remembered mid/top scroll: restore it after the first paint.
+    nextTick(() => restoreScroll(props.sessionId));
   }
   inputEl.value?.focus();
   window.addEventListener('resize', onViewportResize);
@@ -1141,16 +1145,16 @@ function restoreScroll(sessionId: string) {
     if (!el || props.sessionId !== sessionId) return;
     const st = chatScrollOf(sessionId);
     const max = Math.max(0, el.scrollHeight - el.clientHeight);
-    if (st.top === 0 && st.sticky && max > 0) {
-      // Fresh memory — this session was never scrolled in this runtime
-      // (the scroll memory is a runtime-only Map, so a reload wipes it and
-      // every session starts at top=0 / sticky=true). The default state of
-      // a fresh session is pinned to the bottom: switching to a restored
-      // tab after a reload must show the newest content. A genuine user
-      // scroll that lands on the exact top always leaves sticky=false for
-      // long content, so top=0 + sticky=true uniquely means "never
-      // scrolled" — restoring it to the top would strand the window on
-      // the oldest page.
+    if (st.sticky) {
+      // Pinned to the bottom: the bottom edge is the newest content at
+      // ANY tile width, so restore to the bottom — never to a remembered
+      // bottom PIXEL, which was measured at a possibly different width
+      // (a tab split into a new half-width tile would sit mid-list). This
+      // also covers fresh memory: a reload wipes the runtime scroll
+      // memory, so every session starts top=0/sticky=true and must come
+      // back at the bottom, never stranded on the oldest page. A genuine
+      // user scroll away from the bottom always leaves sticky=false, so
+      // the flag cannot mislead here.
       el.scrollTop = el.scrollHeight;
     } else {
       el.scrollTop = Math.min(st.top, max);

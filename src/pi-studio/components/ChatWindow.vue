@@ -14,7 +14,7 @@ import {
   type SlashPicker,
   type SlashResult,
 } from '../slash/commands';
-import { type ChatSession, type DisplayMessage, fmtTime, useChatStore } from '../store/chat';
+import { type ChatSession, chatScrollOf, type DisplayMessage, fmtTime, useChatStore } from '../store/chat';
 import ImageReview from './ImageReview.vue';
 import MessageImages, { type MessageImage } from './MessageImages.vue';
 
@@ -107,8 +107,16 @@ const contextClass = computed(() => {
   return p > 90 ? 'chat-context--error' : p > 70 ? 'chat-context--warn' : '';
 });
 
-/** Auto-scroll only while the user is already at the bottom. */
-let sticky = true;
+/** Auto-scroll only while the user is already at the bottom. Per-session:
+ *  the same component instance renders whichever session is active in its
+ *  tile, so scroll state must never be a plain shared instance variable —
+ *  switching tabs would let the other session's state bleed in. */
+function sticky() {
+  return chatScrollOf(props.sessionId).sticky;
+}
+function setSticky(v: boolean) {
+  chatScrollOf(props.sessionId).sticky = v;
+}
 
 function scrollToBottom() {
   const el = listEl.value;
@@ -118,11 +126,13 @@ function scrollToBottom() {
 function onScroll() {
   const el = listEl.value;
   if (!el) return;
+  const st = chatScrollOf(props.sessionId);
   // Re-anchor on genuine user scrolls only: scroll events fired while a
   // resize is in flight carry a half-applied state (old scrollTop + new
   // height) that would corrupt the anchor.
-  if (el.clientHeight === prevListH) anchorBottom = el.scrollTop + el.clientHeight;
-  sticky = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+  if (el.clientHeight === st.prevListH) st.anchorBottom = el.scrollTop + el.clientHeight;
+  st.sticky = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+  st.top = el.scrollTop;
   // Scroll-up pagination: near the top → load older messages.
   if (el.scrollTop < 80) void loadOlder();
 }
@@ -189,7 +199,7 @@ async function loadOlder() {
 // it the scroll never re-anchors while a tool runs. The DOM must be updated
 // before measuring, so scroll runs after the render flush.
 const keepBottom = () => {
-  if (sticky) nextTick(scrollToBottom);
+  if (sticky()) nextTick(scrollToBottom);
 };
 watch(() => {
   const s = session.value;
@@ -958,7 +968,7 @@ function onComposerInput() {
 /** Pin auto-scroll to the bottom and return focus to the composer
  *  (the shared tail of every send/command path). */
 function pinToBottom() {
-  sticky = true;
+  setSticky(true);
   nextTick(scrollToBottom);
   inputEl.value?.focus();
 }
@@ -966,7 +976,7 @@ function pinToBottom() {
 /** Scroll the message list to the bottom and re-anchor auto-scroll so new
  *  content keeps the view at the bottom. */
 function scrollToBottomNow() {
-  sticky = true;
+  setSticky(true);
   scrollToBottom();
 }
 
@@ -1019,7 +1029,16 @@ function resetResize() {
 
 onMounted(() => {
   now.value = Date.now();
-  scrollToBottom();
+  const el = listEl.value;
+  const st = chatScrollOf(props.sessionId);
+  if (st.top > 0 && el && el.scrollHeight > el.clientHeight) {
+    // This instance was (re)mounted for a window whose scroll position
+    // this component already knows — restore it after the first paint.
+    nextTick(() => restoreScroll(props.sessionId));
+  } else {
+    scrollToBottom();
+    st.top = el?.scrollTop ?? 0;
+  }
   inputEl.value?.focus();
   window.addEventListener('resize', onViewportResize);
   // Mobile layout swaps remount this component (flat tile) — the mount
@@ -1029,42 +1048,86 @@ onMounted(() => {
   // drag handle), keep the bottom edge of the visible text anchored in both
   // directions: the content moves UP as the area shrinks and DOWN as it
   // grows (clamped at the scroll bounds, so at-bottom stays at the bottom).
-  const el = listEl.value;
   if (el) {
+    const m = chatScrollOf(props.sessionId);
     listObserver = new ResizeObserver(() => {
       // Keep the content that sits at the viewport's bottom edge anchored
       // while the messages area resizes. The anchor is a content offset that
       // only changes on user scrolls, so repeated resizes round-trip exactly
       // (delta-based shifting accumulated sub-pixel drift).
       const h = el.clientHeight;
-      if (prevListH === 0) {
-        anchorBottom = el.scrollTop + h; // first observation: seed the anchor
-      } else if (h !== prevListH) {
-        if (sticky) {
+      if (m.prevListH === 0) {
+        m.anchorBottom = el.scrollTop + h; // first observation: seed the anchor
+      } else if (h !== m.prevListH) {
+        if (m.sticky) {
           // At the bottom: stay pinned. (Mobile send clears + shrinks the
           // composer AFTER the scroll, so the anchor math would yank the
           // view back up by the shrink amount and disarm sticky.)
           el.scrollTop = el.scrollHeight;
         } else {
-          el.scrollTop = Math.max(0, Math.min(anchorBottom - h, el.scrollHeight - el.clientHeight));
+          el.scrollTop = Math.max(0, Math.min(m.anchorBottom - h, el.scrollHeight - el.clientHeight));
         }
       }
-      prevListH = h;
+      m.prevListH = h;
     });
     listObserver.observe(el);
   }
 });
 
 onUnmounted(() => {
+  // Capture the scroll position before the DOM goes away — survives tab
+  // switches and remounts via the store's per-session scroll memory.
+  const el = listEl.value;
+  if (el) {
+    const st = chatScrollOf(props.sessionId);
+    st.top = el.scrollTop;
+    st.sticky = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+  }
   window.removeEventListener('resize', onViewportResize);
   resizeCleanup?.();
   listObserver?.disconnect();
 });
 
 let listObserver: ResizeObserver | null = null;
-let prevListH = 0;
-/** content offset kept at the viewport's bottom edge (resize anchor) */
-let anchorBottom = 0;
+
+/**
+ * Restore a session's remembered scroll position after its content has
+ * rendered (session switch or remount). Runs in a nextTick — the content
+ * must be in the DOM before the restore can clamp and settle. Re-seeds the
+ * resize anchor and re-derives sticky so the restored position behaves as
+ * if the user had scrolled there themselves.
+ */
+function restoreScroll(sessionId: string) {
+  nextTick(() => {
+    const el = listEl.value;
+    if (!el || props.sessionId !== sessionId) return;
+    const st = chatScrollOf(sessionId);
+    const max = Math.max(0, el.scrollHeight - el.clientHeight);
+    el.scrollTop = Math.min(st.top, max);
+    st.sticky = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    st.anchorBottom = el.scrollTop + el.clientHeight;
+    st.prevListH = 0; // re-seed the resize anchor
+  });
+}
+
+// The same component instance renders whichever session is active in its
+// tile: capture the outgoing session's position BEFORE its content swaps,
+// then restore the incoming session's remembered position after the new
+// content renders. Without this, the clamp-triggered scroll events during
+// the content swap flip the shared sticky flag and the keepBottom watcher
+// yanks the view to the bottom (the reported tab-switch scroll leap).
+watch(
+  () => props.sessionId,
+  (newId, oldId) => {
+    const el = listEl.value;
+    if (el && oldId) {
+      const old = chatScrollOf(oldId);
+      old.top = el.scrollTop;
+      old.sticky = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    }
+    if (newId) restoreScroll(newId);
+  },
+);
 </script>
 
 <template>

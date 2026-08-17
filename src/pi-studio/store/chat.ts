@@ -260,6 +260,41 @@ export function windowUiOf(sessionId: string): WindowUi | undefined {
   return windowUi[sessionId];
 }
 
+/**
+ * Per-session chat-scroll memory. The same component instance renders
+ * whichever session is active in its tile, and the memory must survive
+ * both tab switches AND remounts — a plain (non-reactive) module map,
+ * NOT window-state snapshot state: a reload starts at the bottom of the
+ * freshly loaded latest page (the remembered pixel belongs to older
+ * pages that aren't loaded yet), so it must not persist across reloads.
+ */
+export interface ChatScrollMem {
+  /** Last scrollTop in px (0 = never scrolled). */
+  top: number;
+  /** Whether the user is pinned to the bottom (auto-follow new content). */
+  sticky: boolean;
+  /** Resize-anchor: content offset held at the viewport bottom edge. */
+  anchorBottom: number;
+  /** Messages-area height the anchor was computed for. */
+  prevListH: number;
+}
+const scrollMemory = new Map<string, ChatScrollMem>();
+
+/** Get (creating if needed) a session's scroll memory entry. */
+export function chatScrollOf(sessionId: string): ChatScrollMem {
+  let m = scrollMemory.get(sessionId);
+  if (!m) {
+    m = { top: 0, sticky: true, anchorBottom: 0, prevListH: 0 };
+    scrollMemory.set(sessionId, m);
+  }
+  return m;
+}
+
+/** Drop a session's scroll memory (session closed). */
+export function forgetChatScroll(sessionId: string) {
+  scrollMemory.delete(sessionId);
+}
+
 let windowPersistTimer: ReturnType<typeof setTimeout> | undefined;
 function scheduleWindowPersist() {
   if (windowPersistTimer) clearTimeout(windowPersistTimer);
@@ -1524,6 +1559,7 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
     closeChatView(sessionId);
     delete state.drafts[sessionId];
     delete windowUi[sessionId];
+    forgetChatScroll(sessionId);
     saveDrafts();
     await refreshList();
     return true;
@@ -1738,6 +1774,8 @@ export const store = {
   },
   windowUiOf,
   setComposerHeight,
+  chatScrollOf,
+  forgetChatScroll,
   findSession,
   isViewOpen,
   activeSessions,

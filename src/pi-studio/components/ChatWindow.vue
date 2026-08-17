@@ -1141,8 +1141,21 @@ function restoreScroll(sessionId: string) {
     if (!el || props.sessionId !== sessionId) return;
     const st = chatScrollOf(sessionId);
     const max = Math.max(0, el.scrollHeight - el.clientHeight);
-    el.scrollTop = Math.min(st.top, max);
-    st.sticky = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    if (st.top === 0 && st.sticky && max > 0) {
+      // Fresh memory — this session was never scrolled in this runtime
+      // (the scroll memory is a runtime-only Map, so a reload wipes it and
+      // every session starts at top=0 / sticky=true). The default state of
+      // a fresh session is pinned to the bottom: switching to a restored
+      // tab after a reload must show the newest content. A genuine user
+      // scroll that lands on the exact top always leaves sticky=false for
+      // long content, so top=0 + sticky=true uniquely means "never
+      // scrolled" — restoring it to the top would strand the window on
+      // the oldest page.
+      el.scrollTop = el.scrollHeight;
+    } else {
+      el.scrollTop = Math.min(st.top, max);
+      st.sticky = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    }
   });
 }
 

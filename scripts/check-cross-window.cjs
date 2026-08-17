@@ -20,6 +20,10 @@
  *  - T6 resize anchoring: at the bottom a resize keeps the view pinned to
  *    the bottom edge; scrolled up, the FIRST VISIBLE LINE stays put
  *    (scrollTop preserved) while the messages area grows/shrinks.
+ *  - T7 reload restore: a page refresh wipes the runtime scroll memory,
+ *    so EVERY restored window must come back pinned to the bottom —
+ *    switching to a non-active restored tab must not strand it on the
+ *    oldest page.
  *
  * Runs its own three-service stack (pi-nest + gateway + vite) on free
  * ports (override with XWIN_NEST_PORT / XWIN_BACKEND_PORT / XWIN_VITE_PORT)
@@ -479,6 +483,39 @@ function makeReporter() {
       };
     })();
     report('T6 resize pins bottom when sticky, first line otherwise', t6.ok, t6.why);
+
+    // ── T7: after a reload every restored window sits at the bottom ──────
+
+    const t7 = await (async () => {
+      // Repro: a reload wipes the runtime scroll memory, so every session
+      // starts fresh (top=0 / sticky=true). The ACTIVE window mounts and
+      // scrolls to the bottom, but switching to another restored tab used
+      // to treat that fresh top=0 as a real position and strung the window
+      // on the oldest page. Every restored window must be at the bottom.
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('.sf-tab-label:has-text("XWin-B:")', { timeout: 30000 });
+      await page.waitForSelector('.chat-messages', { timeout: 30000 });
+      await delay(3500); // list fetch + ghost reconcile + message load
+      const atBottom = async () => {
+        await delay(500);
+        const s = await scrollState();
+        return { ok: s.top >= s.max - 3, s };
+      };
+      const why = [];
+      const first = await atBottom(); // the window active at refresh
+      why.push(`active:${first.s.top}/${first.s.max}`);
+      const results = [first.ok];
+      // Click every restored tab — each must come back pinned to the
+      // bottom (B is checked twice: first switch and a round-trip).
+      for (const m of ['XWin-B:', 'XWin-A:', 'XWin-C:', 'XWin-B:']) {
+        await switchTab(m);
+        const r = await atBottom();
+        results.push(r.ok);
+        why.push(`${m.trim()} ${r.s.top}/${r.s.max}`);
+      }
+      return { ok: results.every(Boolean), why: why.join('; ') };
+    })();
+    report('T7 reload restores every window pinned to the bottom', t7.ok, t7.why);
 
     // ── T5: split-tile windows scroll independently ───────────────────────
 

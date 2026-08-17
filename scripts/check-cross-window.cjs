@@ -728,6 +728,111 @@ function makeReporter() {
     })();
     report('T10 vanished session blocks the composer with a banner on top', t10.ok, t10.why);
 
+    // ── T11: split-sash resize keeps BOTH windows pinned to the bottom ────
+
+    const t11 = await (async () => {
+      // Repro (reported): two chat windows side by side, then dragging the
+      // divider between the tiles. The narrower window's content reflows
+      // taller, so the resize re-pin lands below the NEW bottom — and the
+      // pin's own scroll event, dispatched against the grown scrollHeight,
+      // read mid-list and cleared sticky, stranding the window there. Both
+      // windows must stay pinned to the bottom edge at ANY width.
+      await switchTab('XWin-A'); // left tile: A's usable window
+      await delay(800);
+      const sash = page.locator('.sf-sash').first();
+      if ((await sash.count()) === 0) return { ok: false, why: 'no sash (split missing)' };
+      // The workspace may hold several sashes (nested splits from earlier
+      // drags): pick the VERTICAL one sitting between the two chat windows.
+      const sashInfo = await page.evaluate(() => {
+        const wins = Array.from(document.querySelectorAll('.chat-messages')).map((el) => {
+          const r = el.getBoundingClientRect();
+          return { x: r.x, y: r.y, w: r.width, h: r.height };
+        });
+        const sashes = Array.from(document.querySelectorAll('.sf-sash')).map((el, i) => {
+          const r = el.getBoundingClientRect();
+          return { i, x: r.x, y: r.y, w: r.width, h: r.height };
+        });
+        return { wins, sashes };
+      });
+      const w0 = sashInfo.wins[0];
+      const w1 = sashInfo.wins[1];
+      const between = sashInfo.sashes.filter(
+        (s) => s.h > 100 && s.x >= Math.min(w0.x, w1.x) && s.x <= Math.max(w0.x, w1.x) && s.w <= 12,
+      );
+      const pick = between[0] ?? sashInfo.sashes[0];
+      if (!pick) return { ok: false, why: `no sash between windows: ${JSON.stringify(sashInfo)}` };
+      console.log(`  T11 sashInfo wins:${JSON.stringify(sashInfo.wins)} sashes:${JSON.stringify(sashInfo.sashes)} pick:${pick.i}`);
+      const dom = await page.evaluate(() => ({
+        innerCls: document.querySelector('.sf-workspace-inner')?.className ?? '',
+        splits: Array.from(document.querySelectorAll('.sf-split')).map((el) => {
+          const r = el.getBoundingClientRect();
+          return { cls: el.className, x: r.x, y: r.y, w: r.width, h: r.height };
+        }),
+        roots: Array.from(document.querySelectorAll('.sf-root-group')).map((el) => {
+          const r = el.getBoundingClientRect();
+          return { x: r.x, y: r.y, w: r.width, h: r.height };
+        }),
+        sashEls: Array.from(document.querySelectorAll('.sf-sash')).map((el) => ({
+          cls: el.className,
+          r: (() => { const b = el.getBoundingClientRect(); return { x: b.x, y: b.y, w: b.width, h: b.height }; })(),
+        })),
+      }));
+      console.log(`  T11 dom ${JSON.stringify(dom)}`);
+      const two = await ui();
+      if (two.messages !== 2) return { ok: false, why: `expected 2 windows, got ${two.messages}` };
+      const dragSash = async (dx) => {
+        const sashEl = page.locator('.sf-sash').nth(pick.i);
+        const sb = await sashEl.boundingBox();
+        const sx = sb.x + sb.width / 2;
+        const sy = sb.y + sb.height / 2;
+        await page.mouse.move(sx, sy);
+        await page.mouse.down();
+        await page.mouse.move(sx + dx, sy, { steps: 20 });
+        await delay(200);
+        await page.mouse.up();
+        await delay(900);
+      };
+      // Pin BOTH windows to the bottom, then drag the sash (A wider, B
+      // narrower — the direction that used to strand B mid-list).
+      await page.evaluate(() => {
+        for (const el of document.querySelectorAll('.chat-messages')) el.scrollTop = el.scrollHeight;
+      });
+      await delay(600);
+      const before = await page.evaluate(() =>
+        Array.from(document.querySelectorAll('.chat-messages')).map((el) => ({
+          top: el.scrollTop,
+          max: el.scrollHeight - el.clientHeight,
+        })),
+      );
+      await dragSash(140);
+      const after = await page.evaluate(() =>
+        Array.from(document.querySelectorAll('.chat-messages')).map((el) => ({
+          top: el.scrollTop,
+          max: el.scrollHeight - el.clientHeight,
+        })),
+      );
+      const pinned = after.every((s) => s.top >= s.max - 3);
+      // MID-scroll first-line case: scroll one window away from the bottom,
+      // drag the sash — the first visible line must stay put (scrollTop
+      // preserved), never yanked to the bottom.
+      const midBefore = await page.evaluate(() => {
+        const els = Array.from(document.querySelectorAll('.chat-messages'));
+        els[0].scrollTop = Math.round((els[0].scrollHeight - els[0].clientHeight) * 0.4);
+        return els[0].scrollTop;
+      });
+      await delay(500);
+      await dragSash(-110);
+      const midAfter = await page.evaluate(
+        () => Array.from(document.querySelectorAll('.chat-messages'))[0].scrollTop,
+      );
+      const linePinned = Math.abs(midAfter - midBefore) <= 3;
+      return {
+        ok: pinned && linePinned,
+        why: `pinned ${JSON.stringify(before)} → ${JSON.stringify(after)} (both:${pinned}); mid ${midBefore} → ${midAfter} (first line:${linePinned})`,
+      };
+    })();
+    report('T11 sash resize keeps both windows pinned, first line otherwise', t11.ok, t11.why);
+
     // ── Summary ────────────────────────────────────────────────────────────
 
     if (errors.length) console.log(`page errors: ${errors.join(' | ')}`);

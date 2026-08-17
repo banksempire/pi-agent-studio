@@ -141,13 +141,52 @@ function setSticky(v: boolean) {
 
 function scrollToBottom() {
   const el = listEl.value;
-  if (el) el.scrollTop = el.scrollHeight;
+  if (el) pinBottom(el);
 }
+
+/**
+ * Programmatic bottom-pin: set the view to the bottom edge AND record the
+ * resulting scrollTop so onScroll can recognize the pin's own scroll event
+ * (the echo) and never mistake it for a user scroll-away. The recorded
+ * value is the POST-clamp scrollTop (the browser clamps the write to
+ * scrollHeight - clientHeight), which is exactly what the echo reports.
+ */
+function pinBottom(el: HTMLElement) {
+  el.scrollTop = el.scrollHeight;
+  lastPinTop = el.scrollTop;
+  lastPinAt = performance.now();
+}
+
+/** scrollTop of the most recent programmatic bottom-pin (-1 = none) and the
+ *  moment it was written. Per instance (per tile): the same element serves
+ *  every session shown in the tile, and only this instance's pins set it.
+ *  The timestamp keeps a stale pin value from absorbing a LATER genuine
+ *  user scroll that happens to land on the same pixel: the echo always
+ *  arrives within the same frame as the pin, so anything older than a
+ *  quarter second is not an echo. */
+let lastPinTop = -1;
+let lastPinAt = 0;
 
 function onScroll() {
   const el = listEl.value;
   if (!el) return;
   const st = chatScrollOf(props.sessionId);
+  // Echo of OUR OWN bottom-pin (resize re-pin, keepBottom, send, ↓): the
+  // pin was written when the geometry was smaller — by the time this scroll
+  // event dispatches, the content may have grown (a sash drag reflows the
+  // narrower window taller), so the geometric check below would read
+  // mid-list and wrongly clear sticky, stranding the window above the new
+  // bottom. The echo reports EXACTLY the pinned scrollTop within the same
+  // frame; a genuine user scroll never matches both. Keep the flag, and
+  // re-pin to the CURRENT bottom if the content has grown past the pin.
+  if (lastPinTop >= 0 && el.scrollTop === lastPinTop && performance.now() - lastPinAt < 250) {
+    if (st.sticky && el.scrollTop + el.clientHeight < el.scrollHeight - 48) {
+      pinBottom(el);
+    }
+    st.top = el.scrollTop;
+    return;
+  }
+  lastPinTop = -1;
   st.sticky = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
   st.top = el.scrollTop;
   // Scroll-up pagination: near the top → load older messages.
@@ -1145,7 +1184,7 @@ onMounted(() => {
         firstObs = false;
         return;
       }
-      if (sticky()) el.scrollTop = el.scrollHeight;
+      if (sticky()) pinBottom(el);
     });
     listObserver.observe(el);
   }

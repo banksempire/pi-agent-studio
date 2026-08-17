@@ -22,9 +22,12 @@ import {
   clearSessionError,
   type DisplayMessage,
   fmtTime,
+  openGroupsOf,
   sessionErrorOf,
   setAttachments,
+  setOpenGroup,
   setSessionError,
+  unsetOpenGroup,
   useChatStore,
 } from '../store/chat';
 import ImageReview from './ImageReview.vue';
@@ -40,11 +43,17 @@ const renderMd = computed(() => store.prefs.renderMarkdown);
 /**
  * Boxes are collapsed by default; `open` holds the expanded ones — one map
  * for all three kinds, ids namespaced: work groups 'work-…', their
- * sub-bubbles '…:…', compaction summaries 'sum-…'.
+ * sub-bubbles '…:…', compaction summaries 'sum-…'. STORE-BACKED PER SESSION:
+ * the same instance renders every session in a tile, and group ids are not
+ * globally unique — the compaction group's id is the FIXED string 'compact'
+ * in every session, and message-id-derived ids ('work-…', 'sum-…') collide
+ * when sessions share an id space (restored clones, synthetic files). A
+ * plain shared ref would render the NEXT window's box already-expanded
+ * after the user expanded the same-id box in the previous one.
  */
-const open = ref<Record<string, boolean>>({});
+const open = computed(() => openGroupsOf(props.sessionId));
 function toggle(id: string) {
-  open.value = { ...open.value, [id]: !open.value[id] };
+  setOpenGroup(props.sessionId, id, !open.value[id]);
 }
 
 /**
@@ -570,12 +579,11 @@ watch(
  * flash so the failure is visible, then dismisses itself.
  */
 /** The compaction work group uses a fixed id ('compact'), so its open state
- *  must not leak into the next run — reset both toggle levels. */
+ *  must not leak into the next run — reset both toggle levels in this
+ *  session's map. */
 function resetCompactOpen() {
-  const next = { ...open.value };
-  delete next.compact;
-  delete next['compact:0'];
-  open.value = next;
+  unsetOpenGroup(props.sessionId, 'compact');
+  unsetOpenGroup(props.sessionId, 'compact:0');
 }
 watch(
   () => session.value?.compactResult,
@@ -588,11 +596,17 @@ watch(
       // Same flash mechanism as bubble completion (flash is defined below):
       // the instant-fail path has no pending→fail transition for the items
       // watch to catch, so flash the fixed 'compact' group id directly.
+      const sid = props.sessionId;
       flash.value = { ...flash.value, compact: 'fail' };
       // Auto-reveal the failed sub-bubble AND its detail so the reason is
       // visible during the flash without a click.
-      open.value = { ...open.value, compact: true, 'compact:0': true };
+      setOpenGroup(sid, 'compact', true);
+      setOpenGroup(sid, 'compact:0', true);
       window.setTimeout(() => {
+        // The session may have changed while this was pending: the fixed
+        // 'compact' id is shared by every session, so a stale timer must
+        // never touch the CURRENT window's flash/open state.
+        if (props.sessionId !== sid) return;
         const next = { ...flash.value };
         delete next.compact;
         flash.value = next;
@@ -621,11 +635,18 @@ watch(items, (list) => {
         const prev = prevBubbleStatus.get(b.key);
         if (prev === 'pending' && b.status !== 'pending') {
           const kind = b.status === 'ok' ? 'ok' : 'fail';
-          flash.value = { ...flash.value, [part.group.id]: kind };
+          const gid = part.group.id;
+          const sid = props.sessionId;
+          flash.value = { ...flash.value, [gid]: kind };
           window.setTimeout(() => {
-            if (flash.value[part.group.id]) {
+            // The window may have switched sessions by now: the flash map is
+            // reset on switch, but its keys are group ids — the compaction
+            // group's 'compact' is FIXED and shared by every session, so a
+            // stale timer must never clear the CURRENT window's flash.
+            if (props.sessionId !== sid) return;
+            if (flash.value[gid]) {
               const next = { ...flash.value };
-              delete next[part.group.id];
+              delete next[gid];
               flash.value = next;
             }
           }, 1400);

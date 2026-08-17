@@ -93,6 +93,16 @@ export interface ChatSession {
   createdAt: number;
   lastActivity: number;
   status: 'idle' | 'running';
+  /**
+   * True while the agent is actively producing the tail message — i.e.
+   * the streaming assistant message is on screen. Distinct from `status`
+   * because between `agent_start` and the first token the agent is
+   * already "running" but no assistant row exists yet (the API is in
+   * the prefill / awaiting-first-token stage). Drives the chat-window
+   * tab icon: busy spinner when streaming, slow waiting spinner while
+   * running-but-not-yet-streaming.
+   */
+  streaming: boolean;
   /** a manual /compact is running on the backend (LLM summarization) */
   compacting: boolean;
   /** outcome of the last /compact: null = none yet, 'done'/'failed' persists until audited */
@@ -312,6 +322,37 @@ export function clearSessionError(sessionId: string) {
   delete state.sessionErrors[sessionId];
 }
 
+/**
+ * Expanded work-group / compaction-box state, per session. The same
+ * component instance serves every session in a tile, and open-state keys
+ * are group ids that are NOT globally unique — message-derived ids like
+ * 'work-<msgId>' collide when two sessions share the id space (synthetic
+ * or restored clones), and the compaction group id 'compact' is FIXED in
+ * every session. A single shared map would render the next window's box
+ * expanded after the user expanded the same-id box in the previous one.
+ */
+const sessionOpenGroups = reactive<Record<string, Record<string, boolean>>>({});
+
+/** Get (creating if needed) a session's open-group map. */
+export function openGroupsOf(sessionId: string): Record<string, boolean> {
+  let g = sessionOpenGroups[sessionId];
+  if (!g) {
+    g = {};
+    sessionOpenGroups[sessionId] = g;
+  }
+  return g;
+}
+
+/** Set a session's group open state. */
+export function setOpenGroup(sessionId: string, id: string, open: boolean) {
+  openGroupsOf(sessionId)[id] = open;
+}
+
+/** Drop a session's group open key. */
+export function unsetOpenGroup(sessionId: string, id: string) {
+  delete sessionOpenGroups[sessionId]?.[id];
+}
+
 /** Get (creating if needed) a session's scroll memory entry. */
 export function chatScrollOf(sessionId: string): ChatScrollMem {
   let m = scrollMemory.get(sessionId);
@@ -414,6 +455,7 @@ function pendingSessionEntry(file: string, cwd: string, createdAt: number): Chat
     createdAt,
     lastActivity: createdAt,
     status: 'idle',
+    streaming: false,
     compacting: false,
     compactResult: null,
     compactStartedAt: 0,
@@ -463,11 +505,20 @@ seedPendingSessions();
 const TAB_PREFIX = 'chat-';
 const chatTabId = (sessionId: string) => TAB_PREFIX + sessionId;
 
-/** Tab icon + state class for a session: the chat bubble while idle; a
- *  large dot while the LLM works (green, pulsing — the chat-window header
- *  dot moved to the tab). */
+/** Tab icon + state class for a session: the chat bubble while idle.
+ *  While the agent is producing tokens / thinking / running a tool
+ *  (i.e. an assistant message is on screen and growing), the busy
+ *     spinner rotates clockwise fast — the user sees motion and reads
+ *     it as "the API is actively working". When the agent has started
+ *     but no first token has arrived yet (prefill / awaiting-first-
+ *     token — the request is in flight but the model hasn't returned
+ *     anything), the waiting spinner rotates counter-clockwise slowly.
+ *     The two states read distinctly: fast CW = working, slow CCW =
+ *     hung / still waiting on the API. */
 function tabStatusOf(s: ChatSession): { icon: string; tabClass: string } {
-  if (s.status === 'running') return { icon: '◉', tabClass: 'chat-tab--running' };
+  if (s.status === 'running') {
+    return { icon: s.streaming ? '◉-busy' : '◉-waiting', tabClass: 'chat-tab--running' };
+  }
   return { icon: '💬', tabClass: '' };
 }
 
@@ -583,6 +634,7 @@ function toSession(raw: SessionInfo): ChatSession {
     createdAt: raw.created,
     lastActivity: raw.modified,
     status: raw.running ? 'running' : 'idle',
+    streaming: false,
     preview: raw.preview || raw.firstMessage,
     stats: {
       model: raw.model,
@@ -833,6 +885,12 @@ function handleEvent(ev: any) {
       const s = byFile(ev.file);
       if (s) {
         s.status = ev.status;
+        // Settled (idle) — the spinner must leave its working state.
+        // Started (running) — reset to non-streaming; the first
+        // assistant `message` event will flip it back on. This keeps
+        // a session that started without an assistant row in the
+        // "waiting" state until the first token arrives.
+        if (ev.status === 'idle') s.streaming = false;
         syncTabStatuses();
       }
       break;
@@ -919,7 +977,14 @@ function handleEvent(ev: any) {
       } else if (m.role === 'toolResult') {
         mergeToolResult(s, m.toolCallId ?? '', m.text, !!m.isError);
       } else {
+        // Assistant / summary / bash / system etc. — any non-user row
+        // landing on the tail means the API is producing content, so
+        // flip the tab spinner into the busy state.
         upsert(s, m);
+        if (m.role === 'assistant' && !s.streaming) {
+          s.streaming = true;
+          syncTabStatuses();
+        }
       }
       break;
     }
@@ -1595,6 +1660,7 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
     delete windowUi[sessionId];
     delete state.sessionErrors[sessionId];
     delete sessionAttachments[sessionId];
+    delete sessionOpenGroups[sessionId];
     forgetChatScroll(sessionId);
     saveDrafts();
     await refreshList();
@@ -1817,6 +1883,9 @@ export const store = {
   sessionErrorOf,
   setSessionError,
   clearSessionError,
+  openGroupsOf,
+  setOpenGroup,
+  unsetOpenGroup,
   findSession,
   isViewOpen,
   activeSessions,

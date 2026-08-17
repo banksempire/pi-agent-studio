@@ -86,7 +86,7 @@ function writeSessions() {
   fs.rmSync(TEST_SESSIONS_DIR, { recursive: true, force: true });
   fs.mkdirSync(TEST_SESSIONS_DIR, { recursive: true });
   const uid = () => `019f${Math.random().toString(16).slice(2, 14)}`;
-  const sessionFile = (name, turns, { withImage = false } = {}) => {
+  const sessionFile = (name, turns, { withImage = false, withTool = false } = {}) => {
     const lines = [];
     const id = uid();
     const base = 1786342000000;
@@ -128,9 +128,22 @@ function writeSessions() {
       prev = umid;
       n += 1;
       const amid = `a${n}`;
-      const content = [
-        { type: 'text', text: `Answer ${t + 1} for ${name} — ${'reply padding text '.repeat(8)}` },
-      ];
+      // Both withTool sessions reuse the SAME message-id space ('a2' is the
+      // first assistant id in every session): their first work group gets
+      // the identically-keyed id 'work-a2' — the collision class the open
+      // map must isolate. The content keeps a text reply so the turn flows.
+      const content =
+        withTool && t === 0
+          ? [
+              {
+                type: 'toolCall',
+                id: `${name.toLowerCase().replaceAll('-', '')}-tc1`,
+                name: 'probe',
+                arguments: { query: name },
+              },
+              { type: 'text', text: `Answer ${t + 1} for ${name} — ${'reply padding text '.repeat(8)}` },
+            ]
+          : [{ type: 'text', text: `Answer ${t + 1} for ${name} — ${'reply padding text '.repeat(8)}` }];
       lines.push(
         JSON.stringify({
           type: 'message',
@@ -151,6 +164,11 @@ function writeSessions() {
   sessionFile('XWin-A', 55); // 110 messages — deep, hasMore at page size 50
   sessionFile('XWin-B', 30); // 60 messages — scrollable, hasMore
   sessionFile('XWin-C', 10, { withImage: true }); // 20 messages + an image
+  // D and E share the same message-id space — their first work group is
+  // identically keyed 'work-a2' in both (the collision the open map must
+  // isolate per session).
+  sessionFile('XWin-D', 20, { withTool: true }); // first assistant = work-a2
+  sessionFile('XWin-E', 20, { withTool: true }); // collides with D on work-a2
 }
 
 function writeTestImages() {
@@ -388,6 +406,34 @@ function makeReporter() {
       };
     })();
     report('T2 loadOlder race does not re-anchor the other window', t2.ok, t2.why);
+
+    // ── T9: expanded work-group box must not ride into the next window ────
+
+    const t9 = await (async () => {
+      // D and E share the message-id space: their first work group is
+      // identically keyed 'work-a2' in both. Expanding it in D must not
+      // render E's same-keyed box expanded (the pre-fix shared `open` ref
+      // leaked the key across the component-instance reuse).
+      await openSession('XWin-D:');
+      await openSession('XWin-E:');
+      await switchTab('XWin-D');
+      await delay(600);
+      const dHead = await page.locator('.chat-work-head').first();
+      const dCountBefore = await page.locator('.chat-work-head').count();
+      await dHead.click({ force: true });
+      await delay(600);
+      const dOpen = await page.locator('.chat-work-body').count();
+      await switchTab('XWin-E');
+      const eOpen = await page.locator('.chat-work-body').count();
+      const eHeadCount = await page.locator('.chat-work-head').count();
+      await switchTab('XWin-D');
+      const dOpenAfter = await page.locator('.chat-work-body').count();
+      return {
+        ok: dCountBefore >= 1 && dOpen >= 1 && eOpen === 0 && eHeadCount >= 1 && dOpenAfter >= 1,
+        why: `D heads:${dCountBefore} D open:${dOpen} E open:${eOpen} E heads:${eHeadCount} D back:${dOpenAfter}`,
+      };
+    })();
+    report('T9 expanded box does not ride into the next window', t9.ok, t9.why);
 
     // ── T3: attachments + error banner stay in their window ───────────────
 

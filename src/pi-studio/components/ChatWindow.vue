@@ -772,6 +772,13 @@ function autoGrowMobileInput() {
 function resetMobileInputHeight() {
   const el = inputEl.value;
   if (!el) return;
+  // Desktop with a dragged height: the inline style is OWNED by the
+  // resize binding. Clearing it here would shrink the box — a send
+  // clears the input, this nextTick runs after the re-render that
+  // applied the dragged height, and nothing re-applies it until the
+  // next render. The desktop box only changes by dragging, never by
+  // typing or sending.
+  if (!isMobile.value && manualHeight.value !== null) return;
   el.style.height = '';
   el.style.overflowY = '';
 }

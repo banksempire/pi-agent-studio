@@ -371,12 +371,7 @@ function jumpToSep(e: MouseEvent) {
 }
 
 /**
- * The conversation as render items: the work of one agent turn collapses
- * into ONE box. A turn spans from a user message to the turn's end (the
- * next user message, the final text reply, or an error/abort) — intermediate
- * acknowledgement texts do NOT split the box: consecutive thinking/tool
- * keep stacking into the same ActionGroup (
- * the reported split-bubble bug).
+ * The conversation as render items: work runs collapse into one box each.
  *
  * Timing: a message is one agent step (thinking + tool call + maybe text)
  * starting at its ts. A move's duration is its step's duration — from this
@@ -387,17 +382,13 @@ const items = computed<ChatItem[]>(() => {
   const msgs = session.value?.messages ?? [];
   const n = msgs.length;
   const out: ChatItem[] = [];
-  /** Source indices of the OPEN group's moves, in order (for the
-   *  close-time duration fixups). */
-  const workSrcs: number[] = [];
+  const work: { src: number; mv: PendingMove }[] = [];
+  let workId = '';
   /** The agent turn being accumulated: ALL of a turn's work runs + replies
    *  become ONE row (see ChatItem) so the separator pins across the whole
-   *  turn — not just the first reply. The work group part is pushed at its
-   *  FIRST move and stays open (wip) until the turn truly ends, so replies
-   *  in the middle of a long thinking/tool chain never split the box. */
+   *  turn — not just the first reply. */
   const parts: AgentPart[] = [];
   let header: TurnHeader = {};
-  let group: ActionGroup | null = null;
 
   /** Close the current agent turn (if it has any content). */
   const endTurn = () => {
@@ -408,26 +399,38 @@ const items = computed<ChatItem[]>(() => {
     }
   };
 
-  /**
-   * Freeze the turn's open work group: fill the trailing bubble's final
-   * duration, mark the whole group done (or wip for a still-running tail),
-   * start the trailing bubble on the live clock. endTs = the ts boundary
-   * where the work phase ends (null = the tail: the last move's own ts).
-   */
+  /** endTs = ts of the message that follows the run (null = the run is the tail). */
   const flush = (endTs: number | null, wip: boolean) => {
-    const g = group;
-    if (!g) return;
-    g.wip = wip;
-    const end = endTs ?? msgs[workSrcs[workSrcs.length - 1] ?? 0]?.ts ?? g.startTs;
-    g.durMs = Math.max(0, end - g.startTs);
-    workSrcs.forEach((src, i) => {
-      const b = g.bubbles[i];
-      if (!b) return;
-      b.live = wip && i === workSrcs.length - 1;
+    if (work.length === 0) return;
+    const startTs = msgs[work[0].src].ts;
+    const end = endTs ?? msgs[work[work.length - 1].src].ts;
+    const group = new ActionGroup(workId, startTs);
+    group.wip = wip;
+    group.durMs = Math.max(0, end - startTs);
+    work.forEach(({ src, mv }, i) => {
+      // A bubble's duration spans its step: from this message's ts to the
+      // NEXT message's ts (or the run end for the last step).
+      const live = wip && i === work.length - 1;
+      const b = new ActionBubble(mv.kind, `${workId}:${i}`, mv.name, msgs[src].ts);
+      b.live = live;
       b.durMs = Math.max(0, (msgs[src + 1]?.ts ?? end) - msgs[src].ts);
+      if (mv.kind === 'thinking') {
+        b.detail = mv.thinking ?? '';
+        b.status = live ? 'pending' : 'ok';
+      } else if (mv.kind === 'bash') {
+        b.detail = mv.text ?? '';
+        b.status = mv.text ? 'ok' : 'pending';
+      } else {
+        b.args = mv.args;
+        b.detail = mv.result ?? '';
+        b.isError = !!mv.isError;
+        b.status = mv.isError ? 'fail' : mv.result !== undefined ? 'ok' : 'pending';
+      }
+      group.bubbles.push(b);
     });
-    workSrcs.length = 0;
-    group = null;
+    parts.push({ kind: 'group', group });
+    work.length = 0;
+    workId = '';
   };
 
   /** Fill the turn's separator identity from any available source message. */
@@ -437,33 +440,9 @@ const items = computed<ChatItem[]>(() => {
     kind: ActionKind,
     mv: Omit<PendingMove, 'kind' | 'name'> & { name?: string },
   ) => {
-    if (!group) {
-      group = new ActionGroup(`work-${msgId}`, msgs[src].ts);
-      group.wip = true; // open: the head shows the latest bubble while it runs
-      parts.push({ kind: 'group', group });
-    }
+    if (!workId) workId = `work-${msgId}`;
     ensureHeader(header, msgs[src]);
-    const name = actionName(kind, mv.name);
-    const b = new ActionBubble(kind, `${group.id}:${workSrcs.length}`, name, msgs[src].ts);
-    // Status/detail derive from the CURRENT message content — the items
-    // recompute on streamed updates, so a live move keeps growing here and
-    // its status flips once the tool result lands. durMs is an interim
-    // estimate (this step's span); flush fixes the trailing bubble.
-    if (kind === 'thinking') {
-      b.detail = mv.thinking ?? '';
-      b.status = b.detail ? 'ok' : 'pending';
-    } else if (kind === 'bash') {
-      b.detail = mv.text ?? '';
-      b.status = mv.text ? 'ok' : 'pending';
-    } else {
-      b.args = mv.args;
-      b.detail = mv.result ?? '';
-      b.isError = !!mv.isError;
-      b.status = mv.isError ? 'fail' : mv.result !== undefined ? 'ok' : 'pending';
-    }
-    b.durMs = Math.max(0, (msgs[src + 1]?.ts ?? msgs[n - 1]?.ts ?? b.startTs) - b.startTs);
-    group.bubbles.push(b);
-    workSrcs.push(src);
+    work.push({ src, mv: { ...mv, kind, name: actionName(kind, mv.name) } });
   };
 
   for (let i = 0; i < msgs.length; i++) {
@@ -479,22 +458,27 @@ const items = computed<ChatItem[]>(() => {
       continue;
     }
     if (m.role === 'assistant') {
-      const hadMoves = !!(m.thinking || m.toolCalls?.length);
-      if (m.thinking) addMove(i, m.id, 'thinking', { thinking: m.thinking });
+      let added = false;
+      if (m.thinking) {
+        addMove(i, m.id, 'thinking', { thinking: m.thinking });
+        added = true;
+      }
       for (const tc of m.toolCalls ?? []) {
         addMove(i, m.id, 'tool', { name: tc.name, args: tc.args, result: tc.result, isError: tc.isError });
+        added = true;
       }
-      if (m.text || m.error || m.stopReason === 'error' || m.stopReason === 'aborted') {
+      if (m.text.trim() || m.error || m.stopReason === 'error' || m.stopReason === 'aborted') {
         // The reply (or LLM API error / abort — textless error messages must
-        // surface too, like in the TUI) is a part of THIS turn. A reply with
-        // moves of its own is just mid-run narration: keep the work box open
-        // so consecutive thinking/tool stay stacked. Only a reply that brings
-        // no new work (the final answer) — or an error/abort — ends the run.
+        // surface too, like in the TUI) ends the work phase. WHITESPACE-only
+        // text is not a reply: tool-use steps routinely stream an empty or
+        // blank text block, and treating that as a reply split consecutive
+        // thinking/tool into separate one-bubble boxes. Only real prose (or
+        // an error/abort) closes the run. If THIS message also contributed
+        // moves, the run ends at the next message's step boundary (this
+        // message's own ts would measure 0).
+        flush(added ? (msgs[i + 1]?.ts ?? m.ts) : m.ts, false);
         ensureHeader(header, m);
         parts.push({ kind: 'reply', msg: m });
-        if (!hadMoves || m.stopReason === 'error' || m.stopReason === 'aborted') {
-          flush(m.ts, false);
-        }
       }
       continue;
     }

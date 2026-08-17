@@ -203,24 +203,10 @@
   max-width: 78%;
 }
 
-/* Image attachments inside a user bubble: thumbnail grid, capped at ~380px
-   each so big screenshots stay readable without dominating the chat. */
-.chat-msg-images {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 6px;
-}
-.chat-msg-image-link {
-  display: block;
-  line-height: 0;
-}
-.chat-msg-image {
-  display: block;
-  max-width: 380px;
-  max-height: 260px;
-  border-radius: 6px;
-  object-fit: cover;
+/* User-bubble attachments are rendered OUTSIDE the bubble (MessageImages
+   component: horizontal row when it fits, poker-card fan otherwise). */
+.msg-images + .chat-user-bubble {
+  margin-top: 6px;
 }
 
 /* Sticky message separator: ``---- User · 03:37 ----`` / ``---- pi ·

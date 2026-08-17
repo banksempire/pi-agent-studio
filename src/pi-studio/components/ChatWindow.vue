@@ -15,6 +15,7 @@ import {
   type SlashResult,
 } from '../slash/commands';
 import { type ChatSession, type DisplayMessage, fmtTime, useChatStore } from '../store/chat';
+import MessageImages from './MessageImages.vue';
 
 const props = defineProps<{ sessionId: string }>();
 const store = useChatStore();
@@ -841,7 +842,7 @@ function pickImages() {
 async function onFilesChosen(e: Event) {
   const el = e.target as HTMLInputElement | null;
   const files = el?.files ? Array.from(el.files) : [];
-  el && (el.value = ''); // re-picking the same file re-fires change
+  if (el) el.value = ''; // re-picking the same file re-fires change
   for (const f of files) {
     if (attachments.value.length >= 4) {
       store.setLastError('At most 4 images per message.');
@@ -852,19 +853,13 @@ async function onFilesChosen(e: Event) {
       attachments.value.push({ ...im, url: dataUrlOf(im) });
     } catch (err) {
       // Real interaction: surface a readable reason, not a silent drop.
-      store.setLastError(
-        `Could not attach ${f.name}: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      store.setLastError(`Could not attach ${f.name}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 }
 
 function removeAttachment(i: number) {
   attachments.value.splice(i, 1);
-}
-
-function imageUrl(im: { data: string; mimeType: string }): string {
-  return dataUrlOf(im);
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -1183,24 +1178,13 @@ let anchorBottom = 0;
             </div>
           </template>
 
-          <!-- User message: blue bubble (the separator above is the row's
-               header, rendered as a list sibling) -->
+          <!-- User message: images ABOVE the blue text bubble (the bubble
+               wraps text only); resend affordance below -->
           <template v-else-if="item.kind === 'user'">
-            <div class="chat-user-bubble">
-              <div v-if="item.msg.images?.length" class="chat-msg-images">
-                <a
-                  v-for="(im, i) in item.msg.images"
-                  :key="i"
-                  class="chat-msg-image-link"
-                  :href="imageUrl(im)"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <img :src="imageUrl(im)" class="chat-msg-image" loading="lazy" />
-                </a>
-              </div>
-              <div v-if="item.msg.text && renderMd" class="chat-msg-md" v-html="md(item.msg)" />
-              <template v-else-if="item.msg.text">{{ item.msg.text }}</template>
+            <MessageImages v-if="item.msg.images?.length" :images="item.msg.images" />
+            <div v-if="item.msg.text" class="chat-user-bubble">
+              <div v-if="renderMd" class="chat-msg-md" v-html="md(item.msg)" />
+              <template v-else>{{ item.msg.text }}</template>
             </div>
             <div v-if="item.msg.sendFailed" class="chat-resend" title="The backend did not accept this message — send it again">
               <span class="chat-resend-mark"><SvgIcon name="⚠" /></span> not sent

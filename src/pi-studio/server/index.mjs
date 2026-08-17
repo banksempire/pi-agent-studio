@@ -94,7 +94,8 @@ function plainTextOf(content) {
       .map((block) =>
         block.type === 'text' ? block.text : block.type === 'input_text' ? (block.text ?? '') : '',
       )
-      .join('\n');
+      .join('\n')
+      .trim();
   }
   return '';
 }

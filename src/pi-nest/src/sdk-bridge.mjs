@@ -82,8 +82,10 @@ export function extractImages(content) {
   return out;
 }
 
-/** Text of the text blocks only — no [📷 …] marker (the UI renders the
- *  images themselves). */
+/** Text of the text blocks only — no [📷 …] marker (images render inline).
+ *  Trimmed: the SDK persists prompt text with a trailing newline; the live
+ *  optimistic rows carry the trimmed text, and the dedupe paths compare
+ *  them exactly. */
 function plainText(content) {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
@@ -91,7 +93,8 @@ function plainText(content) {
       .map((block) =>
         block.type === 'text' ? block.text : block.type === 'input_text' ? (block.text ?? '') : '',
       )
-      .join('\n');
+      .join('\n')
+      .trim();
   }
   return '';
 }

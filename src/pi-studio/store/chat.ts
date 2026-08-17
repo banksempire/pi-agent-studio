@@ -819,6 +819,10 @@ function handleEvent(ev: any) {
       }
       const m = ev.message as DisplayMessage;
       if (m.role === 'user') {
+        // Normalize to the trimmed form the optimistic row carries (the SDK
+        // persists prompt text with a trailing newline) — the pending-row
+        // adoption below matches on exact text.
+        m.text = m.text.trim();
         // The optimistic pending row (same text) is replaced in place — it
         // may no longer be the last message: a queued message's turn starts
         // only after the previous turn's stream has pushed more messages in

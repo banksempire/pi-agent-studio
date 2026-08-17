@@ -143,6 +143,10 @@ async function commit(m: ModelInfo, thinkLevel: string) {
       // Record the commit in the cache — the SSE stats echo that follows
       // then matches and skips the otherwise-redundant refetch.
       setCachedModel(s.file, m, thinkLevel);
+      // Refresh the display rows NOW: they render the backend's catalog
+      // `current`, which is stale until refetched — without this, a full
+      // page reload was the only way to see the change.
+      void load(true);
     }
   } catch (e) {
     // Connectivity failures are silent (the dot in the status bar says it

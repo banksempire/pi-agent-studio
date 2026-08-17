@@ -167,6 +167,12 @@ function pinBottom(el: HTMLElement) {
 let lastPinTop = -1;
 let lastPinAt = 0;
 
+/** Moment of the most recent separator jump (click on the pinned chat bar).
+ *  The jump lands near the top, and its own scroll echo must not read as a
+ *  user scroll-up gesture — that would auto-load the older page and
+ *  re-anchor the view a page away from the jump target. */
+let sepJumpAt = 0;
+
 function onScroll() {
   const el = listEl.value;
   if (!el) return;
@@ -189,8 +195,11 @@ function onScroll() {
   lastPinTop = -1;
   st.sticky = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
   st.top = el.scrollTop;
-  // Scroll-up pagination: near the top → load older messages.
-  if (el.scrollTop < 80) void loadOlder();
+  // Scroll-up pagination: near the top → load older messages. Skipped for
+  // the echo of a separator jump: that is a "go to the start" navigation,
+  // not a user scroll-up gesture — auto-loading would re-anchor the view a
+  // page away from the jump target.
+  if (el.scrollTop < 80 && performance.now() - sepJumpAt > 250) void loadOlder();
 }
 
 /** Load the previous page and keep the viewport anchored. */
@@ -415,16 +424,26 @@ function rowKey(item: ChatItem): string {
   return item.msg.id;
 }
 
-/** Clicking a pinned separator jumps to the start of that message (its row
- *  aligns with the list's content top, where the separator pins). */
+/** Clicking a separator (the pinned chat bar) jumps to the start of that
+ *  message: the SEPARATOR aligns with the list's content top, so the row
+ *  starts right below it. Aligning the ROW instead leaves the sticky
+ *  separator pinned ON TOP of the row, hiding its first item — a bubble
+ *  loses its top (the reported jump undershoot). */
 function jumpToSep(e: MouseEvent) {
   const el = listEl.value;
+  const sep = e.currentTarget as HTMLElement;
   // The separator is a list sibling directly ABOVE its message row.
-  const row = (e.currentTarget as HTMLElement).nextElementSibling as HTMLElement | null;
+  const row = sep.nextElementSibling as HTMLElement | null;
   if (!el || !row) return;
   const padTop = parseFloat(getComputedStyle(el).paddingTop) || 0;
-  const top = row.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop - padTop;
+  const top =
+    row.getBoundingClientRect().top -
+    el.getBoundingClientRect().top +
+    el.scrollTop -
+    padTop -
+    sep.offsetHeight;
   el.scrollTop = Math.max(0, Math.min(top, el.scrollHeight - el.clientHeight));
+  sepJumpAt = performance.now();
 }
 
 /** Short duration: "<1s" / "12.3s" / "1m 30s". */ function fmtSec(ms: number): string {

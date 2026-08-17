@@ -24,6 +24,11 @@
  *    so EVERY restored window must come back pinned to the bottom —
  *    switching to a non-active restored tab must not strand it on the
  *    oldest page.
+ *  - T13 separator click (chat bar): clicking a pinned separator jumps to
+ *    the start of that message — the separator lands at the top with the
+ *    row right below it (never clipped under the sticky bar), and the
+ *    jump's own near-top scroll must not trigger loadOlder (which would
+ *    re-anchor the view a page away).
  *
  * Runs its own three-service stack (pi-nest + gateway + vite) on free
  * ports (override with XWIN_NEST_PORT / XWIN_BACKEND_PORT / XWIN_VITE_PORT)
@@ -933,6 +938,121 @@ function makeReporter() {
       return { ok: ok1 && ok2 && ok3 && ok4, why: why.join(' | ') };
     })();
     report('T12 composer send-key isolation (iOS spurious shiftKey, both modes)', t12.ok, t12.why);
+
+    // ── T13: separator click (chat bar) jumps to the message start ────────
+
+    const t13 = await (async () => {
+      // Repro (reported): clicking the chat bar (the pinned separator) to
+      // jump to the start of a message undershoots when the first item of
+      // the group is a bubble. The old jump aligned the ROW with the list
+      // top, so the sticky separator pinned ON TOP of the row — hiding the
+      // first item (a bubble loses its top). And the jump's own near-top
+      // scroll (< 80px) read as a scroll-up gesture, so loadOlder fetched
+      // the older page and re-anchored the view a page away from the jump
+      // target. The jump must align the SEPARATOR with the content top (the
+      // row starts right below it) and must not trigger loadOlder.
+      await switchTab('XWin-B');
+      // Scope to B's OWN tile — with two windows side by side the first
+      // .chat-messages in the DOM may be the OTHER window's (the split-root
+      // state from T11; A's window can precede B's in DOM order).
+      const bTile = page
+        .locator('.sf-tab-label:has-text("XWin-B:")')
+        .locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " sf-tile ")][1]');
+      const bList = bTile.locator('.chat-messages');
+      if ((await bList.count()) !== 1) return { ok: false, why: `B tile list count ${await bList.count()}` };
+      const why = [];
+      const inB = (fn, ...args) => bList.evaluate(fn, ...args);
+      // Post-jump geometry of a SPECIFIC sep/row pair (the clicked one —
+      // the first separator in the list is the top of the chat and would be
+      // far above after a mid-chat jump). The element refs survive because
+      // the click happens in the same evaluation that returns them.
+      // Post-jump geometry of the clicked sep/row pair. The refs live on
+      // window.__t13 (set in the click evaluation — DOM elements cannot
+      // cross the evaluate boundary). The first separator in the list is
+      // the top of the chat and would be far above after a mid-chat jump,
+      // so measuring it would prove nothing.
+      const winOf = () =>
+        inB((el) => {
+          const lr = el.getBoundingClientRect();
+          const sep = window.__t13?.sep ?? null;
+          const row = window.__t13?.row ?? null;
+          return {
+            scrollTop: el.scrollTop,
+            sepTop: sep ? Math.round(sep.getBoundingClientRect().top - lr.top) : -1,
+            rowTop: row ? Math.round(row.getBoundingClientRect().top - lr.top) : -1,
+            sepH: sep ? Math.round(sep.getBoundingClientRect().height) : -1,
+          };
+        });
+      // 1) Click the PINNED separator mid-chat: the separator must land at
+      //    the top and the row must start right below it (rowTop ≈ sepH,
+      //    never 0 — the old overlap hid the first item). Measure the
+      //    PINNED separator's row (not the first sep in the list).
+      await inB((el) => {
+        el.scrollTop = Math.round((el.scrollHeight - el.clientHeight) * 0.5);
+      });
+      await delay(600);
+      const pin = await inB((el) => {
+        const lr = el.getBoundingClientRect();
+        const sep = Array.from(el.querySelectorAll('.chat-sep')).find(
+          (s) => Math.abs(s.getBoundingClientRect().top - lr.top) < 2,
+        );
+        if (!sep) return null;
+        const row = sep.nextElementSibling;
+        const expected = Math.round(
+          row.getBoundingClientRect().top - lr.top + el.scrollTop - sep.getBoundingClientRect().height,
+        );
+        window.__t13 = { sep, row };
+        sep.click();
+        return expected;
+      });
+      await delay(400);
+      const afterPin = await winOf();
+      const pinExpected = pin ?? -1;
+      const jumpOk =
+        pin !== null &&
+        Math.abs(afterPin.scrollTop - pinExpected) <= 3 &&
+        Math.abs(afterPin.sepTop) <= 2 &&
+        Math.abs(afterPin.rowTop - afterPin.sepH) <= 2;
+      why.push(
+        `pinnedJump:${jumpOk ? 'ok' : `BAD sepTop:${afterPin.sepTop} rowTop:${afterPin.rowTop} sepH:${afterPin.sepH} scrollTop:${afterPin.scrollTop} (want ${pinExpected})`}`,
+      );
+      // 2) Click the FIRST separator (top of the chat): the jump lands near
+      //    the top (< 80px) — the loadOlder trigger must NOT fire and yank
+      //    the view a page away (XWin-B has 60 messages > 1 page).
+      await inB((el) => {
+        el.scrollTop = 1200;
+      });
+      await delay(400);
+      const first = await inB((el) => {
+        const sep = el.querySelector('.chat-sep');
+        if (!sep) return null;
+        const row = sep.nextElementSibling;
+        const lr = el.getBoundingClientRect();
+        const off = Math.round(
+          row.getBoundingClientRect().top - lr.top + el.scrollTop - sep.getBoundingClientRect().height,
+        );
+        window.__t13 = { sep, row };
+        sep.click();
+        return off;
+      });
+      await delay(250);
+      const afterTop1 = await winOf();
+      await delay(900); // let any (buggy) loadOlder settle and re-anchor
+      const afterTop2 = await winOf();
+      const firstOffset = first ?? -1;
+      const topOk =
+        first !== null &&
+        Math.abs(afterTop1.scrollTop - firstOffset) <= 3 &&
+        Math.abs(afterTop1.sepTop) <= 2 &&
+        Math.abs(afterTop1.rowTop - afterTop1.sepH) <= 2 &&
+        Math.abs(afterTop2.scrollTop - afterTop1.scrollTop) <= 3 &&
+        afterTop1.scrollTop < 150;
+      why.push(
+        `topJump:${topOk ? 'ok' : `BAD sepTop:${afterTop1.sepTop} rowTop:${afterTop1.rowTop} scrollTop:${afterTop1.scrollTop}→${afterTop2.scrollTop} (want ≈${firstOffset}, stable)`}`,
+      );
+      return { ok: jumpOk && topOk, why: why.join(' | ') };
+    })();
+    report('T13 separator click jumps to the message start — no clip, no loadOlder yank', t13.ok, t13.why);
 
     // ── Summary ────────────────────────────────────────────────────────────
 

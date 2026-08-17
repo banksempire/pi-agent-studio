@@ -193,14 +193,14 @@
   padding-top: 4px;
 }
 
-/* User input: blue bubble (the separator above is the row's header). */
+/* User input: blue bubble (the separator above is the row's header).
+   Full chat-window width — block flow fills the row. */
 .chat-user-bubble {
   background: var(--sf-accent);
   color: var(--sf-text-on-accent);
   border-radius: 8px;
   border-bottom-right-radius: 2px;
   padding: 8px 12px;
-  max-width: 78%;
 }
 
 /* User-bubble attachments are rendered OUTSIDE the bubble (MessageImages

@@ -470,8 +470,10 @@ function deriveSession(entries, st) {
     const msg = entry.message;
     if (!msg) continue;
     if (msg.role === 'user') {
-      if (!firstMessage) firstMessage = textOf(msg.content);
-      lastText = textOf(msg.content);
+      // Marker-free text: the [📷 N image] marker is only for in-chat
+      // toolResult/custom rows — list titles/previews show plain text.
+      if (!firstMessage) firstMessage = plainTextOf(msg.content);
+      lastText = plainTextOf(msg.content);
     }
     if (msg.role === 'assistant') {
       if (msg.model) model = msg.model;

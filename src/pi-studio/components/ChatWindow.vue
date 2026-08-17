@@ -142,6 +142,7 @@ async function loadOlder() {
   const s = session.value;
   const el = listEl.value;
   if (!s || !el || s.loadingOlder || !s.hasMoreOlder) return;
+  const sid = props.sessionId;
   const prevHeight = el.scrollHeight;
   const prevTop = el.scrollTop;
   // Anchor the viewport on the LAST part of the first rendered row. Parts
@@ -167,6 +168,14 @@ async function loadOlder() {
   const anchorOffset = anchorEl ? anchorEl.getBoundingClientRect().top - el.getBoundingClientRect().top : 0;
   await store.loadOlder(s.id);
   await nextTick();
+  // The page fetch is async — the user may have switched to ANOTHER window
+  // while it was in flight (a tab click, or the live session kept streaming
+  // elsewhere). The shared component instance then renders other content in
+  // the SAME element, and re-anchoring against it would write the other
+  // session's scrollTop — the cross-window scroll bleed (one window's
+  // loadOlder moved another window's position). Abandon the re-anchor when
+  // the window no longer shows the session the fetch belongs to.
+  if (listEl.value !== el || props.sessionId !== sid || session.value !== s) return;
   const nowEl = anchorSel ? (el.querySelector(anchorSel) as HTMLElement | null) : null;
   if (nowEl) {
     const now = nowEl.getBoundingClientRect().top - el.getBoundingClientRect().top;
@@ -182,7 +191,9 @@ async function loadOlder() {
   // cancels any such drift, so the anchored content never visibly moves.
   requestAnimationFrame(() => {
     const list = listEl.value;
-    if (!list || !anchorSel) return;
+    // Same guard as above: the element may now show a different session
+    // (or the window was swapped on mobile), never settle scroll there.
+    if (!list || !anchorSel || list !== el || props.sessionId !== sid || session.value !== s) return;
     const settleEl = list.querySelector(anchorSel) as HTMLElement | null;
     if (!settleEl) return;
     const drift = settleEl.getBoundingClientRect().top - list.getBoundingClientRect().top - anchorOffset;

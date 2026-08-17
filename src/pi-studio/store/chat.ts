@@ -163,6 +163,9 @@ interface ChatState {
   pingSamples: PingSample[];
   /** last send failure, shown in chat windows */
   lastError: string;
+  /** errors belonging to a specific session, shown ONLY in that window
+   *  (list-level failures stay in lastError — the active window shows those) */
+  sessionErrors: Record<string, string>;
   /** unsent composer text per session (tab content instances are REUSED by
    *  the framework when switching tabs — without per-session state, text
    *  typed in one window would leak into the next) */
@@ -280,6 +283,39 @@ export interface ChatScrollMem {
 }
 const scrollMemory = new Map<string, ChatScrollMem>();
 
+export interface ChatAttachment {
+  data: string;
+  mimeType: string;
+  url: string;
+}
+
+/** Image attachments pending in a window's composer. Per-session: the tab
+ *  component instance is reused across sessions, so a plain ref would let
+ *  one window's attachments leak into (and be sent from) another. */
+const sessionAttachments = reactive<Record<string, ChatAttachment[]>>({});
+
+export function attachmentsOf(sessionId: string): ChatAttachment[] {
+  if (!sessionAttachments[sessionId]) sessionAttachments[sessionId] = [];
+  return sessionAttachments[sessionId];
+}
+
+export function setAttachments(sessionId: string, list: ChatAttachment[]) {
+  sessionAttachments[sessionId] = list;
+}
+
+/** A session's own error (send failure, page-load failure, attach error…). */
+export function sessionErrorOf(sessionId: string): string {
+  return state.sessionErrors[sessionId] ?? '';
+}
+
+export function setSessionError(sessionId: string, message: string) {
+  state.sessionErrors[sessionId] = message;
+}
+
+export function clearSessionError(sessionId: string) {
+  delete state.sessionErrors[sessionId];
+}
+
 /** Get (creating if needed) a session's scroll memory entry. */
 export function chatScrollOf(sessionId: string): ChatScrollMem {
   let m = scrollMemory.get(sessionId);
@@ -328,6 +364,7 @@ const state = reactive<ChatState>({
   backendLost: false,
   pingSamples: [],
   lastError: '',
+  sessionErrors: {},
   drafts: loadDrafts(),
   prefs: loadPrefs(),
 });
@@ -1452,9 +1489,10 @@ export async function sendMessage(
       s.messages[i] = { ...s.messages[i], sendFailed: true };
     }
     // Connectivity failures are silent (the status-bar dot says it all);
-    // real backend rejections still surface as a banner.
+    // real backend rejections still surface as a banner — scoped to THIS
+    // session so other windows never show it.
     if (!(e instanceof TypeError)) {
-      state.lastError = e instanceof Error ? e.message : String(e);
+      setSessionError(sessionId, e instanceof Error ? e.message : String(e));
     } else {
       state.backend = 'offline';
     }
@@ -1481,7 +1519,7 @@ export function markCompactFailed(sessionId: string, reason?: string | null) {
   s.compactResult = 'failed';
   s.compactEndedAt = Date.now();
   s.compactError = reason ?? null;
-  if (reason) state.lastError = reason;
+  if (reason) setSessionError(sessionId, reason);
 }
 
 /** Abort the running agent (the conversation stays; generation halts). */
@@ -1559,6 +1597,8 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
     closeChatView(sessionId);
     delete state.drafts[sessionId];
     delete windowUi[sessionId];
+    delete state.sessionErrors[sessionId];
+    delete sessionAttachments[sessionId];
     forgetChatScroll(sessionId);
     saveDrafts();
     await refreshList();
@@ -1613,7 +1653,7 @@ export async function fetchMessages(sessionId: string, opts?: { older?: boolean 
     // Connectivity failures are silent (the status-bar dot says it all);
     // the SSE push refills messages once the connection is back.
     if (!(e instanceof TypeError)) {
-      state.lastError = `Failed to load messages: ${e instanceof Error ? e.message : e}`;
+      setSessionError(sessionId, `Failed to load messages: ${e instanceof Error ? e.message : e}`);
     }
   }
 }
@@ -1776,6 +1816,11 @@ export const store = {
   setComposerHeight,
   chatScrollOf,
   forgetChatScroll,
+  attachmentsOf,
+  setAttachments,
+  sessionErrorOf,
+  setSessionError,
+  clearSessionError,
   findSession,
   isViewOpen,
   activeSessions,

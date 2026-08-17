@@ -14,7 +14,19 @@ import {
   type SlashPicker,
   type SlashResult,
 } from '../slash/commands';
-import { type ChatSession, chatScrollOf, type DisplayMessage, fmtTime, useChatStore } from '../store/chat';
+import {
+  attachmentsOf,
+  type ChatAttachment,
+  type ChatSession,
+  chatScrollOf,
+  clearSessionError,
+  type DisplayMessage,
+  fmtTime,
+  sessionErrorOf,
+  setAttachments,
+  setSessionError,
+  useChatStore,
+} from '../store/chat';
 import ImageReview from './ImageReview.vue';
 import MessageImages, { type MessageImage } from './MessageImages.vue';
 
@@ -701,6 +713,19 @@ const pickerIndex = ref(0);
 
 /** Image review overlay: the clicked message's images + start index. */
 const review = ref<{ images: MessageImage[]; start: number } | null>(null);
+
+/** The banner text for THIS window: its own session-scoped error, or a
+ *  list-level error (rename/delete…) shown only in the active window —
+ *  never in every window at once. */
+const windowError = computed(() => {
+  const own = sessionErrorOf(props.sessionId);
+  if (own) return own;
+  return store.activeChatId === props.sessionId ? store.lastError : '';
+});
+function dismissError() {
+  clearSessionError(props.sessionId);
+  if (store.activeChatId === props.sessionId) store.clearLastError();
+}
 function openReview(images: MessageImage[], start: number) {
   review.value = { images, start };
 }
@@ -746,7 +771,7 @@ async function handleSlashResult(r: SlashResult) {
 
 /** Route the composer: slash command → backend, otherwise a normal message. */
 function runCommand(parsed: ParsedSlash) {
-  store.clearLastError();
+  store.clearSessionError(props.sessionId);
   input.value = '';
   completionOpen.value = false;
   void runCommandAsync(parsed);
@@ -760,7 +785,7 @@ function compactContext() {
   if (!s || s.compacting) return;
   const parsed = parseSlash('/compact');
   if (!parsed) return;
-  store.clearLastError();
+  store.clearSessionError(props.sessionId);
   void runCommandAsync(parsed);
 }
 
@@ -848,7 +873,7 @@ function send() {
       inputEl.value?.focus();
       return;
     }
-    store.clearLastError();
+    store.clearSessionError(props.sessionId);
     void store.sendMessage(props.sessionId, rest, { wait: true, images: imgs });
     input.value = '';
     attachments.value = [];
@@ -861,7 +886,7 @@ function send() {
     void runCommand(parsed);
     return;
   }
-  store.clearLastError();
+  store.clearSessionError(props.sessionId);
   void store.sendMessage(props.sessionId, text, { images: imgs });
   input.value = '';
   attachments.value = [];
@@ -870,8 +895,14 @@ function send() {
 
 // ── Image attachments ─────────────────────────────────────────────────────
 
-/** Up to 4 images ride along with the next plain message (or /wait). */
-const attachments = ref<Array<{ data: string; mimeType: string; url: string }>>([]);
+/** Up to 4 images ride along with the next plain message (or /wait).
+ *  Store-backed PER SESSION: the tab instance is reused across windows, so
+ *  a plain ref would carry one window's attachments into the next (and
+ *  send them from there). */
+const attachments = computed({
+  get: () => attachmentsOf(props.sessionId),
+  set: (v: ChatAttachment[]) => setAttachments(props.sessionId, v),
+});
 const fileInput = ref<HTMLInputElement | null>(null);
 
 function pickImages() {
@@ -886,7 +917,7 @@ async function onFilesChosen(e: Event) {
   if (files.length) store.noteChatInteraction(props.sessionId);
   for (const f of files) {
     if (attachments.value.length >= 4) {
-      store.setLastError('At most 4 images per message.');
+      setSessionError(props.sessionId, 'At most 4 images per message.');
       return;
     }
     try {
@@ -894,7 +925,10 @@ async function onFilesChosen(e: Event) {
       attachments.value.push({ ...im, url: dataUrlOf(im) });
     } catch (err) {
       // Real interaction: surface a readable reason, not a silent drop.
-      store.setLastError(`Could not attach ${f.name}: ${err instanceof Error ? err.message : String(err)}`);
+      setSessionError(
+        props.sessionId,
+        `Could not attach ${f.name}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 }
@@ -1140,7 +1174,16 @@ watch(
       old.top = el.scrollTop;
       old.sticky = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
     }
-    if (newId) restoreScroll(newId);
+    if (newId) {
+      // Per-window transient UI must not ride into the next session: an
+      // image review of the old window, an open slash picker dialog, or an
+      // in-flight bubble flash belong to the window that spawned them.
+      review.value = null;
+      picker.value = null;
+      flash.value = {};
+      prevBubbleStatus.clear();
+      restoreScroll(newId);
+    }
   },
 );
 </script>
@@ -1339,8 +1382,12 @@ watch(
         @mousedown="startResize"
         @dblclick="resetResize"
       ><span class="chat-composer-grip" /></div>
-      <div v-if="store.lastError" class="chat-banner chat-banner--error" @click="store.clearLastError()">
-        <SvgIcon name="⚠" /> {{ store.lastError }} (click to dismiss)
+      <div
+        v-if="windowError"
+        class="chat-banner chat-banner--error"
+        @click="dismissError"
+      >
+        <SvgIcon name="⚠" /> {{ windowError }} (click to dismiss)
       </div>
       <!-- Slash command autocomplete -->
         <div v-if="completionOpen && !picker" class="chat-completions">

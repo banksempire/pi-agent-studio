@@ -276,10 +276,6 @@ export interface ChatScrollMem {
   top: number;
   /** Whether the user is pinned to the bottom (auto-follow new content). */
   sticky: boolean;
-  /** Resize-anchor: content offset held at the viewport bottom edge. */
-  anchorBottom: number;
-  /** Messages-area height the anchor was computed for. */
-  prevListH: number;
 }
 const scrollMemory = new Map<string, ChatScrollMem>();
 
@@ -320,7 +316,7 @@ export function clearSessionError(sessionId: string) {
 export function chatScrollOf(sessionId: string): ChatScrollMem {
   let m = scrollMemory.get(sessionId);
   if (!m) {
-    m = { top: 0, sticky: true, anchorBottom: 0, prevListH: 0 };
+    m = { top: 0, sticky: true };
     scrollMemory.set(sessionId, m);
   }
   return m;

@@ -17,6 +17,9 @@
  *    into the window the user switches to.
  *  - T5 split-tile independence: two visible chat windows scroll
  *    independently.
+ *  - T6 resize anchoring: at the bottom a resize keeps the view pinned to
+ *    the bottom edge; scrolled up, the FIRST VISIBLE LINE stays put
+ *    (scrollTop preserved) while the messages area grows/shrinks.
  *
  * Runs its own three-service stack (pi-nest + gateway + vite) on free
  * ports (override with XWIN_NEST_PORT / XWIN_BACKEND_PORT / XWIN_VITE_PORT)
@@ -434,6 +437,48 @@ function makeReporter() {
       return { ok: inC.overlay && !inA.overlay, why: `C overlay:${inC.overlay} → A overlay:${inA.overlay}` };
     })();
     report('T4 image-review overlay does not ride into the next window', t4.ok, t4.why);
+
+    // ── T6: resize keeps bottom pinned when sticky, first line otherwise ──
+
+    const t6 = await (async () => {
+      const handle = page.locator('.chat-composer-handle');
+      if ((await handle.count()) === 0) return { ok: false, why: 'no composer handle' };
+      const drag = async (dy) => {
+        const bb = await handle.boundingBox();
+        const x = bb.x + bb.width / 2;
+        const y = bb.y + 4;
+        await page.mouse.move(x, y);
+        await page.mouse.down();
+        await page.mouse.move(x, y + dy, { steps: 12 });
+        await page.mouse.up();
+        await delay(600);
+      };
+      await switchTab('XWin-A');
+      await page.evaluate(() => {
+        const el = document.querySelector('.chat-messages');
+        el.scrollTop = el.scrollHeight; // at the bottom → sticky
+      });
+      await delay(600);
+      const bottomBefore = await scrollState();
+      await drag(-130); // grow the composer → messages area shrinks
+      const bottomAfter = await scrollState();
+      const pinnedBottom = bottomAfter.top >= bottomAfter.max - 3;
+      await setScrollFrac(0.4); // scrolled up → not sticky
+      await delay(600);
+      const mid = await scrollState();
+      await drag(260); // shrink the composer → messages area grows
+      const midAfter = await scrollState();
+      const linePinned = Math.abs(midAfter.top - mid.top) <= 3;
+      // Restore the composer's auto height (double-click resets).
+      const bb = await handle.boundingBox();
+      await page.mouse.dblclick(bb.x + bb.width / 2, bb.y + 4);
+      await delay(500);
+      return {
+        ok: pinnedBottom && linePinned,
+        why: `bottom ${bottomBefore.top}/${bottomBefore.max} → ${bottomAfter.top}/${bottomAfter.max} (pinned:${pinnedBottom}); mid ${mid.top} → ${midAfter.top} (first line pinned:${linePinned})`,
+      };
+    })();
+    report('T6 resize pins bottom when sticky, first line otherwise', t6.ok, t6.why);
 
     // ── T5: split-tile windows scroll independently ───────────────────────
 

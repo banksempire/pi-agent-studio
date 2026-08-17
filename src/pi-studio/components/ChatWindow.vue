@@ -139,10 +139,6 @@ function onScroll() {
   const el = listEl.value;
   if (!el) return;
   const st = chatScrollOf(props.sessionId);
-  // Re-anchor on genuine user scrolls only: scroll events fired while a
-  // resize is in flight carry a half-applied state (old scrollTop + new
-  // height) that would corrupt the anchor.
-  if (el.clientHeight === st.prevListH) st.anchorBottom = el.scrollTop + el.clientHeight;
   st.sticky = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
   st.top = el.scrollTop;
   // Scroll-up pagination: near the top → load older messages.
@@ -1094,30 +1090,23 @@ onMounted(() => {
   // happens after the resize event, so re-apply the auto-grow height.
   if (isMobile.value) nextTick(autoGrowMobileInput);
   // When the messages area resizes (e.g. the composer grows/shrinks via its
-  // drag handle), keep the bottom edge of the visible text anchored in both
-  // directions: the content moves UP as the area shrinks and DOWN as it
-  // grows (clamped at the scroll bounds, so at-bottom stays at the bottom).
+  // drag handle), keep the view anchored the way the user expects: at the
+  // bottom (sticky) stay pinned to the bottom edge; anywhere else the FIRST
+  // VISIBLE LINE stays put — the browser already preserves scrollTop when an
+  // element resizes, so the top line never moves and no scroll math is
+  // needed. Only the sticky case needs an explicit re-pin: a preserved
+  // scrollTop would otherwise leave the view sitting above the new bottom.
   if (el) {
-    const m = chatScrollOf(props.sessionId);
+    let firstObs = true;
     listObserver = new ResizeObserver(() => {
-      // Keep the content that sits at the viewport's bottom edge anchored
-      // while the messages area resizes. The anchor is a content offset that
-      // only changes on user scrolls, so repeated resizes round-trip exactly
-      // (delta-based shifting accumulated sub-pixel drift).
-      const h = el.clientHeight;
-      if (m.prevListH === 0) {
-        m.anchorBottom = el.scrollTop + h; // first observation: seed the anchor
-      } else if (h !== m.prevListH) {
-        if (m.sticky) {
-          // At the bottom: stay pinned. (Mobile send clears + shrinks the
-          // composer AFTER the scroll, so the anchor math would yank the
-          // view back up by the shrink amount and disarm sticky.)
-          el.scrollTop = el.scrollHeight;
-        } else {
-          el.scrollTop = Math.max(0, Math.min(m.anchorBottom - h, el.scrollHeight - el.clientHeight));
-        }
+      // The first observation only seeds: a session restored mid-scroll can
+      // still carry the default sticky=true at that point and must not be
+      // yanked to the bottom by the mount observation.
+      if (firstObs) {
+        firstObs = false;
+        return;
       }
-      m.prevListH = h;
+      if (sticky()) el.scrollTop = el.scrollHeight;
     });
     listObserver.observe(el);
   }
@@ -1142,9 +1131,9 @@ let listObserver: ResizeObserver | null = null;
 /**
  * Restore a session's remembered scroll position after its content has
  * rendered (session switch or remount). Runs in a nextTick — the content
- * must be in the DOM before the restore can clamp and settle. Re-seeds the
- * resize anchor and re-derives sticky so the restored position behaves as
- * if the user had scrolled there themselves.
+ * must be in the DOM before the restore can clamp and settle. Re-derives
+ * sticky so the restored position behaves as if the user had scrolled
+ * there themselves.
  */
 function restoreScroll(sessionId: string) {
   nextTick(() => {
@@ -1154,8 +1143,6 @@ function restoreScroll(sessionId: string) {
     const max = Math.max(0, el.scrollHeight - el.clientHeight);
     el.scrollTop = Math.min(st.top, max);
     st.sticky = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
-    st.anchorBottom = el.scrollTop + el.clientHeight;
-    st.prevListH = 0; // re-seed the resize anchor
   });
 }
 

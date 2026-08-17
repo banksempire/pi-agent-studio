@@ -1008,6 +1008,30 @@ function removeAttachment(i: number) {
   store.noteChatInteraction(props.sessionId);
 }
 
+// ── iOS virtual-keyboard Shift tracking ────────────────────────────────────
+// Safari's virtual keyboard can report `shiftKey: true` on a Return keydown
+// when its auto-capitalize/shift state is active, with NO real Shift keypress
+// (a plain Return after a newline then looks like Shift+Return and sends in
+// shiftEnter mode). A real Shift+Return ALWAYS fires a keydown 'Shift' first
+// (physical and external keyboards), so shiftKey is trusted only while a real
+// Shift keydown was observed; a short grace window covers press-release-
+// before-Enter sequences. IME-composition Enters (e.g. Japanese/Chinese
+// keyboards) are guarded separately via e.isComposing — Enter-to-confirm a
+// candidate never sends, on any platform.
+let shiftDown = false;
+let lastShiftDown = 0;
+const SHIFT_TRUST_WINDOW = 3000;
+
+function onWindowShiftKey(e: KeyboardEvent) {
+  if (e.key !== 'Shift') return;
+  if (e.type === 'keydown') {
+    shiftDown = true;
+    lastShiftDown = performance.now();
+  } else {
+    shiftDown = false;
+  }
+}
+
 function onKeydown(e: KeyboardEvent) {
   // Picker dialog takes over the keyboard while open.
   if (picker.value) {
@@ -1060,7 +1084,12 @@ function onKeydown(e: KeyboardEvent) {
 
   // Send-key mode (global preference): 'enter' → Enter sends, Shift+Enter
   // newline; 'shiftEnter' → Shift+Enter sends, Enter newline (textarea default).
-  const sendPressed = e.key === 'Enter' && (store.prefs.sendKey === 'enter' ? !e.shiftKey : e.shiftKey);
+  // iOS virtual keyboards may report shiftKey=true without a real Shift
+  // keypress (auto-capitalize state) — trust it only when a real Shift
+  // keydown was observed; IME-composition Enters never send.
+  const realShift = e.shiftKey && (shiftDown || performance.now() - lastShiftDown < SHIFT_TRUST_WINDOW);
+  const sendPressed =
+    e.key === 'Enter' && !e.isComposing && (store.prefs.sendKey === 'enter' ? !realShift : realShift);
   if (sendPressed) {
     e.preventDefault();
     const parsed = parseSlash(input.value);
@@ -1164,6 +1193,10 @@ onMounted(() => {
   }
   inputEl.value?.focus();
   window.addEventListener('resize', onViewportResize);
+  // Capture-phase: a real Shift keydown must be seen regardless of the focus
+  // target (the textarea's own handler only sees keys pressed on it).
+  window.addEventListener('keydown', onWindowShiftKey, true);
+  window.addEventListener('keyup', onWindowShiftKey, true);
   // Mobile layout swaps remount this component (flat tile) — the mount
   // happens after the resize event, so re-apply the auto-grow height.
   if (isMobile.value) nextTick(autoGrowMobileInput);
@@ -1200,6 +1233,8 @@ onUnmounted(() => {
     st.sticky = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
   }
   window.removeEventListener('resize', onViewportResize);
+  window.removeEventListener('keydown', onWindowShiftKey, true);
+  window.removeEventListener('keyup', onWindowShiftKey, true);
   resizeCleanup?.();
   listObserver?.disconnect();
 });

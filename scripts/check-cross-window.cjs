@@ -761,7 +761,9 @@ function makeReporter() {
       );
       const pick = between[0] ?? sashInfo.sashes[0];
       if (!pick) return { ok: false, why: `no sash between windows: ${JSON.stringify(sashInfo)}` };
-      console.log(`  T11 sashInfo wins:${JSON.stringify(sashInfo.wins)} sashes:${JSON.stringify(sashInfo.sashes)} pick:${pick.i}`);
+      console.log(
+        `  T11 sashInfo wins:${JSON.stringify(sashInfo.wins)} sashes:${JSON.stringify(sashInfo.sashes)} pick:${pick.i}`,
+      );
       const dom = await page.evaluate(() => ({
         innerCls: document.querySelector('.sf-workspace-inner')?.className ?? '',
         splits: Array.from(document.querySelectorAll('.sf-split')).map((el) => {
@@ -774,7 +776,10 @@ function makeReporter() {
         }),
         sashEls: Array.from(document.querySelectorAll('.sf-sash')).map((el) => ({
           cls: el.className,
-          r: (() => { const b = el.getBoundingClientRect(); return { x: b.x, y: b.y, w: b.width, h: b.height }; })(),
+          r: (() => {
+            const b = el.getBoundingClientRect();
+            return { x: b.x, y: b.y, w: b.width, h: b.height };
+          })(),
         })),
       }));
       console.log(`  T11 dom ${JSON.stringify(dom)}`);
@@ -832,6 +837,102 @@ function makeReporter() {
       };
     })();
     report('T11 sash resize keeps both windows pinned, first line otherwise', t11.ok, t11.why);
+
+    // ── T12: composer send-key isolation (iOS spurious shiftKey) ──────────
+
+    const t12 = await (async () => {
+      // Repro: in shiftEnter mode, a SECOND plain Enter on iPhone Safari
+      // used to SEND — iOS virtual keyboards can report shiftKey=true on a
+      // Return keydown with no real Shift keypress (auto-capitalize state).
+      // The fix trusts shiftKey only when a real Shift keydown was observed
+      // (window-level tracker); e.isComposing guards IME-confirm Enters.
+      // The positive cases stub fetch at the /api/chat boundary, so the
+      // suite's own pi-nest never runs a real agent.
+      const why = [];
+      const stubChatFetch = () =>
+        page.evaluate(() => {
+          window.__chatPosts = 0;
+          const realFetch = window.fetch.bind(window);
+          window.fetch = (url, init) => {
+            if (typeof url === 'string' && url.includes('/api/chat')) {
+              window.__chatPosts += 1;
+              return Promise.resolve({ ok: true, json: async () => ({}) });
+            }
+            return realFetch(url, init);
+          };
+        });
+      const B_TAB_SEL = '.sf-tab-label:has-text("XWin-B:")';
+      const state = () =>
+        page.evaluate(() => {
+          const label = Array.from(document.querySelectorAll('.sf-tab-label')).find((el) =>
+            el.textContent?.includes('XWin-B:'),
+          );
+          const tile = label?.closest('.sf-tile');
+          const msgs = tile?.querySelector('.chat-messages');
+          return {
+            value: tile?.querySelector('.chat-input')?.value ?? '',
+            rows: msgs ? msgs.querySelectorAll('.chat-msg').length : -1,
+            posts: window.__chatPosts ?? 0,
+          };
+        });
+      const input = page
+        .locator(B_TAB_SEL)
+        .locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " sf-tile ")][1]')
+        .locator('.chat-input');
+      const prime = async (sendKey) => {
+        await page.evaluate((k) => {
+          localStorage.setItem('sf-chat:prefs', JSON.stringify({ sendKey: k, renderMarkdown: true }));
+        }, sendKey);
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await page.waitForSelector('.sf-tab-label:has-text("XWin-B:")', { timeout: 30000 });
+        await page.waitForSelector('.chat-messages', { timeout: 30000 });
+        await delay(3000);
+        await switchTab('XWin-B');
+      };
+
+      // shiftEnter mode: plain Enter = newline, real Shift+Enter = send.
+      await prime('shiftEnter');
+      await stubChatFetch();
+      await input.click({ force: true });
+      await page.keyboard.type('composer-enter-probe');
+      const pre = await state();
+      // 1) plain Enter: newline inserted, nothing sent.
+      await page.keyboard.press('Enter');
+      const c1 = await state();
+      const ok1 = c1.value.includes('\n') && c1.rows === pre.rows && c1.posts === 0;
+      why.push(`plainEnter:${ok1 ? 'ok' : `BAD ${JSON.stringify(c1)}`}`);
+      // 2) iOS-style spurious-shift Enter (no real Shift keydown ever fired).
+      await input.dispatchEvent('keydown', { key: 'Enter', shiftKey: true });
+      const c2 = await state();
+      const ok2 = c2.value === c1.value && c2.rows === pre.rows && c2.posts === 0;
+      why.push(`spuriousShift:${ok2 ? 'ok' : `BAD ${JSON.stringify(c2)}`}`);
+      // 3) real Shift+Enter sends exactly once (optimistic row + stubbed post).
+      await page.keyboard.down('Shift');
+      await page.keyboard.press('Enter');
+      await page.keyboard.up('Shift');
+      await delay(800);
+      const c3 = await state();
+      const ok3 = c3.value === '' && c3.rows === pre.rows + 1 && c3.posts === 1;
+      why.push(`realShiftEnter:${ok3 ? 'ok' : `BAD ${JSON.stringify(c3)}`}`);
+
+      // 'enter' mode: a spurious-shift Enter must SEND (trusted as plain Enter).
+      await prime('enter');
+      await stubChatFetch();
+      await input.click({ force: true });
+      await page.keyboard.type('composer-enter-probe-2');
+      const e0 = await state();
+      await input.dispatchEvent('keydown', { key: 'Enter', shiftKey: true });
+      await delay(800);
+      const e1 = await state();
+      const ok4 = e1.value === '' && e1.rows === e0.rows + 1 && e1.posts === 1;
+      why.push(`enterModeSpurious:${ok4 ? 'ok' : `BAD ${JSON.stringify(e1)}`}`);
+      // Leave the page clean: the reload drops the fetch stub (nothing after
+      // this uses the page's network stack).
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('.sf-tab-label:has-text("XWin-B:")', { timeout: 30000 });
+      return { ok: ok1 && ok2 && ok3 && ok4, why: why.join(' | ') };
+    })();
+    report('T12 composer send-key isolation (iOS spurious shiftKey, both modes)', t12.ok, t12.why);
 
     // ── Summary ────────────────────────────────────────────────────────────
 

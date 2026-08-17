@@ -1293,6 +1293,9 @@ function exitReview() {
     def.transient = false;
   }
   state.reviewTabId = null;
+  // The transient flip alone would not re-capture the workspace (auto-save
+  // fires on TREE changes) — nudge a persist so the pin survives a reload.
+  scheduleWindowPersist();
 }
 
 /**

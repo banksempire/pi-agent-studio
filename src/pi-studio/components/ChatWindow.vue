@@ -843,6 +843,8 @@ async function onFilesChosen(e: Event) {
   const el = e.target as HTMLInputElement | null;
   const files = el?.files ? Array.from(el.files) : [];
   if (el) el.value = ''; // re-picking the same file re-fires change
+  // Attaching an image is a real interaction: pin a review window.
+  if (files.length) store.noteChatInteraction(props.sessionId);
   for (const f of files) {
     if (attachments.value.length >= 4) {
       store.setLastError('At most 4 images per message.');
@@ -860,6 +862,7 @@ async function onFilesChosen(e: Event) {
 
 function removeAttachment(i: number) {
   attachments.value.splice(i, 1);
+  store.noteChatInteraction(props.sessionId);
 }
 
 function onKeydown(e: KeyboardEvent) {

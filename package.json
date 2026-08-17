@@ -12,7 +12,8 @@
     "typecheck": "vue-tsc --noEmit",
     "nest": "node src/pi-nest/src/index.mjs",
     "lint": "biome check .",
-    "format": "biome format --write ."
+    "format": "biome format --write .",
+    "check:crosswin": "node scripts/check-cross-window.cjs"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.10.0",
@@ -24,6 +25,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.8",
     "@vitejs/plugin-vue": "^6.0.8",
+    "playwright": "^1.62.1",
     "typescript": "^5.7.0",
     "vite": "^6.0.0",
     "vue-tsc": "^3.3.9"

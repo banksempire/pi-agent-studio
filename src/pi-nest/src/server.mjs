@@ -19,6 +19,42 @@ const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
   defaults: true,
   oneofs: true,
 });
+
+// Image-attachment limits (mirror the gateway's /api/chat validation so
+// the daemon stays a safe boundary for direct gRPC callers): at most 4
+// images, image/* mime only, ≤8 MiB binary each (base64 ≈ 4/3, plus a
+// little slack for the JSON envelope when parsed).
+const MAX_IMAGES = 4;
+const MAX_IMAGE_BASE64 = 11_200_000;
+const MAX_IMAGES_JSON = 50_000_000;
+
+/**
+ * Parse the images_json envelope into [{ mimeType, data }] attachments.
+ * Degrades to [] on malformed input; drops non-image mimes, empty data,
+ * oversized payloads, and anything past MAX_IMAGES (mirroring the
+ * gateway's /api/chat validation).
+ */
+export function parseImagesJson(json) {
+  if (typeof json !== 'string' || !json || json.length > MAX_IMAGES_JSON) return [];
+  try {
+    const parsed = JSON.parse(json);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (i) =>
+          i &&
+          typeof i.data === 'string' &&
+          i.data.length > 0 &&
+          i.data.length <= MAX_IMAGE_BASE64 &&
+          typeof i.mimeType === 'string' &&
+          i.mimeType.startsWith('image/'),
+      )
+      .slice(0, MAX_IMAGES);
+  } catch {
+    return [];
+  }
+}
+
 const piNest = grpc.loadPackageDefinition(packageDefinition).pi_nest;
 
 export function createServer({ registry = new AgentRegistry(), onStateChange: _onStateChange } = {}) {
@@ -62,20 +98,10 @@ export function createServer({ registry = new AgentRegistry(), onStateChange: _o
           kind: 'message',
         });
         // Image attachments ride as a JSON array of { mimeType, data }
-        // (base64). Malformed payloads degrade to a text-only prompt.
-        let images = [];
-        if (call.request.imagesJson) {
-          try {
-            const parsed = JSON.parse(call.request.imagesJson);
-            if (Array.isArray(parsed)) {
-              images = parsed.filter(
-                (i) => i && typeof i.data === 'string' && i.data && typeof i.mimeType === 'string',
-              );
-            }
-          } catch {
-            /* text-only */
-          }
-        }
+        // (base64). Malformed or oversized payloads degrade to a text-only
+        // prompt — the imagesJson envelope itself is also capped so a huge
+        // string never reaches JSON.parse.
+        const images = parseImagesJson(call.request.imagesJson);
         await registry.prompt(call.request.agentId, call.request.message, {
           interrupt: call.request.interrupt !== false,
           images,

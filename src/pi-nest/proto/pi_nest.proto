@@ -70,7 +70,9 @@ message PromptRequest {
   // can match "backend received this" before the long-running op completes.
   string req_id = 4;
   // JSON array of image attachments: [{ "mimeType": "image/png", "data": "<base64>" }].
-  // Empty/absent = text-only prompt.
+  // Empty/absent = text-only prompt. Limits enforced by the daemon: ≤4
+  // images, image/* mime only, ≤8 MiB binary each — malformed or oversized
+  // payloads degrade to a text-only prompt.
   string images_json = 5;
 }
 message PromptResponse { bool ok = 1; string error = 2; }

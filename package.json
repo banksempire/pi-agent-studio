@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 7492",
-    "server": "node src/pi-studio/server/index.mjs",
+    "server": "node --heapsnapshot-near-heap-limit=2 src/pi-studio/server/index.mjs",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",

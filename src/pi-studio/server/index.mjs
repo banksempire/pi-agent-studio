@@ -20,6 +20,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { getHeapStatistics } from 'node:v8';
 import { createClient, waitForNest } from '../../pi-nest/src/client.mjs';
 
 const PORT = Number(process.env.PI_STUDIO_PORT ?? 7493);
@@ -591,6 +592,7 @@ async function reloadSessionCache(file, st, cached) {
           mtime: st.mtimeMs,
           size: st.size,
           pendingRaw: '',
+          bytes: Buffer.byteLength(content),
           entries,
           ...deriveSession(entries, st),
         };
@@ -605,6 +607,9 @@ async function reloadSessionCache(file, st, cached) {
           mtime: st.mtimeMs,
           size: st.size, // partial-line bytes are held in pendingRaw, not re-read
           pendingRaw,
+          // Raw-footprint accounting for the memory watchdog: the appended
+          // chunk is the only bytes added (pendingRaw was already counted).
+          bytes: (cached.bytes ?? 0) + Buffer.byteLength(appended),
           entries,
           ...deriveSession(entries, st),
         };
@@ -618,6 +623,7 @@ async function reloadSessionCache(file, st, cached) {
     mtime: st.mtimeMs,
     size: st.size,
     pendingRaw: '',
+    bytes: Buffer.byteLength(content),
     entries,
     ...deriveSession(entries, st),
   };
@@ -1186,7 +1192,26 @@ const server = createServer(async (req, res) => {
       } catch {
         /* nest down */
       }
-      sendJson(res, 200, { ok: true, nest });
+      const s = memorySnapshot();
+      sendJson(res, 200, {
+        ok: true,
+        nest,
+        mem: {
+          rss: s.rss,
+          heapUsed: s.heapUsed,
+          heapLimit: s.heapLimit,
+          external: s.external,
+          arrayBuffers: s.arrayBuffers,
+        },
+        cache: {
+          files: s.cacheFileCount,
+          entries: s.cacheEntryCount,
+          bytes: s.cacheBytes,
+          heaviest: s.heaviestFiles,
+        },
+        sseClients: s.sseClients,
+        refreshTimers: s.refreshTimers,
+      });
       return;
     }
 
@@ -1201,6 +1226,80 @@ const server = createServer(async (req, res) => {
     sendJson(res, 500, { error: String(e?.message ?? e) });
   }
 });
+
+// ── Memory & cache observability (OOM forensics) ──────────────────────────
+// The session parse cache is the only unbounded resident here: every session
+// file ever analyzed keeps its parsed entries + derived messages until it
+// vanishes. A periodic snapshot logs what is resident (and which session
+// files dominate) so that when an OOM happens the log tail shows exactly how
+// it got there. The process should ALSO be started with
+// --heapsnapshot-near-heap-limit=2 so a real heap OOM leaves a .heapsnapshot
+// artifact in the CWD; the RSS warning below is the complement for the case
+// the OS killer strikes before V8's own heap limit (cgroup/RSS OOMs never
+// reach Node code, so only the periodic RSS line can catch those).
+
+const MB = 1024 * 1024;
+function fmtBytes(n) {
+  return n >= MB ? `${(n / MB).toFixed(1)}MB` : `${Math.round(n / 1024)}KB`;
+}
+
+function memorySnapshot() {
+  const mu = process.memoryUsage();
+  const hs = getHeapStatistics();
+  let cacheFileCount = 0;
+  let cacheEntryCount = 0;
+  let cacheBytes = 0;
+  const files = [];
+  for (const [file, c] of sessionParseCache) {
+    cacheFileCount++;
+    cacheEntryCount += c.entries.length;
+    cacheBytes += c.bytes ?? 0;
+    files.push({ file, bytes: c.bytes ?? 0, entries: c.entries.length });
+  }
+  files.sort((a, b) => b.bytes - a.bytes);
+  return {
+    rss: mu.rss,
+    heapUsed: mu.heapUsed,
+    heapLimit: hs.heap_size_limit,
+    external: mu.external,
+    arrayBuffers: mu.arrayBuffers,
+    cacheFileCount,
+    cacheEntryCount,
+    cacheBytes,
+    sseClients: clients.size,
+    refreshTimers: refreshTimers.size,
+    modelWindows: modelWindows.size,
+    heaviestFiles: files.slice(0, 5).map((f) => ({
+      file: `${path.basename(path.dirname(f.file))}/${path.basename(f.file)}`,
+      bytes: f.bytes,
+      entries: f.entries,
+    })),
+  };
+}
+
+function logMemoryState(label) {
+  const s = memorySnapshot();
+  const heapPct = Math.round((s.heapUsed / s.heapLimit) * 100);
+  const rssPct = Math.round((s.rss / os.totalmem()) * 100);
+  const line =
+    `[mem:${label}] rss=${fmtBytes(s.rss)} (${rssPct}%) ` +
+    `heap=${fmtBytes(s.heapUsed)}/${fmtBytes(s.heapLimit)} (${heapPct}%) ` +
+    `ext=${fmtBytes(s.external)} arrBuf=${fmtBytes(s.arrayBuffers)} ` +
+    `cacheFiles=${s.cacheFileCount} cacheEntries=${s.cacheEntryCount} ` +
+    `cacheBytes=${fmtBytes(s.cacheBytes)} sse=${s.sseClients} ` +
+    `refreshTimers=${s.refreshTimers} catalog=${s.modelWindows}`;
+  if (heapPct >= 85 || rssPct >= 80) {
+    console.error(
+      `${line}\n  WARNING: heap/RSS near ceiling — heaviest cached sessions:` +
+        s.heaviestFiles.map((f) => `\n    ${f.file} ${fmtBytes(f.bytes)} (${f.entries} entries)`).join(''),
+    );
+  } else {
+    console.log(line);
+  }
+}
+
+// One line per minute is cheap and makes the log tail a post-mortem record.
+setInterval(() => logMemoryState('tick'), 60_000);
 
 // Heartbeat keeps SSE connections alive through proxies.
 const _heartbeat = setInterval(() => {
@@ -1257,6 +1356,7 @@ void watchSessionFiles().then(() => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
+  logMemoryState('boot');
   console.log(`pi-agent-studio backend on 0.0.0.0:${PORT} (gateway → pi-nest)`);
   console.log(`sessions: ${SESSIONS_ROOT}`);
   console.log(`new chats cwd: ${NEW_CHAT_CWD}`);

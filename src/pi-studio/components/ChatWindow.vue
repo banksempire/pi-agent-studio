@@ -731,6 +731,20 @@ const pickerIndex = ref(0);
 /** Image review overlay: the clicked message's images + start index. */
 const review = ref<{ images: MessageImage[]; start: number } | null>(null);
 
+/**
+ * Whole-composer block reason: when the input panel as a whole must be
+ * non-interactive (ANY reason — e.g. its session no longer exists after a
+ * list refresh dropped the file), the panel is NOT restructured: the
+ * controls are never disabled one by one (which would push the others
+ * around and squeeze them to the side). Instead a blocking banner is
+ * layered ON TOP of all controlling elements, and every interaction with
+ * the panel is swallowed by that banner. Returns '' when usable.
+ */
+const composerBlock = computed(() => {
+  if (!session.value) return 'Session not found — this window can no longer send messages.';
+  return '';
+});
+
 /** The banner text for THIS window: its own session-scoped error, or a
  *  list-level error (rename/delete…) shown only in the active window —
  *  never in every window at once. */
@@ -1436,6 +1450,7 @@ watch(
             <button
               class="chat-attach-remove"
               :title="'Remove attachment ' + (i + 1)"
+              :disabled="!!composerBlock"
               @click="removeAttachment(i)"
             ><SvgIcon name="✕" /></button>
           </div>
@@ -1446,6 +1461,7 @@ watch(
           v-model="input"
           class="chat-input"
           rows="1"
+          :disabled="!!composerBlock"
           :style="!isMobile && manualHeight !== null ? { height: manualHeight + 'px', maxHeight: manualHeight + 'px' } : {}"
           @keydown="onKeydown"
           @input="onComposerInput"
@@ -1456,18 +1472,19 @@ watch(
             class="chat-context"
             :class="contextClass"
             :title="contextTitle"
-            :disabled="session?.compacting"
+            :disabled="!!composerBlock || session?.compacting"
             @click="compactContext"
           >{{ contextDisplay }}</button>
           <button
             class="chat-scroll-btn"
             title="Scroll to bottom"
+            :disabled="!!composerBlock"
             @click="scrollToBottomNow"
           ><SvgIcon name="↓" /></button>
           <button
             class="chat-image-btn"
             :title="attachments.length ? `Attach another image (${attachments.length}/4)` : 'Attach an image to send with your message'"
-            :disabled="attachments.length >= 4"
+            :disabled="!!composerBlock || attachments.length >= 4"
             @click="pickImages"
           ><SvgIcon name="🖼" /></button>
           <input
@@ -1480,9 +1497,22 @@ watch(
           />
           <button
             class="chat-send-btn"
-            :disabled="!input.trim() && !attachments.length"
+            :disabled="!!composerBlock || (!input.trim() && !attachments.length)"
             @click="send"
           >Send</button>
+        </div>
+
+        <!-- Whole-panel block: when the composer as a whole must be
+             non-interactive (ANY reason), a blocking banner sits ON TOP of
+             all the controlling elements above — the textarea, the attach
+             row, the action buttons, even the resize handle — and blocks
+             interaction with them. The panel is never restructured: nothing
+             is pushed to the side or squeezed; the banner simply covers the
+             controls and intercepts every click/keypress. -->
+        <div v-if="composerBlock" class="chat-composer-block" role="alert">
+          <div class="chat-composer-block-banner">
+            <SvgIcon name="⚠" /> {{ composerBlock }}
+          </div>
         </div>
     </div>
 

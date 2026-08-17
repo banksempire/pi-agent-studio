@@ -630,6 +630,104 @@ function makeReporter() {
     })();
     report('T5 split-tile windows scroll independently', t5.ok, t5.why);
 
+    // ── T10: a window whose session vanished blocks the composer on top ───
+
+    const t10 = await (async () => {
+      // A session deleted from disk while its window stays open drops out of
+      // the list on the next refresh. The composer must not keep looking
+      // interactive (send would silently no-op): the whole input panel is
+      // blocked by a banner ON TOP of all its controls — never by pushing
+      // the controls to the side. Other windows keep their composers.
+      await switchTab('XWin-E');
+      await delay(600);
+      const before = await page.evaluate(() => ({
+        blocks: document.querySelectorAll('.chat-composer-block').length,
+        inputDisabled: document.querySelectorAll('.chat-window .chat-input')[0]?.disabled ?? null,
+      }));
+      // Delete E's session file; write a fresh session file so the backend
+      // file watcher emits a refresh (deletion alone is not detected), which
+      // makes the frontend re-fetch the list and drop E.
+      const eFile = fs.readdirSync(TEST_SESSIONS_DIR).find((f) => f.includes('xwin-e-'));
+      if (!eFile) return { ok: false, why: 'no xwin-e file on disk' };
+      fs.rmSync(path.join(TEST_SESSIONS_DIR, eFile));
+      const uid = () => `019f${Math.random().toString(16).slice(2, 14)}`;
+      const freshId = uid();
+      const freshLines = [
+        JSON.stringify({
+          type: 'session',
+          version: 3,
+          id: freshId,
+          parentId: null,
+          timestamp: new Date().toISOString(),
+          cwd: TEST_CWD,
+        }),
+        JSON.stringify({
+          type: 'message',
+          id: 't10-u1',
+          parentId: freshId,
+          timestamp: new Date().toISOString(),
+          message: {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'XWin-T10: fresh trigger session — padding for a taller row '.repeat(6) },
+            ],
+            timestamp: Date.now(),
+          },
+        }),
+      ];
+      fs.writeFileSync(
+        path.join(TEST_SESSIONS_DIR, `2026-08-10T00-00-00-040Z_xwin-t10-${uid()}.jsonl`),
+        `${freshLines.join('\n')}\n`,
+      );
+      // Backend watcher polls every 2s; frontend re-fetches on the SSE
+      // refresh and drops E.
+      await delay(6000);
+      const blocked = await page.evaluate(() => {
+        const win = document.querySelector('.chat-window');
+        const block = win?.querySelector('.chat-composer-block');
+        const input = win?.querySelector('.chat-input');
+        const send = win?.querySelector('.chat-send-btn');
+        const scroll = win?.querySelector('.chat-scroll-btn');
+        const img = win?.querySelector('.chat-image-btn');
+        return {
+          blockText: block?.textContent?.trim() ?? '',
+          inputDisabled: input?.disabled ?? null,
+          sendDisabled: send?.disabled ?? null,
+          scrollDisabled: scroll?.disabled ?? null,
+          imgDisabled: img?.disabled ?? null,
+        };
+      });
+      const blockOk =
+        blocked.blockText.length > 0 &&
+        blocked.inputDisabled &&
+        blocked.sendDisabled &&
+        blocked.scrollDisabled &&
+        blocked.imgDisabled;
+      // Other windows (the split tile, e.g. B) must keep a usable composer.
+      await switchTab('XWin-B');
+      const other = await page.evaluate(() => {
+        // Two tiles are mounted side by side: inspect EVERY window instead
+        // of the first in DOM order (E's window may precede B's).
+        const wins = Array.from(document.querySelectorAll('.chat-window'));
+        const blocked = wins.filter((w) => w.querySelector('.chat-composer-block'));
+        const usable = wins.filter((w) => {
+          const input = w.querySelector('.chat-input');
+          return !w.querySelector('.chat-composer-block') && input && !input.disabled;
+        });
+        return { blocked: blocked.length, usable: usable.length, total: wins.length };
+      });
+      return {
+        ok:
+          before.blocks === 0 &&
+          before.inputDisabled === false &&
+          blockOk &&
+          other.blocked === 1 &&
+          other.usable >= 1,
+        why: `E before{blocks:${before.blocks},input:${before.inputDisabled}} E blocked{banner:${JSON.stringify(blocked.blockText)},input:${blocked.inputDisabled},send:${blocked.sendDisabled},scroll:${blocked.scrollDisabled},img:${blocked.imgDisabled}} windows{total:${other.total},blocked:${other.blocked},usable:${other.usable}}`,
+      };
+    })();
+    report('T10 vanished session blocks the composer with a banner on top', t10.ok, t10.why);
+
     // ── Summary ────────────────────────────────────────────────────────────
 
     if (errors.length) console.log(`page errors: ${errors.join(' | ')}`);

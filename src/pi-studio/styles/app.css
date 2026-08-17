@@ -649,6 +649,39 @@
   gap: 8px;
 }
 
+/* Whole-panel block: when the composer as a whole must be non-interactive
+   (for ANY reason — e.g. its session no longer exists), a blocking banner
+   sits ON TOP of all the controlling elements (textarea, attach chips,
+   buttons, resize handle) and blocks interaction with them. The panel is
+   never restructured — nothing is pushed to the side or squeezed; the
+   banner simply covers the controls and intercepts every interaction.
+   One step above the drag handle (z 2) and the completions popup (z 30),
+   below the picker backdrop (z 40) so dialogs still layer above it. */
+.chat-composer-block {
+  position: absolute;
+  inset: 0;
+  z-index: 35;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  background: color-mix(in srgb, var(--sf-control) 88%, transparent);
+  cursor: not-allowed;
+}
+.chat-composer-block-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: var(--sf-bg-lighter);
+  border: 1px solid var(--sf-border);
+  border-radius: 6px;
+  color: var(--sf-status-warn);
+  font-size: 16px;
+  box-shadow: var(--sf-shadow);
+  max-width: 100%;
+}
+
 /* Pending image attachments: thumbnail chips above the input box. */
 .chat-attach-row {
   display: flex;

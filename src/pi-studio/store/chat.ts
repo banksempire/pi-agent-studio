@@ -1150,8 +1150,17 @@ export function bindWorkspace(api: WorkspaceApi) {
   void fetchList().then(() => {
     if (firstBind) {
       firstBind = false;
-      // Show the most recent real conversation on first launch.
-      if (state.sessions.length > 0) openChat(state.sessions[0].id);
+      // FIRST LAUNCH only — no persisted auto-layout yet: show the most
+      // recent conversation and PIN it (a preview-style review window
+      // would drop out of the next auto-save and vanish on reload). On
+      // every reload the browser-cached workspace is authoritative —
+      // re-opening windows (e.g. a transient "New Chat" review window the
+      // snapshot excluded) would change the workspace state the user left
+      // behind.
+      if (!hasPersistedLayout() && state.sessions.length > 0) {
+        openChat(state.sessions[0].id);
+        exitReview();
+      }
     }
     reconcileGhostWindows();
   });
@@ -1159,6 +1168,22 @@ export function bindWorkspace(api: WorkspaceApi) {
   // Periodic refresh picks up sessions created outside the UI (e.g. TUI).
   if (listTimer === null) {
     listTimer = window.setInterval(() => void fetchList(), 15000);
+  }
+}
+
+/** Does the framework's auto-layout snapshot exist in browser storage?
+ *  Mirrors the framework's own validity check (AUTO_KEY
+ *  'sf.workspace.layout', version 1, roots array). Its presence means the
+ *  workspace has been used before — reloads must restore it verbatim and
+ *  must NOT auto-open windows. */
+function hasPersistedLayout(): boolean {
+  try {
+    const raw = localStorage.getItem('sf.workspace.layout');
+    if (!raw) return false;
+    const snap = JSON.parse(raw);
+    return !!(snap && snap.version === 1 && Array.isArray(snap.roots));
+  } catch {
+    return false;
   }
 }
 

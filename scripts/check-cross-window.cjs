@@ -31,14 +31,16 @@
  *    re-anchor the view a page away).
  *  - T14 held-finger top bounce: loading older must pin the finger-held
  *    row at 0px — the older page appends to the HEAD while the previously
- *    loaded content does not move. With a REAL touch gesture (pointer
- *    events) the page is not even committed while the finger is down at
- *    the origin (a JS scrollTop write is clobbered by the gesture
- *    controller and native anchoring is suppressed at scrollTop==0 — the
- *    reported flick-to-top + re-trigger); it lands once the top edge goes
- *    quiet, with 0px drift and the position left out of the <80 trigger
- *    zone. Away from the origin the exact anchor-part restore (scoped
- *    native anchoring included) covers the scrollTop==0 edge.
+ *    loaded content does not move. With a REAL held finger (touch events;
+ *    iOS Safari fires no pointer events for scroll gestures, and a finger
+ *    held still at the overscrolled top emits no scroll events either) the
+ *    page is not even committed while the finger is down at the origin (a
+ *    JS scrollTop write is clobbered by the gesture controller and native
+ *    anchoring is suppressed at scrollTop==0 — the reported flick-to-top +
+ *    re-trigger loop); it lands once the finger lifts, with 0px drift and
+ *    the position left out of the <80 trigger zone. Away from the origin
+ *    the exact anchor-part restore (scoped native anchoring included)
+ *    covers the scrollTop==0 edge.
  *
  * Runs its own three-service stack (pi-nest + gateway + vite) on free
  * ports (override with XWIN_NEST_PORT / XWIN_BACKEND_PORT / XWIN_VITE_PORT)
@@ -1088,11 +1090,11 @@ function makeReporter() {
       // Phase 1 (desktop / quiet top): exactly ONE before= fetch from the
       // crossing + scroll burst, the pinned row at 0px drift, position out
       // of the <80 trigger zone.
-      // Phase 2 (real touch gesture): the page is NOT committed while the
-      // finger is held at the origin (0px movement — the store's message
-      // list does not even grow); on pointerup the page commits once, the
-      // finger-held row lands at the SAME viewport offset, and the position
-      // leaves the trigger zone.
+      // Phase 2 (real held finger, touch events): the page is NOT committed
+      // while the finger is held at the origin (0px movement — the store's
+      // message list does not even grow); on touchend the page commits once,
+      // the finger-held row lands at the SAME viewport offset, and the
+      // position leaves the trigger zone.
       await switchTab('XWin-A');
       const aTile = page
         .locator('.sf-tab-label:has-text("XWin-A:")')
@@ -1164,11 +1166,15 @@ function makeReporter() {
       const leftZone1 = pos1.top >= 80;
       const phase1Ok = olderFetches === 1 && pinned1 && leftZone1;
 
-      // ── Phase 2: a REAL held finger (pointer events) ───────────────────
+      // ── Phase 2: a REAL held finger (touch events) ────────────────────
 
       // A now shows 100 messages (phase 1 loaded one page); the next older
       // page takes it to 110. While the finger is held at the origin the
       // message list must not even grow — the page waits for the gesture.
+      // Touch events (not pointer events): iOS Safari dispatches NO pointer
+      // events for scroll gestures, and a finger held STILL at the
+      // overscrolled top emits no scroll events either — the touch count is
+      // the only signal that the finger is still down.
       let touchFetches = 0;
       const routeTouch = async (route) => {
         const url = route.request().url();
@@ -1179,15 +1185,14 @@ function makeReporter() {
         await route.continue();
       };
       await page.route('**/api/sessions/messages*', routeTouch);
-      // Mid-list, then put the finger DOWN on the list and cross to the top.
+      // Mid-list, then put the finger DOWN on the list and cross to the top
+      // (no further scroll events while "held" — a still finger emits none).
       await aList.evaluate((el) => {
         el.scrollTop = Math.round((el.scrollHeight - el.clientHeight) * 0.4);
       });
       await delay(400);
       await aList.evaluate((el) => {
-        el.dispatchEvent(
-          new PointerEvent('pointerdown', { pointerType: 'touch', pointerId: 1, bubbles: true }),
-        );
+        el.dispatchEvent(new TouchEvent('touchstart', { bubbles: true }));
       });
       await aList.evaluate((el) => {
         el.scrollTop = 0; // crossing → loadOlder fires
@@ -1196,24 +1201,16 @@ function makeReporter() {
       const heldBefore = await heldRow();
       const rowsWhileLoading = await rows();
       // Let the fetch finish while the finger is STILL down at the origin
-      // (~600ms wire delay). The commit must NOT land: rows stay at 100 and
+      // (~600ms wire delay). The commit must NOT land — neither the 200ms
+      // quiet timer nor anything else may flush it: rows stay at 100 and
       // the held row does not move 1px.
       await delay(750);
       const rowsHeld = await rows();
       const heldDuring = await heldRow();
-      // Held-finger jitter while the page waits for the gesture to end.
-      for (let i = 0; i < 6; i++) {
-        await aList.evaluate((el) => {
-          el.dispatchEvent(new Event('scroll'));
-        });
-        await delay(110);
-      }
-      // Finger up: the page commits once the top edge is quiet (~200ms
-      // after the last bounce event), then the exact anchor restore re-pins.
+      // Finger up: the gesture controller releases scrollTop, the held page
+      // commits, and the exact anchor restore re-pins the held row.
       await aList.evaluate((el) => {
-        el.dispatchEvent(
-          new PointerEvent('pointerup', { pointerType: 'touch', pointerId: 1, bubbles: true }),
-        );
+        el.dispatchEvent(new TouchEvent('touchend', { bubbles: true }));
       });
       await delay(900);
       const rowsAfter = await rows();

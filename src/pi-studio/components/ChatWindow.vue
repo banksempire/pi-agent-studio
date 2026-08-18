@@ -185,10 +185,19 @@ let sepJumpAt = 0;
  * already-loaded row while the user's finger is still there. The fix (per
  * the user's prescription — "append older content on top of previously
  * loaded content without moving 1px of it"): the fetched older page is NOT
- * committed while the top edge is in any way active — pointer down, or
+ * committed while the top edge is in any way active — finger down, or
  * momentum still bouncing at the origin. The prepend + exact anchor-part
  * restore happen when the edge is quiet (finger up, no scroll events for a
  * beat), where the JS write sticks.
+ *
+ * The 'finger is down' signal MUST come from TOUCH events: iOS Safari
+ * dispatches no pointer events for scroll gestures (taps only) and sends
+ * pointercancel the moment it takes the gesture over — a pointer-based
+ * count drops to zero while the finger is still down, and a finger held
+ * still at the overscrolled top emits no scroll events either, so the
+ * quiet heuristic alone would commit under the still-held finger. Touch
+ * events stay alive for the whole gesture (touchstart → touchend), so the
+ * count rides the finger until it really lifts.
  */
 let touchDownCount = 0;
 /** The most recent scroll event that arrived while in the <80 top zone. */
@@ -219,16 +228,16 @@ function topEdgeActive(el: HTMLElement) {
   return el.scrollTop < 80 && (touchDownCount > 0 || performance.now() - lastTopScrollAt < 200);
 }
 
-function onListPointerDown(e: PointerEvent) {
-  if (e.pointerType === 'touch' || e.pointerType === 'pen') touchDownCount += 1;
+function onTouchStart() {
+  touchDownCount += 1;
 }
 
-function onListPointerUp(e: PointerEvent) {
-  if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
+function onTouchEnd() {
   touchDownCount = Math.max(0, touchDownCount - 1);
-  // Finger up: a held page can commit — UNLESS the engine's momentum is
-  // still bouncing at the origin (a flick keeps the position owned after
-  // the finger lifts); the quiet timer then commits when it settles.
+  // Finger definitively up: a held page can commit — UNLESS the engine's
+  // momentum is still bouncing at the origin (a flick keeps the position
+  // owned after the finger lifts); the quiet timer then commits when it
+  // settles.
   const el = listEl.value;
   if (heldOlder && el && !topEdgeActive(el)) flushHeldOlder();
 }
@@ -1382,11 +1391,13 @@ onMounted(() => {
   // target (the textarea's own handler only sees keys pressed on it).
   window.addEventListener('keydown', onWindowShiftKey, true);
   window.addEventListener('keyup', onWindowShiftKey, true);
-  // Touch gesture bookkeeping for old-page commits (see onListPointerDown):
-  // while the finger is down the gesture controller owns scrollTop.
-  el?.addEventListener('pointerdown', onListPointerDown);
-  el?.addEventListener('pointerup', onListPointerUp);
-  el?.addEventListener('pointercancel', onListPointerUp);
+  // Touch gesture bookkeeping for old-page commits (see onTouchStart). iOS
+  // Safari dispatches NO pointer events for scroll gestures (taps only), so
+  // the touch events are the reliable 'finger is down' signal the hold
+  // decision depends on.
+  el?.addEventListener('touchstart', onTouchStart);
+  el?.addEventListener('touchend', onTouchEnd);
+  el?.addEventListener('touchcancel', onTouchEnd);
   // Mobile layout swaps remount this component (flat tile) — the mount
   // happens after the resize event, so re-apply the auto-grow height.
   if (isMobile.value) nextTick(autoGrowMobileInput);
@@ -1436,9 +1447,9 @@ onUnmounted(() => {
   window.removeEventListener('resize', onViewportResize);
   window.removeEventListener('keydown', onWindowShiftKey, true);
   window.removeEventListener('keyup', onWindowShiftKey, true);
-  el?.removeEventListener('pointerdown', onListPointerDown);
-  el?.removeEventListener('pointerup', onListPointerUp);
-  el?.removeEventListener('pointercancel', onListPointerUp);
+  el?.removeEventListener('touchstart', onTouchStart);
+  el?.removeEventListener('touchend', onTouchEnd);
+  el?.removeEventListener('touchcancel', onTouchEnd);
   resizeCleanup?.();
   listObserver?.disconnect();
 });

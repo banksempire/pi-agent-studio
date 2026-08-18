@@ -29,18 +29,17 @@
  *    row right below it (never clipped under the sticky bar), and the
  *    jump's own near-top scroll must not trigger loadOlder (which would
  *    re-anchor the view a page away).
- *  - T14 held-finger top bounce: loading older must pin the finger-held
- *    row at 0px — the older page appends to the HEAD while the previously
- *    loaded content does not move. With a REAL held finger (touch events;
- *    iOS Safari fires no pointer events for scroll gestures, and a finger
- *    held still at the overscrolled top emits no scroll events either) the
- *    page is not even committed while the finger is down at the origin (a
- *    JS scrollTop write is clobbered by the gesture controller and native
- *    anchoring is suppressed at scrollTop==0 — the reported flick-to-top +
- *    re-trigger loop); it lands once the finger lifts, with 0px drift and
- *    the position left out of the <80 trigger zone. Away from the origin
- *    the exact anchor-part restore (scoped native anchoring included)
- *    covers the scrollTop==0 edge.
+ *  - T14 held-finger top bounce: on a touch device the older page loads
+ *    ONLY after the finger releases — never during the gesture (the
+ *    gesture controller owns scrollTop and native anchoring is suppressed
+ *    at scrollTop==0, so a mid-gesture load could not pin the loaded row:
+ *    the reported flick-to-top + re-trigger loop). With a REAL held finger
+ *    (touch events; iOS Safari fires no pointer events for scroll
+ *    gestures) zero before= fetches start while the finger is down and the
+ *    list does not move 1px; on touchend exactly one fetch lands with 0px
+ *    drift and the position left out of the <80 trigger zone. Away from
+ *    the origin the exact anchor-part restore (scoped native anchoring
+ *    included) covers the scrollTop==0 edge.
  *
  * Runs its own three-service stack (pi-nest + gateway + vite) on free
  * ports (override with XWIN_NEST_PORT / XWIN_BACKEND_PORT / XWIN_VITE_PORT)
@@ -1090,11 +1089,11 @@ function makeReporter() {
       // Phase 1 (desktop / quiet top): exactly ONE before= fetch from the
       // crossing + scroll burst, the pinned row at 0px drift, position out
       // of the <80 trigger zone.
-      // Phase 2 (real held finger, touch events): the page is NOT committed
-      // while the finger is held at the origin (0px movement — the store's
-      // message list does not even grow); on touchend the page commits once,
-      // the finger-held row lands at the SAME viewport offset, and the
-      // position leaves the trigger zone.
+      // Phase 2 (real held finger, touch events): ZERO loads may start
+      // while the finger is held at the origin (0px movement — the list
+      // does not even grow); on touchend exactly one page loads, the
+      // finger-held row lands at the SAME viewport offset, and the position
+      // leaves the trigger zone.
       await switchTab('XWin-A');
       const aTile = page
         .locator('.sf-tab-label:has-text("XWin-A:")')
@@ -1168,13 +1167,12 @@ function makeReporter() {
 
       // ── Phase 2: a REAL held finger (touch events) ────────────────────
 
-      // A now shows 100 messages (phase 1 loaded one page); the next older
-      // page takes it to 110. While the finger is held at the origin the
-      // message list must not even grow — the page waits for the gesture.
-      // Touch events (not pointer events): iOS Safari dispatches NO pointer
-      // events for scroll gestures, and a finger held STILL at the
-      // overscrolled top emits no scroll events either — the touch count is
-      // the only signal that the finger is still down.
+      // The touch contract (per the user): the older page is loaded ONLY
+      // after the finger is released. While the finger is down at the
+      // origin, ZERO before= fetches may start; on touchend exactly one
+      // fetch starts, lands pinned (0px drift), and leaves the position out
+      // of the <80 trigger zone. Touch events (not pointer events): iOS
+      // Safari dispatches no pointer events for scroll gestures.
       let touchFetches = 0;
       const routeTouch = async (route) => {
         const url = route.request().url();
@@ -1185,8 +1183,7 @@ function makeReporter() {
         await route.continue();
       };
       await page.route('**/api/sessions/messages*', routeTouch);
-      // Mid-list, then put the finger DOWN on the list and cross to the top
-      // (no further scroll events while "held" — a still finger emits none).
+      // Mid-list, then put the finger DOWN on the list and cross to the top.
       await aList.evaluate((el) => {
         el.scrollTop = Math.round((el.scrollHeight - el.clientHeight) * 0.4);
       });
@@ -1195,43 +1192,50 @@ function makeReporter() {
         el.dispatchEvent(new TouchEvent('touchstart', { bubbles: true }));
       });
       await aList.evaluate((el) => {
-        el.scrollTop = 0; // crossing → loadOlder fires
+        el.scrollTop = 0; // crossing to the top while the finger is down
       });
       await delay(150);
       const heldBefore = await heldRow();
       const rowsWhileLoading = await rows();
-      // Let the fetch finish while the finger is STILL down at the origin
-      // (~600ms wire delay). The commit must NOT land — neither the 200ms
-      // quiet timer nor anything else may flush it: rows stay at 100 and
-      // the held row does not move 1px.
+      // Hold the finger at the origin for longer than the whole fetch would
+      // take: NO load may start and the list must not grow (rows stay 100,
+      // the held row does not move 1px).
       await delay(750);
       const rowsHeld = await rows();
       const heldDuring = await heldRow();
-      // Finger up: the gesture controller releases scrollTop, the held page
-      // commits, and the exact anchor restore re-pins the held row.
+      const fetchesWhileHeld = touchFetches;
+      // Finger up: NOW the load starts (the gesture controller has released
+      // scrollTop — the re-anchor write sticks). Post-release momentum
+      // scrolls (3 bounces) must NOT start a second page.
       await aList.evaluate((el) => {
         el.dispatchEvent(new TouchEvent('touchend', { bubbles: true }));
       });
-      await delay(900);
+      for (let i = 0; i < 3; i++) {
+        await aList.evaluate((el) => {
+          el.dispatchEvent(new Event('scroll'));
+        });
+        await delay(120);
+      }
+      await delay(900); // fetch (600ms) + re-anchor settle
       const rowsAfter = await rows();
       const heldAfterTop = await rowOffset(heldBefore.msgId);
       const pos2 = await posInfo();
       await page.unroute('**/api/sessions/messages*', routeTouch);
-      const noCommitWhileHeld =
-        rowsWhileLoading === 100 && rowsHeld === 100 && heldDuring.msgId === heldBefore.msgId;
+      const noLoadWhileHeld =
+        fetchesWhileHeld === 0 && rowsWhileLoading === 100 && rowsHeld === 100 && heldDuring.msgId === heldBefore.msgId;
       const pinned2 =
         heldBefore.msgId !== null && heldAfterTop !== null && Math.abs(heldAfterTop - heldBefore.top) <= 1;
       const committed2 = rowsAfter === 110;
       const leftZone2 = pos2.top >= 80;
-      const phase2Ok = touchFetches === 1 && noCommitWhileHeld && committed2 && pinned2 && leftZone2;
+      const phase2Ok = touchFetches === 1 && noLoadWhileHeld && committed2 && pinned2 && leftZone2;
       return {
         ok: phase1Ok && phase2Ok,
         why:
           `phase1 fetches:${olderFetches} pinned:${pinned1 ? 'yes' : 'no'} ` +
           `(row ${before.msgId} ${before.top} → ${afterTop1}) leftZone:${leftZone1 ? 'yes' : 'no'} ` +
           `(scrollTop ${pos1.top}/${pos1.max}) | ` +
-          `phase2 fetches:${touchFetches} rows:${rowsWhileLoading}/${rowsHeld}/${rowsAfter} ` +
-          `(want 100/100/110) held:${heldBefore.msgId}→${heldDuring.msgId}→` +
+          `phase2 fetches:${fetchesWhileHeld}/${touchFetches} rows:${rowsWhileLoading}/${rowsHeld}/${rowsAfter} ` +
+          `(want 0/1, 100/100/110) held:${heldBefore.msgId}→${heldDuring.msgId}→` +
           `${heldAfterTop} drift:${heldBefore.top}→${heldAfterTop} leftZone:${leftZone2 ? 'yes' : 'no'} ` +
           `(scrollTop ${pos2.top}/${pos2.max})`,
       };

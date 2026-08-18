@@ -175,31 +175,34 @@ let lastPinAt = 0;
 let sepJumpAt = 0;
 
 /**
- * Touch-gesture bookkeeping for old-page commits.
+ * Touch-scroll bookkeeping for old-page loads.
  *
  * On a touch device the browser's gesture controller OWNS the scroll
  * position while a finger is down: a JS scrollTop write made mid-gesture is
  * overridden (content "flicks to the top" after a prepend), and NATIVE
  * scroll anchoring is suppressed at the scroll origin (scrollTop == 0) — the
- * exact spot a scroll-to-top load lands. So neither mechanism can pin the
- * already-loaded row while the user's finger is still there. The fix (per
- * the user's prescription — "append older content on top of previously
- * loaded content without moving 1px of it"): the fetched older page is NOT
- * committed while the top edge is in any way active — finger down, or
- * momentum still bouncing at the origin. The prepend + exact anchor-part
- * restore happen when the edge is quiet (finger up, no scroll events for a
- * beat), where the JS write sticks.
+ * exact spot a scroll-to-top load lands. So touching and loading at the
+ * same time — commit a page, re-anchor mid-gesture — cannot be made safe
+ * with JS. The touch path therefore loads ONLY after the finger has been
+ * released: the onScroll trigger is gated on no finger being down
+ * (touchDownCount === 0), and touchend starts the load for a scroll gesture
+ * that ended in the top zone. At that point the gesture controller has
+ * released scrollTop, the JS re-anchor write sticks, and the exact
+ * anchor-part restore keeps the previously loaded content at the SAME
+ * pixels (per the user's prescription — "append older content on top of
+ * previously loaded content without moving 1px of it"). A fetched page is
+ * still held (never committed) while the top edge stays active — momentum
+ * bouncing after a flick, or a re-touch — and committed when it goes quiet.
  *
  * The 'finger is down' signal MUST come from TOUCH events: iOS Safari
  * dispatches no pointer events for scroll gestures (taps only) and sends
- * pointercancel the moment it takes the gesture over — a pointer-based
- * count drops to zero while the finger is still down, and a finger held
- * still at the overscrolled top emits no scroll events either, so the
- * quiet heuristic alone would commit under the still-held finger. Touch
- * events stay alive for the whole gesture (touchstart → touchend), so the
- * count rides the finger until it really lifts.
+ * pointercancel the moment it takes the gesture over, while touch events
+ * stay alive for the whole gesture (touchstart → touchend).
  */
 let touchDownCount = 0;
+/** The current touch gesture actually scrolled — only then does touchend
+ *  start a load (a plain tap on a separator/button/message never will). */
+let gestureScrolled = false;
 /** The most recent scroll event that arrived while in the <80 top zone. */
 let lastTopScrollAt = 0;
 /** A fetched older page waiting for the top edge to go quiet. */
@@ -230,16 +233,22 @@ function topEdgeActive(el: HTMLElement) {
 
 function onTouchStart() {
   touchDownCount += 1;
+  gestureScrolled = false;
 }
 
 function onTouchEnd() {
   touchDownCount = Math.max(0, touchDownCount - 1);
-  // Finger definitively up: a held page can commit — UNLESS the engine's
-  // momentum is still bouncing at the origin (a flick keeps the position
-  // owned after the finger lifts); the quiet timer then commits when it
-  // settles.
   const el = listEl.value;
-  if (heldOlder && el && !topEdgeActive(el)) flushHeldOlder();
+  if (!el) return;
+  // A page held for a re-touch/momentum flush, then the load trigger: this
+  // touchend is the ONLY moment a touch user starts the older-page fetch —
+  // never while the finger was down. A plain tap (separator jump, load-older
+  // button, message) does not scroll, so it never loads here.
+  const hadHeld = !!heldOlder;
+  if (hadHeld) flushHeldOlder();
+  if (!hadHeld && gestureScrolled && el.scrollTop < 80 && performance.now() - sepJumpAt > 250) {
+    void loadOlder();
+  }
 }
 
 /**
@@ -278,6 +287,9 @@ function onScroll() {
   const el = listEl.value;
   if (!el) return;
   const st = chatScrollOf(props.sessionId);
+  // A scroll event arriving while a finger is down means the gesture
+  // scrolled (see onTouchEnd — only such gestures trigger on release).
+  if (touchDownCount > 0) gestureScrolled = true;
   // Echo of OUR OWN bottom-pin (resize re-pin, keepBottom, send, ↓): the
   // pin was written when the geometry was smaller — by the time this scroll
   // event dispatches, the content may have grown (a sash drag reflows the
@@ -308,14 +320,18 @@ function onScroll() {
       armHeldFlush();
     }
   }
-  // Scroll-up pagination: near the top → load older messages. The load
-  // itself pins the previously-loaded content EXACTLY (see loadOlder), so
-  // after it lands the position is mid-list — never still at the top — and
-  // no further load can re-fire from a held finger's bounce. Skipped for
-  // the echo of a separator jump: that is a "go to the start" navigation,
-  // not a user scroll-up gesture — auto-loading would re-anchor the view a
-  // page away from the jump target.
-  if (el.scrollTop < 80 && performance.now() - sepJumpAt > 250) void loadOlder();
+  // Scroll-up pagination: near the top → load older messages. NEVER while
+  // a finger is down on a touch device — the gesture controller owns
+  // scrollTop, so a mid-gesture load could never pin the loaded row (it is
+  // what spawned the flick + re-trigger loop); the touchend handler starts
+  // the load once the finger releases. Desktop (mouse/trackpad, no touch
+  // events) keeps the level trigger. Skipped for the echo of a separator
+  // jump: that is a "go to the start" navigation, not a user scroll-up
+  // gesture — auto-loading would re-anchor the view a page away from the
+  // jump target.
+  if (el.scrollTop < 80 && touchDownCount === 0 && performance.now() - sepJumpAt > 250) {
+    void loadOlder();
+  }
 }
 
 /**

@@ -173,19 +173,6 @@ let lastPinAt = 0;
  *  re-anchor the view a page away from the jump target. */
 let sepJumpAt = 0;
 
-/** Last time an older-page load was triggered (auto or the Load-older
- *  button) and whether the previous scroll position was inside the top
- *  pagination zone. Auto-loading is EDGE-triggered — it fires only when
- *  the position CROSSES into the zone — and gated by a cooldown. A touch
- *  user who scrolls to the top and keeps their finger down leaves the
- *  scroll position at the top while the prepend + re-anchor keeps bouncing
- *  the position across the threshold; without the edge+cooldown every
- *  bounce starts another loadOlder and the chat pages through its whole
- *  history, re-anchoring (and flickering) each time. */
-let lastAutoLoadAt = 0;
-let prevNearTop = false;
-const AUTO_LOAD_COOLDOWN_MS = 800;
-
 function onScroll() {
   const el = listEl.value;
   if (!el) return;
@@ -208,21 +195,15 @@ function onScroll() {
   lastPinTop = -1;
   st.sticky = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
   st.top = el.scrollTop;
-  // Scroll-up pagination: near the top → load older messages. Edge-triggered:
-  // only when the position CROSSES into the top zone (never while it just
-  // sits there — a held finger on a touch device fires scroll events at the
-  // top forever), and never more than once per cooldown (the prepend +
-  // re-anchor bounces the position across the threshold; without the gap
-  // each bounce starts another page). Skipped for the echo of a separator
-  // jump: that is a "go to the start" navigation, not a user scroll-up
-  // gesture — auto-loading would re-anchor the view a page away from the
-  // jump target.
-  const nearTop = el.scrollTop < 80;
-  const now = performance.now();
-  if (nearTop && !prevNearTop && now - sepJumpAt > 250 && now - lastAutoLoadAt > AUTO_LOAD_COOLDOWN_MS) {
-    void loadOlder();
-  }
-  prevNearTop = nearTop;
+  // Scroll-up pagination: near the top → load older messages. The load
+  // itself pins the previously-loaded content EXACTLY (native scroll
+  // anchoring + the anchor-part restore below), so after it lands the
+  // position is mid-list — never still at the top — and no further load
+  // can re-fire from a held finger's bounce. Skipped for the echo of a
+  // separator jump: that is a "go to the start" navigation, not a user
+  // scroll-up gesture — auto-loading would re-anchor the view a page away
+  // from the jump target.
+  if (el.scrollTop < 80 && performance.now() - sepJumpAt > 250) void loadOlder();
 }
 
 /** Load the previous page and keep the viewport anchored. */
@@ -230,7 +211,6 @@ async function loadOlder() {
   const s = session.value;
   const el = listEl.value;
   if (!s || !el || s.loadingOlder || !s.hasMoreOlder) return;
-  lastAutoLoadAt = performance.now();
   const sid = props.sessionId;
   const prevHeight = el.scrollHeight;
   const prevTop = el.scrollTop;
@@ -255,8 +235,24 @@ async function loadOlder() {
   }
   const anchorEl = anchorSel ? (el.querySelector(anchorSel) as HTMLElement | null) : null;
   const anchorOffset = anchorEl ? anchorEl.getBoundingClientRect().top - el.getBoundingClientRect().top : 0;
-  await store.loadOlder(s.id);
-  await nextTick();
+  // Scope the browser's NATIVE scroll anchoring to THIS prepend. When older
+  // content is inserted at the head while a touch user's finger is still
+  // down, the engine itself keeps the already-loaded row pinned (scrollTop
+  // grows by the prepended height) — a JS scrollTop write made during an
+  // active gesture is overridden by the browser's gesture controller, which
+  // is why the manual restore alone flicked to the top and re-triggered.
+  // The app's own re-anchor below stays as the exact authority for the
+  // scrollTop==0 edge (native anchoring does not fire there) and as the
+  // frame-level safety net; everything else (resize re-pins, bottom-follow)
+  // keeps overflow-anchor:none so the JS math is never double-applied.
+  const prevAnchor = el.style.overflowAnchor;
+  el.style.overflowAnchor = 'auto';
+  try {
+    await store.loadOlder(s.id);
+    await nextTick();
+  } finally {
+    el.style.overflowAnchor = prevAnchor;
+  }
   // The page fetch is async — the user may have switched to ANOTHER window
   // while it was in flight (a tab click, or the live session kept streaming
   // elsewhere). The shared component instance then renders other content in

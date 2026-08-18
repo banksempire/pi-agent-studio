@@ -139,9 +139,19 @@ function setSticky(v: boolean) {
   chatScrollOf(props.sessionId).sticky = v;
 }
 
+/** Pin the viewport to the NEWER (bottom) edge — the only edge we ever
+ *  pin to. The bottom is the scroll ORIGIN, a fixed coordinate: a pin's
+ *  own scroll echo lands exactly there, where distFromTop === max, so the
+ *  generic onScroll path re-derives sticky correctly. The old
+ *  echo-recognition machinery (lastPinTop/lastPinAt) existed because a pin
+ *  written at the OLD max could dispatch its event AFTER the content grew
+ *  — mid-list, wrongly clearing sticky; at the origin that cannot happen,
+ *  so the pin's echo needs no special handling. */
 function scrollToBottom() {
   const el = listEl.value;
-  if (el) pinToEdge(el, 'newer');
+  if (!el) return;
+  const { max } = posInfo(el);
+  el.scrollTop = zeroIsBottom ? 0 : max;
 }
 
 // ── INVERTED message flow ─────────────────────────────────────────────────
@@ -166,8 +176,8 @@ function scrollToBottom() {
 // Engines disagree on the scrollTop SIGN of column-reverse containers:
 // Chromium reports 0 at the bottom (the origin) and NEGATIVE values toward
 // the top; CSSOM-conventional engines report 0 at the top and max at the
-// bottom. All scroll math goes through posInfo()/pinToEdge(), which detect
-// the convention once with a detached probe.
+// bottom. All scroll math goes through posInfo()/clampScroll()/scrollToBottom(),
+// which detect the convention once with a detached probe.
 
 /** Does scrollTop == 0 mean the bottom (Chromium's column-reverse
  *  convention: scrollTop ∈ [-(max), 0], origin at the bottom)? Detected
@@ -191,6 +201,13 @@ function detectScrollConvention(): boolean {
   return zeroIsBottom;
 }
 
+/** Trigger zone (px from the OLDER edge) inside which a scroll-up gesture
+ *  starts the older-page fetch. */
+const LOAD_OLDER_ZONE = 80;
+/** Band (px) above the NEWER edge inside which the view counts as "at the
+ *  bottom" and follows new content. */
+const STICKY_ZONE = 48;
+
 /** Abstracted scroll position of the messages box. distFromTop is the
  *  distance (px) from the OLDER edge — the edge where loadOlder triggers —
  *  regardless of engine sign convention; st is the raw scrollTop; max the
@@ -201,25 +218,11 @@ function posInfo(el: HTMLElement) {
   return { max, st, distFromTop: detectScrollConvention() ? st + max : st };
 }
 
-/** Write the viewport to a list edge. Returns the post-clamp scrollTop so
- *  onScroll can recognize the pin's own echo scroll event (the browser
- *  clamps the write to the range; the echo reports exactly the clamped
- *  value within the same frame). */
-function pinToEdge(el: HTMLElement, edge: 'older' | 'newer') {
-  const { max } = posInfo(el);
-  el.scrollTop = edge === 'newer' ? (zeroIsBottom ? 0 : max) : zeroIsBottom ? -max : 0;
-  lastPinTop = el.scrollTop;
-  lastPinAt = performance.now();
+/** Clamp a scrollTop write into the valid range for the detected
+ *  convention ([−max, 0] when 0 = bottom, [0, max] otherwise). */
+function clampScroll(max: number, v: number): number {
+  return zeroIsBottom ? Math.max(-max, Math.min(0, v)) : Math.max(0, Math.min(max, v));
 }
-
-/** scrollTop of the most recent programmatic pin (-1 = none) and the moment
- *  it was written. Per instance (per tile): the same element serves every
- *  session shown in the tile, and only this instance's pins set it. The
- *  timestamp keeps a stale pin value from absorbing a LATER genuine user
- *  scroll that happens to land on the same pixel: the echo always arrives
- *  within the same frame as the pin. */
-let lastPinTop = -1;
-let lastPinAt = 0;
 
 /** Moment of the most recent separator jump (click on the pinned chat bar).
  *  The jump lands near the older edge, and its own scroll echo must not
@@ -243,6 +246,19 @@ let touchDownCount = 0;
  *  start a load (a plain tap on a separator/button/message never will). */
 let gestureScrolled = false;
 
+/** The one shared older-page trigger: near the OLDER edge (inside
+ *  LOAD_OLDER_ZONE) and outside a separator jump's echo window (a jump is
+ *  a navigation, not a scroll-up gesture). The callers apply their own
+ *  gates: onScroll only while no finger is down, onTouchEnd only for
+ *  gestures that actually scrolled. */
+function maybeLoadOlder() {
+  const el = listEl.value;
+  if (!el) return;
+  if (posInfo(el).distFromTop < LOAD_OLDER_ZONE && performance.now() - sepJumpAt > 250) {
+    void loadOlder();
+  }
+}
+
 function onTouchStart() {
   touchDownCount += 1;
   gestureScrolled = false;
@@ -250,51 +266,29 @@ function onTouchStart() {
 
 function onTouchEnd() {
   touchDownCount = Math.max(0, touchDownCount - 1);
-  const el = listEl.value;
-  if (!el) return;
   // This touchend is the ONLY moment a touch user starts the older-page
   // fetch — never while the finger was down. A plain tap (separator jump,
   // load-older button, message) does not scroll, so it never loads here.
-  // A separator jump's own near-edge echo is excluded by the sepJumpAt
-  // window (the jump is a navigation, not a scroll-up gesture).
-  if (gestureScrolled && posInfo(el).distFromTop < 80 && performance.now() - sepJumpAt > 250) {
-    void loadOlder();
-  }
+  if (gestureScrolled) maybeLoadOlder();
 }
 
 function onScroll() {
   const el = listEl.value;
   if (!el) return;
-  const st = chatScrollOf(props.sessionId);
   // A scroll event arriving while a finger is down means the gesture
   // scrolled (see onTouchEnd — only such gestures trigger on release).
   if (touchDownCount > 0) gestureScrolled = true;
+  const st = chatScrollOf(props.sessionId);
   const { max, st: stv, distFromTop } = posInfo(el);
-  // Echo of OUR OWN pin (resize re-pin, keepBottom, send, ↓): the pin was
-  // written when the geometry was smaller — by the time this scroll event
-  // dispatches the content may have grown, so the geometric check below
-  // would read mid-list and wrongly clear sticky, stranding the window
-  // above the new bottom. The echo reports EXACTLY the pinned scrollTop
-  // within the same frame; a genuine user scroll never matches both.
-  if (lastPinTop >= 0 && stv === lastPinTop && performance.now() - lastPinAt < 250) {
-    if (st.sticky && distFromTop < max - 48) pinToEdge(el, 'newer');
-    st.top = stv;
-    return;
-  }
-  lastPinTop = -1;
   // Near the NEWER (bottom) edge → follow new content; anywhere above it
   // the user is reading history and must never be yanked down.
-  st.sticky = distFromTop > max - 48;
+  st.sticky = distFromTop > max - STICKY_ZONE;
   st.top = stv;
   // Scroll-up pagination: near the OLDER edge → load older messages. NEVER
   // while a finger is down on a touch device (the user's rule: load only
   // after release — the touchend handler starts it then). Desktop
-  // (mouse/trackpad, no touch events) keeps the level trigger. Skipped for
-  // the echo of a separator jump: a "go to the start" navigation, not a
-  // user scroll-up gesture.
-  if (distFromTop < 80 && touchDownCount === 0 && performance.now() - sepJumpAt > 250) {
-    void loadOlder();
-  }
+  // (mouse/trackpad, no touch events) keeps the level trigger.
+  if (touchDownCount === 0) maybeLoadOlder();
 }
 
 /**
@@ -504,9 +498,7 @@ function jumpToSep(e: MouseEvent) {
     (row.getBoundingClientRect().top - el.getBoundingClientRect().top) -
     padTop -
     sep.offsetHeight;
-  const lo = zeroIsBottom ? -max : 0;
-  const hi = zeroIsBottom ? 0 : max;
-  el.scrollTop = Math.max(lo, Math.min(target, hi));
+  el.scrollTop = clampScroll(max, target);
   sepJumpAt = performance.now();
 }
 
@@ -1307,7 +1299,7 @@ onMounted(() => {
         firstObs = false;
         return;
       }
-      if (sticky()) pinToEdge(el, 'newer');
+      if (sticky()) scrollToBottom();
     });
     listObserver.observe(el);
   }
@@ -1334,7 +1326,7 @@ let listObserver: ResizeObserver | null = null;
 function captureScroll(el: HTMLElement, mem: ReturnType<typeof chatScrollOf>) {
   const { max, st, distFromTop } = posInfo(el);
   mem.top = st;
-  mem.sticky = distFromTop > max - 48;
+  mem.sticky = distFromTop > max - STICKY_ZONE;
 }
 
 /**
@@ -1360,14 +1352,12 @@ function restoreScroll(sessionId: string) {
       // back at the bottom, never stranded on the oldest page. A genuine
       // user scroll away from the bottom always leaves sticky=false, so
       // the flag cannot mislead here.
-      pinToEdge(el, 'newer');
+      scrollToBottom();
     } else {
       // A raw scrollTop round-trips within the same engine (its sign
       // convention is per-engine but consistent); clamp into the valid
       // range for the detected convention.
-      const lo = zeroIsBottom ? -max : 0;
-      const hi = zeroIsBottom ? 0 : max;
-      el.scrollTop = Math.max(lo, Math.min(st.top, hi));
+      el.scrollTop = clampScroll(max, st.top);
       captureScroll(el, st);
     }
   });

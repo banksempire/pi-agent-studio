@@ -450,12 +450,18 @@ async function commitOlder(held: HeldOlder) {
     // No stable anchor — plain scrollHeight delta.
     el.scrollTop = el.scrollHeight - held.prevHeight + held.prevTop;
   }
-  // Re-settle one frame later: some engines (WebKit/iOS Safari) apply
+  // Re-settle over the next frames: some engines (WebKit/iOS Safari) apply
   // their own scroll-position adjustment AFTER script ran — a late pass
-  // can move the viewport a frame behind the restore and flick the
-  // content. Re-measuring the anchor in the next rAF (before its paint)
-  // cancels any such drift, so the anchored content never visibly moves.
-  requestAnimationFrame(() => {
+  // (scroll-anchoring adjustment, async-scroll idempotency, resize reflow)
+  // can move the viewport a frame behind the restore and shift the content.
+  // Re-measuring the anchor every frame and correcting the drift until it
+  // is truly zero makes any late pass self-healing: the LAST correction
+  // before the position stabilizes wins, so the anchored content ends at
+  // exactly its original offset. Bounded to a few frames so a genuinely
+  // animated position (user scrolling away right after a commit) is never
+  // fought.
+  let settleFrames = 0;
+  const settle = () => {
     const list = listEl.value;
     // Same guard as above: the element may now show a different session
     // (or the window was swapped on mobile), never settle scroll there.
@@ -469,10 +475,16 @@ async function commitOlder(held: HeldOlder) {
       return;
     }
     const settleEl = list.querySelector(held.anchorSel) as HTMLElement | null;
-    if (!settleEl) return;
-    const drift = settleEl.getBoundingClientRect().top - list.getBoundingClientRect().top - held.anchorOffset;
-    if (Math.abs(drift) > 1) list.scrollTop = list.scrollTop + drift;
-  });
+    if (settleEl) {
+      const drift = settleEl.getBoundingClientRect().top - list.getBoundingClientRect().top - held.anchorOffset;
+      if (Math.abs(drift) > 0.5) list.scrollTop = list.scrollTop + drift;
+      if (Math.abs(drift) > 0.5 && settleFrames < 5) {
+        settleFrames += 1;
+        requestAnimationFrame(settle);
+      }
+    }
+  };
+  requestAnimationFrame(settle);
 }
 
 // Re-run on new messages and on streaming text/thinking growth. A cheap
@@ -1563,21 +1575,32 @@ watch(
         No messages yet — say hello. Type <code>/</code> for slash commands.
       </div>
       <template v-else>
-        <!-- Scroll-up pagination: older messages load on demand. One
-             stable button (no placeholder swap): the ↑ icon becomes a
-             spinner while a page fetches — the box never changes, so the
-             list's top content can't shift or blink mid-load. -->
+        <!-- Scroll-up pagination: older messages load on demand. The slot is
+             PERMANENT — it NEVER leaves the DOM, so the height above the
+             first message is constant at every moment (before, during, and
+             after a load). If it vanished on the last page (hasMoreOlder
+             false), the whole list would shift up by the slot's height
+             exactly when the older page lands — breaking the 0px-pin promise
+             for the previously loaded content. It only changes TEXT/state
+             here: interactive when more older pages exist, a spinner while
+             one fetches (the ↑ swaps for the spinner WITHOUT the box
+             changing), a quiet marker once the beginning is reached. -->
         <div
-          v-if="session.hasMoreOlder"
           class="chat-load-older"
-          :class="{ 'chat-load-older--loading': session.loadingOlder }"
-          @click="loadOlder()"
+          :class="{
+            'chat-load-older--loading': session.loadingOlder,
+            'chat-load-older--done': !session.hasMoreOlder && !session.loadingOlder,
+          }"
+          @click="session.hasMoreOlder && !session.loadingOlder && loadOlder()"
         >
           <span class="chat-load-older-icon">
-            <SvgIcon v-if="!session.loadingOlder" name="↑" />
-            <span v-else class="chat-load-older-spinner" />
+            <SvgIcon v-if="!session.loadingOlder && session.hasMoreOlder" name="↑" />
+            <span v-else-if="session.loadingOlder" class="chat-load-older-spinner" />
+            <span v-else class="chat-load-older-dot" />
           </span>
-          older messages
+          <span v-if="session.loadingOlder">older messages…</span>
+          <span v-else-if="session.hasMoreOlder">older messages</span>
+          <span v-else>beginning of conversation</span>
         </div>
         <!-- One group per turn/message: the group is the separator's
              CONTAINING BLOCK — it spans from the separator to the next

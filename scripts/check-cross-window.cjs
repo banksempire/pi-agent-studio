@@ -1207,6 +1207,12 @@ function makeReporter() {
         }
       };
       await page.route('**/api/sessions/messages*', routeTouch);
+      const slotHeight = () =>
+        aList.evaluate((el) => {
+          const slot = el.querySelector('.chat-load-older');
+          return slot ? slot.getBoundingClientRect().height : -1;
+        });
+      const slotBefore = await slotHeight();
       // Mid-list, then put the finger DOWN on the list and cross to the top.
       await aList.evaluate((el) => {
         el.scrollTop = Math.round((el.scrollHeight - el.clientHeight) * 0.4);
@@ -1256,6 +1262,7 @@ function makeReporter() {
       const rowsAfter = await rows();
       const heldAfterTop = await rowOffset(heldBefore.msgId);
       const pos2 = await posInfo();
+      const slotAfter = await slotHeight();
       const trace = await aList.evaluate(() => {
         const tr = window.__tr;
         return {
@@ -1276,12 +1283,23 @@ function makeReporter() {
       // it at fetch-completion time (~200ms after release) and shifted the
       // loaded content on the touch device.
       const heldThroughRelease = settleElapsed >= 350;
+      // The load-older slot is PERMANENT: its height above the pinned row is
+      // identical before and after the load (the marker only changes text,
+      // never geometry). If it were removed on the last page, the whole list
+      // would shift up by the slot height exactly when the page lands.
+      const slotReserved = slotBefore >= 30 && slotAfter === slotBefore;
       const pinned2 =
         heldBefore.msgId !== null && heldAfterTop !== null && Math.abs(heldAfterTop - heldBefore.top) <= 1;
       const committed2 = rowsAfter === 110;
       const leftZone2 = pos2.top >= 80;
       const phase2Ok =
-        touchFetches === 1 && noLoadWhileHeld && heldThroughRelease && committed2 && pinned2 && leftZone2;
+        touchFetches === 1 &&
+        noLoadWhileHeld &&
+        heldThroughRelease &&
+        slotReserved &&
+        committed2 &&
+        pinned2 &&
+        leftZone2;
       return {
         ok: phase1Ok && phase2Ok,
         why:
@@ -1290,8 +1308,9 @@ function makeReporter() {
           `(scrollTop ${pos1.top}/${pos1.max}) | ` +
           `phase2 fetches:${fetchesWhileHeld}/${touchFetches} spinner-cleared-at:${settleElapsed}ms ` +
           `(want 0/1, >=350ms) rows:${rowsWhileLoading}/${rowsHeld}/${rowsAfter} (want 100/100/110) ` +
-          `held:${heldBefore.msgId}→${heldDuring.msgId}→${heldAfterTop} drift:${heldBefore.top}→${heldAfterTop} ` +
-          `leftZone:${leftZone2 ? 'yes' : 'no'} (scrollTop ${pos2.top}/${pos2.max}) trace:${JSON.stringify(trace)}`,
+          `slot:${slotBefore}→${slotAfter}px (want equal) held:${heldBefore.msgId}→${heldDuring.msgId}→` +
+          `${heldAfterTop} drift:${heldBefore.top}→${heldAfterTop} leftZone:${leftZone2 ? 'yes' : 'no'} ` +
+          `(scrollTop ${pos2.top}/${pos2.max}) trace:${JSON.stringify(trace)}`,
       };
     })();
     report(

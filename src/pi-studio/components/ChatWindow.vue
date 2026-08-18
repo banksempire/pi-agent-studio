@@ -22,6 +22,7 @@ import {
   clearSessionError,
   type DisplayMessage,
   fmtTime,
+  type OlderPage,
   openGroupsOf,
   sessionErrorOf,
   setAttachments,
@@ -173,6 +174,97 @@ let lastPinAt = 0;
  *  re-anchor the view a page away from the jump target. */
 let sepJumpAt = 0;
 
+/**
+ * Touch-gesture bookkeeping for old-page commits.
+ *
+ * On a touch device the browser's gesture controller OWNS the scroll
+ * position while a finger is down: a JS scrollTop write made mid-gesture is
+ * overridden (content "flicks to the top" after a prepend), and NATIVE
+ * scroll anchoring is suppressed at the scroll origin (scrollTop == 0) — the
+ * exact spot a scroll-to-top load lands. So neither mechanism can pin the
+ * already-loaded row while the user's finger is still there. The fix (per
+ * the user's prescription — "append older content on top of previously
+ * loaded content without moving 1px of it"): the fetched older page is NOT
+ * committed while the top edge is in any way active — pointer down, or
+ * momentum still bouncing at the origin. The prepend + exact anchor-part
+ * restore happen when the edge is quiet (finger up, no scroll events for a
+ * beat), where the JS write sticks.
+ */
+let touchDownCount = 0;
+/** The most recent scroll event that arrived while in the <80 top zone. */
+let lastTopScrollAt = 0;
+/** A fetched older page waiting for the top edge to go quiet. */
+let heldOlder: HeldOlder | null = null;
+let heldFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** A fetched older page plus the geometry snapshot needed to re-anchor. */
+interface HeldOlder {
+  sid: string;
+  page: OlderPage;
+  prevHeight: number;
+  prevTop: number;
+  anchorSel: string | null;
+  anchorOffset: number;
+}
+
+/**
+ * True while the top edge is still owned by a gesture — the user's finger
+ * down, or the engine's momentum still bouncing at the origin. Committing
+ * an older page then would be clobbered: the browser's gesture controller
+ * overrides a JS scrollTop write, and native scroll anchoring is suppressed
+ * at the scroll origin — so the loaded content would flick to the top and
+ * re-trigger the load.
+ */
+function topEdgeActive(el: HTMLElement) {
+  return el.scrollTop < 80 && (touchDownCount > 0 || performance.now() - lastTopScrollAt < 200);
+}
+
+function onListPointerDown(e: PointerEvent) {
+  if (e.pointerType === 'touch' || e.pointerType === 'pen') touchDownCount += 1;
+}
+
+function onListPointerUp(e: PointerEvent) {
+  if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
+  touchDownCount = Math.max(0, touchDownCount - 1);
+  // Finger up: a held page can commit — UNLESS the engine's momentum is
+  // still bouncing at the origin (a flick keeps the position owned after
+  // the finger lifts); the quiet timer then commits when it settles.
+  const el = listEl.value;
+  if (heldOlder && el && !topEdgeActive(el)) flushHeldOlder();
+}
+
+/**
+ * Commit a held older page once the top edge is quiet (finger up and no
+ * scroll activity in the top zone for a beat — momentum bounce at the
+ * origin still owns the position). Re-arms itself while still active, so a
+ * finger held at the top indefinitely simply keeps waiting.
+ */
+function armHeldFlush() {
+  if (heldFlushTimer || !heldOlder) return;
+  heldFlushTimer = setTimeout(() => {
+    heldFlushTimer = null;
+    const el = listEl.value;
+    if (!heldOlder || !el) return;
+    if (topEdgeActive(el)) {
+      armHeldFlush();
+    } else {
+      flushHeldOlder();
+    }
+  }, 200);
+}
+
+/** Commit the held page now (whenever the current conditions allow). */
+function flushHeldOlder() {
+  const held = heldOlder;
+  if (!held) return;
+  heldOlder = null;
+  if (heldFlushTimer) {
+    clearTimeout(heldFlushTimer);
+    heldFlushTimer = null;
+  }
+  void commitOlder(held);
+}
+
 function onScroll() {
   const el = listEl.value;
   if (!el) return;
@@ -195,18 +287,36 @@ function onScroll() {
   lastPinTop = -1;
   st.sticky = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
   st.top = el.scrollTop;
+  // Top-zone activity (scroll-up gesture or momentum bounce at the origin)
+  // keeps a held older page waiting; leaving the zone commits it — away
+  // from the origin native scroll anchoring pins the loaded row under the
+  // moving finger, which a JS write could not.
+  if (el.scrollTop < 80) lastTopScrollAt = performance.now();
+  if (heldOlder) {
+    if (el.scrollTop >= 80) {
+      flushHeldOlder();
+    } else {
+      armHeldFlush();
+    }
+  }
   // Scroll-up pagination: near the top → load older messages. The load
-  // itself pins the previously-loaded content EXACTLY (native scroll
-  // anchoring + the anchor-part restore below), so after it lands the
-  // position is mid-list — never still at the top — and no further load
-  // can re-fire from a held finger's bounce. Skipped for the echo of a
-  // separator jump: that is a "go to the start" navigation, not a user
-  // scroll-up gesture — auto-loading would re-anchor the view a page away
-  // from the jump target.
+  // itself pins the previously-loaded content EXACTLY (see loadOlder), so
+  // after it lands the position is mid-list — never still at the top — and
+  // no further load can re-fire from a held finger's bounce. Skipped for
+  // the echo of a separator jump: that is a "go to the start" navigation,
+  // not a user scroll-up gesture — auto-loading would re-anchor the view a
+  // page away from the jump target.
   if (el.scrollTop < 80 && performance.now() - sepJumpAt > 250) void loadOlder();
 }
 
-/** Load the previous page and keep the viewport anchored. */
+/**
+ * Load the previous page. FETCHES IMMEDIATELY, but commits (prepends) only
+ * when the top edge is quiet: a held finger at the origin must never see
+ * the loaded content move — the gesture controller clobbers a JS scrollTop
+ * write and native anchoring is suppressed at scrollTop == 0, so an early
+ * commit would shift the loaded content down by the page height (flicker)
+ * and re-trigger the load from the next bounce event.
+ */
 async function loadOlder() {
   const s = session.value;
   const el = listEl.value;
@@ -218,7 +328,7 @@ async function loadOlder() {
   // keep their keys across an older-page prepend (reply ids from the
   // message, group ids from the first work message of their segment), so
   // the anchor survives even when the page boundary falls mid-turn and the
-  // row itself is re-created with a new key. After the fetch the part's
+  // row itself is re-created with a new key. After the commit the part's
   // own screen offset is the true correction: it accounts for the
   // prepended page AND anything streamed in while the fetch was in flight
   // — the scrollHeight-delta math over-shoots by the streamed height and
@@ -235,39 +345,67 @@ async function loadOlder() {
   }
   const anchorEl = anchorSel ? (el.querySelector(anchorSel) as HTMLElement | null) : null;
   const anchorOffset = anchorEl ? anchorEl.getBoundingClientRect().top - el.getBoundingClientRect().top : 0;
-  // Scope the browser's NATIVE scroll anchoring to THIS prepend. When older
-  // content is inserted at the head while a touch user's finger is still
-  // down, the engine itself keeps the already-loaded row pinned (scrollTop
-  // grows by the prepended height) — a JS scrollTop write made during an
-  // active gesture is overridden by the browser's gesture controller, which
-  // is why the manual restore alone flicked to the top and re-triggered.
-  // The app's own re-anchor below stays as the exact authority for the
-  // scrollTop==0 edge (native anchoring does not fire there) and as the
-  // frame-level safety net; everything else (resize re-pins, bottom-follow)
-  // keeps overflow-anchor:none so the JS math is never double-applied.
+  const page = await store.loadOlder(s.id);
+  if (!page) return;
+  const held: HeldOlder = { sid, page, prevHeight, prevTop, anchorSel, anchorOffset };
+  // Top edge active (finger down, or momentum still bouncing at the
+  // origin): commit when it goes quiet — never under the gesture.
+  if (topEdgeActive(el)) {
+    heldOlder = held;
+    armHeldFlush();
+    return;
+  }
+  void commitOlder(held);
+}
+
+/**
+ * Apply a fetched older page and re-anchor the viewport so the previously
+ * loaded content does not move 1px. Scope the browser's NATIVE scroll
+ * anchoring to THIS prepend: when older content is inserted at the head
+ * while a touch user's finger is still down, the engine itself keeps the
+ * already-loaded row pinned (scrollTop grows by the prepended height) — a
+ * JS scrollTop write made during an active gesture is overridden by the
+ * browser's gesture controller, which is why the manual restore alone
+ * flicked to the top and re-triggered. The exact anchor-part restore below
+ * stays as the scrollTop==0 edge authority (native anchoring does not fire
+ * at the origin) and as the frame-level safety net; everything else
+ * (resize re-pins, bottom-follow) keeps overflow-anchor:none so the JS
+ * math is never double-applied. Normally the commit runs with the top edge
+ * quiet (see loadOlder) so the write sticks.
+ */
+async function commitOlder(held: HeldOlder) {
+  const el = listEl.value;
+  // The page always lands in the session's data — even when the window
+  // moved on or is gone (tab switched, window closed) — so the user's
+  // place is never stranded a page early. Only the viewport re-anchor
+  // needs the element AND the session it currently shows.
+  if (!el || props.sessionId !== held.sid || session.value?.id !== held.sid) {
+    store.commitOlderPage(held.sid, held.page);
+    return;
+  }
   const prevAnchor = el.style.overflowAnchor;
   el.style.overflowAnchor = 'auto';
   try {
-    await store.loadOlder(s.id);
+    store.commitOlderPage(held.sid, held.page);
     await nextTick();
   } finally {
     el.style.overflowAnchor = prevAnchor;
   }
-  // The page fetch is async — the user may have switched to ANOTHER window
+  // The commit is async — the user may have switched to ANOTHER window
   // while it was in flight (a tab click, or the live session kept streaming
   // elsewhere). The shared component instance then renders other content in
   // the SAME element, and re-anchoring against it would write the other
   // session's scrollTop — the cross-window scroll bleed (one window's
   // loadOlder moved another window's position). Abandon the re-anchor when
-  // the window no longer shows the session the fetch belongs to.
-  if (listEl.value !== el || props.sessionId !== sid || session.value !== s) return;
-  const nowEl = anchorSel ? (el.querySelector(anchorSel) as HTMLElement | null) : null;
+  // the window no longer shows the session the commit belongs to.
+  if (listEl.value !== el || props.sessionId !== held.sid || session.value?.id !== held.sid) return;
+  const nowEl = held.anchorSel ? (el.querySelector(held.anchorSel) as HTMLElement | null) : null;
   if (nowEl) {
     const now = nowEl.getBoundingClientRect().top - el.getBoundingClientRect().top;
-    el.scrollTop = el.scrollTop + (now - anchorOffset);
+    el.scrollTop = el.scrollTop + (now - held.anchorOffset);
   } else {
     // No stable anchor — plain scrollHeight delta.
-    el.scrollTop = el.scrollHeight - prevHeight + prevTop;
+    el.scrollTop = el.scrollHeight - held.prevHeight + held.prevTop;
   }
   // Re-settle one frame later: some engines (WebKit/iOS Safari) apply
   // their own scroll-position adjustment AFTER script ran — a late pass
@@ -278,10 +416,18 @@ async function loadOlder() {
     const list = listEl.value;
     // Same guard as above: the element may now show a different session
     // (or the window was swapped on mobile), never settle scroll there.
-    if (!list || !anchorSel || list !== el || props.sessionId !== sid || session.value !== s) return;
-    const settleEl = list.querySelector(anchorSel) as HTMLElement | null;
+    if (
+      !list ||
+      !held.anchorSel ||
+      list !== el ||
+      props.sessionId !== held.sid ||
+      session.value?.id !== held.sid
+    ) {
+      return;
+    }
+    const settleEl = list.querySelector(held.anchorSel) as HTMLElement | null;
     if (!settleEl) return;
-    const drift = settleEl.getBoundingClientRect().top - list.getBoundingClientRect().top - anchorOffset;
+    const drift = settleEl.getBoundingClientRect().top - list.getBoundingClientRect().top - held.anchorOffset;
     if (Math.abs(drift) > 1) list.scrollTop = list.scrollTop + drift;
   });
 }
@@ -1236,6 +1382,11 @@ onMounted(() => {
   // target (the textarea's own handler only sees keys pressed on it).
   window.addEventListener('keydown', onWindowShiftKey, true);
   window.addEventListener('keyup', onWindowShiftKey, true);
+  // Touch gesture bookkeeping for old-page commits (see onListPointerDown):
+  // while the finger is down the gesture controller owns scrollTop.
+  el?.addEventListener('pointerdown', onListPointerDown);
+  el?.addEventListener('pointerup', onListPointerUp);
+  el?.addEventListener('pointercancel', onListPointerUp);
   // Mobile layout swaps remount this component (flat tile) — the mount
   // happens after the resize event, so re-apply the auto-grow height.
   if (isMobile.value) nextTick(autoGrowMobileInput);
@@ -1263,6 +1414,17 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  // A page held for a gesture that never finished (window closed, mobile
+  // remount): the data still belongs to the session — land it in the store
+  // (there is no DOM left to anchor).
+  if (heldOlder) {
+    store.commitOlderPage(heldOlder.sid, heldOlder.page);
+    heldOlder = null;
+  }
+  if (heldFlushTimer) {
+    clearTimeout(heldFlushTimer);
+    heldFlushTimer = null;
+  }
   // Capture the scroll position before the DOM goes away — survives tab
   // switches and remounts via the store's per-session scroll memory.
   const el = listEl.value;
@@ -1274,6 +1436,9 @@ onUnmounted(() => {
   window.removeEventListener('resize', onViewportResize);
   window.removeEventListener('keydown', onWindowShiftKey, true);
   window.removeEventListener('keyup', onWindowShiftKey, true);
+  el?.removeEventListener('pointerdown', onListPointerDown);
+  el?.removeEventListener('pointerup', onListPointerUp);
+  el?.removeEventListener('pointercancel', onListPointerUp);
   resizeCleanup?.();
   listObserver?.disconnect();
 });
@@ -1320,6 +1485,10 @@ function restoreScroll(sessionId: string) {
 watch(
   () => props.sessionId,
   (newId, oldId) => {
+    // A page held under a stale gesture belongs to the OLD session — commit
+    // it before the element switches content (commitOlder's own guard
+    // abandons the re-anchor, so the new window's scroll is never touched).
+    if (oldId && heldOlder) flushHeldOlder();
     const el = listEl.value;
     if (el && oldId) {
       const old = chatScrollOf(oldId);

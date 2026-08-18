@@ -1683,29 +1683,16 @@ const PAGE_SIZE = 50;
 
 /**
  * Load a session's messages from the backend. First call replaces the
- * list with the newest PAGE_SIZE; `older: true` prepends the page before
- * the current oldest message (scroll-up pagination).
+ * list with the newest PAGE_SIZE messages.
  */
-export async function fetchMessages(sessionId: string, opts?: { older?: boolean }) {
+export async function fetchMessages(sessionId: string) {
   const s = findSession(sessionId);
   if (!s) return;
   const params = new URLSearchParams({ file: s.file, limit: String(PAGE_SIZE) });
-  if (opts?.older && s.oldestId) params.set('before', s.oldestId);
   try {
     const data = await api<any>(`/api/sessions/messages?${params.toString()}`);
-    const incoming = (data.messages ?? []) as DisplayMessage[];
-    if (opts?.older) {
-      // Prepend, keeping any live/optimistic messages at the tail intact.
-      // Dedupe by id: round-aligned pages never overlap in steady state,
-      // but a stale cursor (compaction rewrote the file, or a page loaded
-      // before the server's round-based slicing) can hand back entries we
-      // already hold.
-      const known = new Set(s.messages.map((m) => m.id).filter(Boolean));
-      s.messages = [...incoming.filter((m) => !m.id || !known.has(m.id)), ...s.messages];
-    } else {
-      s.messages = incoming;
-      s.messagesLoaded = true;
-    }
+    s.messages = (data.messages ?? []) as DisplayMessage[];
+    s.messagesLoaded = true;
     s.oldestId = data.oldestId ?? null;
     s.hasMoreOlder = !!data.hasMore;
     s.loadingOlder = false;
@@ -1720,12 +1707,66 @@ export async function fetchMessages(sessionId: string, opts?: { older?: boolean 
   }
 }
 
-/** Load the page of messages older than the current oldest one. */
-export async function loadOlder(sessionId: string) {
+/** One fetched older page, not yet applied to the session. */
+export interface OlderPage {
+  incoming: DisplayMessage[];
+  oldestId: string | null;
+  hasMore: boolean;
+  /** The raw message-response payload (session info rides along on it). */
+  payload: unknown;
+}
+
+/**
+ * Fetch the page of messages older than the session's current oldest one.
+ * FETCH ONLY — the session is not mutated: the caller applies the page with
+ * commitOlderPage once the viewport is safe to move (never under a held
+ * finger at the top edge, where the browser's gesture controller owns
+ * scrollTop and native scroll anchoring is suppressed at the origin).
+ * loadingOlder stays true until the commit, so a held finger at the top
+ * cannot start a second page.
+ * Returns null when nothing was fetched (no page, already loading, or a
+ * fetch error — connectivity failures are silent).
+ */
+export async function loadOlder(sessionId: string): Promise<OlderPage | null> {
   const s = findSession(sessionId);
-  if (!s || s.loadingOlder || !s.hasMoreOlder || !s.oldestId) return;
+  if (!s || s.loadingOlder || !s.hasMoreOlder || !s.oldestId) return null;
   s.loadingOlder = true;
-  await fetchMessages(sessionId, { older: true });
+  const params = new URLSearchParams({ file: s.file, limit: String(PAGE_SIZE), before: s.oldestId });
+  try {
+    const data = await api<any>(`/api/sessions/messages?${params.toString()}`);
+    return {
+      incoming: (data.messages ?? []) as DisplayMessage[],
+      oldestId: data.oldestId ?? null,
+      hasMore: !!data.hasMore,
+      payload: data,
+    };
+  } catch (e) {
+    s.loadingOlder = false;
+    // Connectivity failures are silent (the status-bar dot says it all);
+    // the SSE push refills messages once the connection is back.
+    if (!(e instanceof TypeError)) {
+      setSessionError(sessionId, `Failed to load messages: ${e instanceof Error ? e.message : e}`);
+    }
+    return null;
+  }
+}
+
+/**
+ * Apply a fetched older page: prepend it to the session's messages, keeping
+ * any live/optimistic messages at the tail intact. Dedupes by id: round-
+ * aligned pages never overlap in steady state, but a stale cursor
+ * (compaction rewrote the file, or a page loaded before the server's
+ * round-based slicing) can hand back entries we already hold.
+ */
+export function commitOlderPage(sessionId: string, page: OlderPage) {
+  const s = findSession(sessionId);
+  if (!s) return;
+  const known = new Set(s.messages.map((m) => m.id).filter(Boolean));
+  s.messages = [...page.incoming.filter((m) => !m.id || !known.has(m.id)), ...s.messages];
+  s.oldestId = page.oldestId;
+  s.hasMoreOlder = page.hasMore;
+  s.loadingOlder = false;
+  applySessionInfo(s, page.payload);
 }
 
 /**
@@ -1905,6 +1946,7 @@ export const store = {
   setSendKey,
   setRenderMarkdown,
   loadOlder,
+  commitOlderPage,
   bindWorkspace,
   refreshList,
   appendLocalMessage,

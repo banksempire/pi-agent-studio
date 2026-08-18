@@ -31,11 +31,14 @@
  *    re-anchor the view a page away).
  *  - T14 held-finger top bounce: loading older must pin the finger-held
  *    row at 0px — the older page appends to the HEAD while the previously
- *    loaded content does not move (native scroll anchoring scoped to the
- *    prepend + the exact anchor-part restore). A user who keeps their
- *    finger down at the top after triggering a load must NOT see the
- *    content flick to the top and re-trigger another page; after the load
- *    the position is mid-list, out of the <80 trigger zone.
+ *    loaded content does not move. With a REAL touch gesture (pointer
+ *    events) the page is not even committed while the finger is down at
+ *    the origin (a JS scrollTop write is clobbered by the gesture
+ *    controller and native anchoring is suppressed at scrollTop==0 — the
+ *    reported flick-to-top + re-trigger); it lands once the top edge goes
+ *    quiet, with 0px drift and the position left out of the <80 trigger
+ *    zone. Away from the origin the exact anchor-part restore (scoped
+ *    native anchoring included) covers the scrollTop==0 edge.
  *
  * Runs its own three-service stack (pi-nest + gateway + vite) on free
  * ports (override with XWIN_NEST_PORT / XWIN_BACKEND_PORT / XWIN_VITE_PORT)
@@ -1071,26 +1074,56 @@ function makeReporter() {
       // and the next bounce re-triggered loadOlder — page after page, with
       // flicker. The fix (per the user's prescription): the older page is
       // appended to the HEAD of the previously loaded content WITHOUT
-      // moving it 1px — the browser's native scroll anchoring keeps the
-      // finger-held row pinned (it survives an active touch gesture that
-      // clobbers a JS scrollTop write), the exact anchor-part restore
-      // covers the scrollTop==0 edge, and the simple trigger stays: once
-      // the load lands, scrollTop is mid-list (grew by the prepend) so no
+      // moving it 1px. When the fetch lands under a HELD finger at the
+      // origin (phase 2), the commit is deferred until the top edge is
+      // quiet — a JS scrollTop write is clobbered by the browser's gesture
+      // controller while the finger is down and native scroll anchoring is
+      // suppressed at scrollTop == 0, so neither could pin the loaded row.
+      // The fetches themselves still start immediately; only the prepend
+      // waits. Away from the origin (phase 1) the exact anchor-part restore
+      // covers the scrollTop==0 edge and the simple trigger stays: once the
+      // load lands, scrollTop is mid-list (grew by the prepend) so no
       // held-finger scroll event can re-fire.
       //
-      // Assertions (all three must hold):
-      //   1. exactly ONE before= fetch from the crossing + held-finger burst
-      //      (the old code re-loaded on every bounce event)
-      //   2. the row pinned at the top before the load is at the SAME
-      //      viewport offset after it (0px drift — content under the finger
-      //      does not move)
-      //   3. after the load the scroll position is NOT in the <80 top zone
-      //      (so a later scroll event cannot re-trigger)
+      // Phase 1 (desktop / quiet top): exactly ONE before= fetch from the
+      // crossing + scroll burst, the pinned row at 0px drift, position out
+      // of the <80 trigger zone.
+      // Phase 2 (real touch gesture): the page is NOT committed while the
+      // finger is held at the origin (0px movement — the store's message
+      // list does not even grow); on pointerup the page commits once, the
+      // finger-held row lands at the SAME viewport offset, and the position
+      // leaves the trigger zone.
       await switchTab('XWin-A');
       const aTile = page
         .locator('.sf-tab-label:has-text("XWin-A:")')
         .locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " sf-tile ")][1]');
       const aList = aTile.locator('.chat-messages');
+      const rows = () => aList.evaluate((el) => el.querySelectorAll('.chat-msg').length);
+      const heldRow = () =>
+        aList.evaluate((el) => {
+          const lr = el.getBoundingClientRect();
+          const first = Array.from(el.querySelectorAll('[data-msg-id]')).find(
+            (m) => m.getBoundingClientRect().bottom > lr.top + 2,
+          );
+          return {
+            msgId: first?.dataset.msgId ?? null,
+            top: first ? first.getBoundingClientRect().top - lr.top : null,
+          };
+        });
+      // Offset of a SPECIFIC row (the one held before the load) — after the
+      // prepend the first visible row is a different one (the page above),
+      // so the pin assertion must follow the SAME row id.
+      const rowOffset = (msgId) =>
+        aList.evaluate((el, id) => {
+          const lr = el.getBoundingClientRect();
+          const row = el.querySelector(`[data-msg-id="${id}"]`);
+          return row ? row.getBoundingClientRect().top - lr.top : null;
+        }, msgId);
+      const posInfo = () =>
+        aList.evaluate((el) => ({ top: el.scrollTop, max: el.scrollHeight - el.clientHeight }));
+
+      // ── Phase 1: scroll burst at the top, no touch ────────────────────
+
       // Start mid-list so the coming jump to the top is a real crossing.
       await aList.evaluate((el) => {
         el.scrollTop = Math.round((el.scrollHeight - el.clientHeight) * 0.4);
@@ -1114,20 +1147,9 @@ function makeReporter() {
         el.scrollTop = 0;
       });
       await delay(120);
-      const before = await aList.evaluate((el) => {
-        const lr = el.getBoundingClientRect();
-        const first = Array.from(el.querySelectorAll('[data-msg-id]')).find(
-          (m) => m.getBoundingClientRect().bottom > lr.top + 2,
-        );
-        return {
-          msgId: first?.dataset.msgId ?? null,
-          top: first ? first.getBoundingClientRect().top - lr.top : null,
-          scrollTop: el.scrollTop,
-        };
-      });
-      // Held finger: in-place scroll events at the CURRENT position while
-      // the fetch lands (the browser owns scrollTop — the app must not need
-      // to fight it).
+      const before = await heldRow();
+      // In-place scroll events at the CURRENT position while the fetch lands
+      // (the browser owns scrollTop — the app must not need to fight it).
       for (let i = 0; i < 10; i++) {
         await aList.evaluate((el) => {
           el.dispatchEvent(new Event('scroll'));
@@ -1135,25 +1157,93 @@ function makeReporter() {
         await delay(120);
       }
       await delay(800); // let fetch + prepend + re-anchor settle
-      const after = await aList.evaluate((el, msgId) => {
-        const lr = el.getBoundingClientRect();
-        const same = el.querySelector(`[data-msg-id="${msgId}"]`);
-        return {
-          sameTop: same ? same.getBoundingClientRect().top - lr.top : null,
-          scrollTop: el.scrollTop,
-          max: el.scrollHeight - el.clientHeight,
-        };
-      }, before.msgId);
+      const afterTop1 = await rowOffset(before.msgId);
+      const pos1 = await posInfo();
       await page.unroute('**/api/sessions/messages*', routeCount);
-      const pinned =
-        before.msgId !== null && after.sameTop !== null && Math.abs(after.sameTop - (before.top ?? 0)) <= 1;
-      const leftZone = after.scrollTop >= 80;
+      const pinned1 = before.msgId !== null && afterTop1 !== null && Math.abs(afterTop1 - before.top) <= 1;
+      const leftZone1 = pos1.top >= 80;
+      const phase1Ok = olderFetches === 1 && pinned1 && leftZone1;
+
+      // ── Phase 2: a REAL held finger (pointer events) ───────────────────
+
+      // A now shows 100 messages (phase 1 loaded one page); the next older
+      // page takes it to 110. While the finger is held at the origin the
+      // message list must not even grow — the page waits for the gesture.
+      let touchFetches = 0;
+      const routeTouch = async (route) => {
+        const url = route.request().url();
+        if (url.includes('before=')) {
+          touchFetches += 1;
+          await delay(600);
+        }
+        await route.continue();
+      };
+      await page.route('**/api/sessions/messages*', routeTouch);
+      // Mid-list, then put the finger DOWN on the list and cross to the top.
+      await aList.evaluate((el) => {
+        el.scrollTop = Math.round((el.scrollHeight - el.clientHeight) * 0.4);
+      });
+      await delay(400);
+      await aList.evaluate((el) => {
+        el.dispatchEvent(
+          new PointerEvent('pointerdown', { pointerType: 'touch', pointerId: 1, bubbles: true }),
+        );
+      });
+      await aList.evaluate((el) => {
+        el.scrollTop = 0; // crossing → loadOlder fires
+      });
+      await delay(150);
+      const heldBefore = await heldRow();
+      const rowsWhileLoading = await rows();
+      // Let the fetch finish while the finger is STILL down at the origin
+      // (~600ms wire delay). The commit must NOT land: rows stay at 100 and
+      // the held row does not move 1px.
+      await delay(750);
+      const rowsHeld = await rows();
+      const heldDuring = await heldRow();
+      // Held-finger jitter while the page waits for the gesture to end.
+      for (let i = 0; i < 6; i++) {
+        await aList.evaluate((el) => {
+          el.dispatchEvent(new Event('scroll'));
+        });
+        await delay(110);
+      }
+      // Finger up: the page commits once the top edge is quiet (~200ms
+      // after the last bounce event), then the exact anchor restore re-pins.
+      await aList.evaluate((el) => {
+        el.dispatchEvent(
+          new PointerEvent('pointerup', { pointerType: 'touch', pointerId: 1, bubbles: true }),
+        );
+      });
+      await delay(900);
+      const rowsAfter = await rows();
+      const heldAfterTop = await rowOffset(heldBefore.msgId);
+      const pos2 = await posInfo();
+      await page.unroute('**/api/sessions/messages*', routeTouch);
+      const noCommitWhileHeld =
+        rowsWhileLoading === 100 && rowsHeld === 100 && heldDuring.msgId === heldBefore.msgId;
+      const pinned2 =
+        heldBefore.msgId !== null && heldAfterTop !== null && Math.abs(heldAfterTop - heldBefore.top) <= 1;
+      const committed2 = rowsAfter === 110;
+      const leftZone2 = pos2.top >= 80;
+      const phase2Ok = touchFetches === 1 && noCommitWhileHeld && committed2 && pinned2 && leftZone2;
       return {
-        ok: olderFetches === 1 && pinned && leftZone,
-        why: `older fetches: ${olderFetches} (want 1) | pinned:${pinned ? 'yes' : 'no'} (top ${before.top} → ${after.sameTop}) | leftZone:${leftZone ? 'yes' : 'no'} (scrollTop ${after.scrollTop}/${after.max})`,
+        ok: phase1Ok && phase2Ok,
+        why:
+          `phase1 fetches:${olderFetches} pinned:${pinned1 ? 'yes' : 'no'} ` +
+          `(row ${before.msgId} ${before.top} → ${afterTop1}) leftZone:${leftZone1 ? 'yes' : 'no'} ` +
+          `(scrollTop ${pos1.top}/${pos1.max}) | ` +
+          `phase2 fetches:${touchFetches} rows:${rowsWhileLoading}/${rowsHeld}/${rowsAfter} ` +
+          `(want 100/100/110) held:${heldBefore.msgId}→${heldDuring.msgId}→` +
+          `${heldAfterTop} drift:${heldBefore.top}→${heldAfterTop} leftZone:${leftZone2 ? 'yes' : 'no'} ` +
+          `(scrollTop ${pos2.top}/${pos2.max})`,
       };
     })();
-    report('T14 older page pins under the held finger — 0px drift, no re-trigger', t14.ok, t14.why);
+    report(
+      'T14 older page pins under the finger — held: 0px movement, no commit; up: 0px drift, one page',
+      t14.ok,
+      t14.why,
+    );
 
     // ── Summary ────────────────────────────────────────────────────────────
 

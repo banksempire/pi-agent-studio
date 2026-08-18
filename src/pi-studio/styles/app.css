@@ -91,12 +91,10 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  /* Native scroll anchoring is OFF: loadOlder restores the viewport
-     itself (its anchor-part math), and the browser's own anchor
-     adjustment — Blink and WebKit apply it at different phases, and a
-     late pass can paint a wrong frame mid-load — would fight that
-     restore and flick the content. The sticky bottom-follow is JS
-     driven (scrollToBottom when sticky) and never needed anchoring. */
+  /* Native scroll anchoring is OFF everywhere: growth at the origin must
+     follow natively (a viewer pinned to the bottom sees a new message
+     arrive), and a prepend at the far end must NOT adjust the position
+     (which would fight the structural 0px load). */
   overflow-anchor: none;
   /* No TOP padding: the pinned separator must sit flush with the top of
      the window (row spacing comes from .chat-msg margins instead). */
@@ -105,16 +103,31 @@
      (between the title bar and the input panel) and the scrollbar of
      this scroll container must stay flush at the window edge. Both
      modes, matching the panel body's gutters. */
-  /* BLOCK layout, not flex: position:sticky on the message separators only
-     pins when the sticky element's nearest scroll container is this box AND
-     the element is not nested inside a flex item (Chromium: sticky inside a
-     column-flex item never pins). Row spacing is margins instead of gap. */
+  /* INVERTED flow: the container reverses its children, so ONE block
+     wrapper (.chat-flow) holds the rows in normal order; the wrapper is
+     the single flex item at the bottom — the scroll origin. Prepending
+     older content grows the flow's FAR (oldest) end and can never move
+     an already-loaded row: the 0px-load requirement is structural, not a
+     scroll write (see the INVERTED note in ChatWindow.vue). */
+  display: flex;
+  flex-direction: column-reverse;
+}
+
+/* The single block child of the inverted box: normal top-down layout,
+   bottom-anchored (newest message at the box's bottom edge). Rows keep
+   their exact distance from the bottom when older content is prepended.
+   NOTE: no min-height:0 here — as a flex item, its default min-height:auto
+   stops it from shrinking below its content, which is what makes the
+   container scrollable. */
+.chat-flow {
   display: block;
 }
 
 .chat-empty {
   width: fit-content;
-  margin: 30vh auto 0;
+  /* Bottom-anchored (the flow sits at the scroll origin): the hint rests
+     quietly above the composer. */
+  margin: 0 auto 24vh;
   color: var(--sf-text-muted);
   font-size: 16px;
 }

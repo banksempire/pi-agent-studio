@@ -30,18 +30,17 @@
  *    jump's own near-top scroll must not trigger loadOlder (which would
  *    re-anchor the view a page away).
  *  - T14 held-finger top bounce: on a touch device the older page loads
- *    ONLY after the finger releases — never during the gesture (the
- *    gesture controller owns scrollTop and native anchoring is suppressed
- *    at scrollTop==0, so a mid-gesture load could not pin the loaded row:
- *    the reported flick-to-top + re-trigger loop). With a REAL held finger
- *    (touch events; iOS Safari fires no pointer events for scroll
+ *    ONLY after the finger releases — never during the gesture. The
+ *    message list is an INVERTED scroll container (column-reverse; scroll
+ *    origin at the bottom/newest), so prepending an older page grows the
+ *    far end and the already-loaded rows keep their exact distance from
+ *    the origin: 0px shift BY CONSTRUCTION, under a held finger, mid-
+ *    gesture, or during iOS's release animation alike. With a REAL held
+ *    finger (touch events; iOS Safari fires no pointer events for scroll
  *    gestures) zero before= fetches start while the finger is down and the
- *    list does not move 1px; on touchend exactly one fetch lands — held
- *    through the post-release settle window (the native rubber-band
- *    release animation owns scrollTop without emitting scroll events)
- *    — with 0px drift and the position left out of the <80 trigger zone. Away from
- *    the origin the exact anchor-part restore (scoped native anchoring
- *    included) covers the scrollTop==0 edge.
+ *    list does not move 1px; on touchend exactly one fetch lands and
+ *    commits with 0px drift and the position left out of the <80 trigger
+ *    zone (distFromTop >= 80).
  *
  * Runs its own three-service stack (pi-nest + gateway + vite) on free
  * ports (override with XWIN_NEST_PORT / XWIN_BACKEND_PORT / XWIN_VITE_PORT)
@@ -343,12 +342,18 @@ function makeReporter() {
     const scrollState = () =>
       page.evaluate(() => {
         const el = document.querySelector('.chat-messages');
-        return { top: el.scrollTop, max: el.scrollHeight - el.clientHeight };
+        const max = el.scrollHeight - el.clientHeight;
+        // Inverted flow (column-reverse), Chromium convention: scrollTop ∈
+        // [-max, 0], 0 = bottom (newest). distFromTop = px from the OLDER
+        // edge — the loadOlder trigger zone is distFromTop < 80.
+        return { top: el.scrollTop, max, distFromTop: el.scrollTop + max };
       });
     const setScrollFrac = (frac) =>
       page.evaluate((f) => {
+        // frac: 0 = the older edge, 1 = the bottom (newest). Inverted
+        // flow: the older edge is scrollTop = -max.
         const el = document.querySelector('.chat-messages');
-        el.scrollTop = Math.round((el.scrollHeight - el.clientHeight) * f);
+        el.scrollTop = -Math.round((el.scrollHeight - el.clientHeight) * f);
       }, frac);
     const ui = () =>
       page.evaluate(() => ({
@@ -409,7 +414,10 @@ function makeReporter() {
       });
       await switchTab('XWin-A');
       await page.evaluate(() => {
-        document.querySelector('.chat-messages').scrollTop = 0; // triggers loadOlder
+        // Inverted flow: cross to the OLDER edge (scrollTop = -max) to
+        // trigger loadOlder.
+        const el = document.querySelector('.chat-messages');
+        el.scrollTop = -(el.scrollHeight - el.clientHeight);
       });
       await delay(100);
       await switchTab('XWin-B');
@@ -497,6 +505,18 @@ function makeReporter() {
       await switchTab('XWin-C');
       const imgLink = page.locator('.msg-image-link, .msg-fan-leaf').first();
       if ((await imgLink.count()) === 0) return { ok: false, why: 'no image message rendered in XWin-C' };
+      // The default view is the BOTTOM (newest) in the inverted flow; the
+      // image message sits mid-history — scroll it to the list top first.
+      // (Playwright's scrollIntoViewIfNeeded misjudges column-reverse
+      // containers, so scroll the container manually: target scrollTop =
+      // current + the element's screen offset from the list top.)
+      await imgLink.evaluate((el) => {
+        const list = el.closest('.chat-messages');
+        if (!list) return;
+        const lr = list.getBoundingClientRect();
+        const er = el.getBoundingClientRect();
+        list.scrollTop = list.scrollTop + (er.top - lr.top);
+      });
       await imgLink.click({ force: true });
       await delay(800);
       const inC = await ui();
@@ -524,13 +544,13 @@ function makeReporter() {
       await switchTab('XWin-A');
       await page.evaluate(() => {
         const el = document.querySelector('.chat-messages');
-        el.scrollTop = el.scrollHeight; // at the bottom → sticky
+        el.scrollTop = 0; // the bottom (newest) edge in the inverted flow → sticky
       });
       await delay(600);
       const bottomBefore = await scrollState();
       await drag(-130); // grow the composer → messages area shrinks
       const bottomAfter = await scrollState();
-      const pinnedBottom = bottomAfter.top >= bottomAfter.max - 3;
+      const pinnedBottom = bottomAfter.distFromTop >= bottomAfter.max - 3;
       await setScrollFrac(0.4); // scrolled up → not sticky
       await delay(600);
       const mid = await scrollState();
@@ -563,7 +583,7 @@ function makeReporter() {
       const atBottom = async () => {
         await delay(500);
         const s = await scrollState();
-        return { ok: s.top >= s.max - 3, s };
+        return { ok: s.distFromTop >= s.max - 3, s };
       };
       const why = [];
       const first = await atBottom(); // the window active at refresh
@@ -604,13 +624,17 @@ function makeReporter() {
       await delay(2500);
       const res = await page.evaluate(() => {
         const els = Array.from(document.querySelectorAll('.chat-messages'));
-        return els.map((el) => ({
-          top: el.scrollTop,
-          max: el.scrollHeight - el.clientHeight,
-          sticky: el.scrollHeight - el.scrollTop - el.clientHeight < 48,
-        }));
+        return els.map((el) => {
+          const max = el.scrollHeight - el.clientHeight;
+          return {
+            top: el.scrollTop,
+            max,
+            distFromTop: el.scrollTop + max,
+            sticky: el.scrollTop + max > max - 48,
+          };
+        });
       });
-      const ok = res.length === 2 && res.every((s) => s.top >= s.max - 3);
+      const ok = res.length === 2 && res.every((s) => s.distFromTop >= s.max - 3);
       return { ok, why: JSON.stringify(res) };
     })();
     report('T8 reload + split leaves both windows at the bottom', t8.ok, t8.why);
@@ -635,9 +659,13 @@ function makeReporter() {
       const res = await page.evaluate(() => {
         const els = Array.from(document.querySelectorAll('.chat-messages'));
         const [l, r] = [els[0], els[1]];
-        const info = (el) => ({ top: el.scrollTop, max: el.scrollHeight - el.clientHeight });
+        const info = (el) => ({
+          top: el.scrollTop,
+          max: el.scrollHeight - el.clientHeight,
+          distFromTop: el.scrollTop + (el.scrollHeight - el.clientHeight),
+        });
         const beforeR = info(r);
-        l.scrollTop = Math.round((l.scrollHeight - l.clientHeight) * 0.5); // scroll LEFT
+        l.scrollTop = -Math.round((l.scrollHeight - l.clientHeight) * 0.5); // scroll LEFT
         const afterR = info(r);
         return { beforeR, afterR };
       });
@@ -818,29 +846,29 @@ function makeReporter() {
       // Pin BOTH windows to the bottom, then drag the sash (A wider, B
       // narrower — the direction that used to strand B mid-list).
       await page.evaluate(() => {
-        for (const el of document.querySelectorAll('.chat-messages')) el.scrollTop = el.scrollHeight;
+        for (const el of document.querySelectorAll('.chat-messages')) el.scrollTop = 0;
       });
       await delay(600);
       const before = await page.evaluate(() =>
-        Array.from(document.querySelectorAll('.chat-messages')).map((el) => ({
-          top: el.scrollTop,
-          max: el.scrollHeight - el.clientHeight,
-        })),
+        Array.from(document.querySelectorAll('.chat-messages')).map((el) => {
+          const max = el.scrollHeight - el.clientHeight;
+          return { top: el.scrollTop, max, distFromTop: el.scrollTop + max };
+        }),
       );
       await dragSash(140);
       const after = await page.evaluate(() =>
-        Array.from(document.querySelectorAll('.chat-messages')).map((el) => ({
-          top: el.scrollTop,
-          max: el.scrollHeight - el.clientHeight,
-        })),
+        Array.from(document.querySelectorAll('.chat-messages')).map((el) => {
+          const max = el.scrollHeight - el.clientHeight;
+          return { top: el.scrollTop, max, distFromTop: el.scrollTop + max };
+        }),
       );
-      const pinned = after.every((s) => s.top >= s.max - 3);
+      const pinned = after.every((s) => s.distFromTop >= s.max - 3);
       // MID-scroll first-line case: scroll one window away from the bottom,
       // drag the sash — the first visible line must stay put (scrollTop
       // preserved), never yanked to the bottom.
       const midBefore = await page.evaluate(() => {
         const els = Array.from(document.querySelectorAll('.chat-messages'));
-        els[0].scrollTop = Math.round((els[0].scrollHeight - els[0].clientHeight) * 0.4);
+        els[0].scrollTop = -Math.round((els[0].scrollHeight - els[0].clientHeight) * 0.4);
         return els[0].scrollTop;
       });
       await delay(500);
@@ -987,10 +1015,13 @@ function makeReporter() {
       const winOf = () =>
         inB((el) => {
           const lr = el.getBoundingClientRect();
+          const max = el.scrollHeight - el.clientHeight;
           const sep = window.__t13?.sep ?? null;
           const row = window.__t13?.row ?? null;
           return {
             scrollTop: el.scrollTop,
+            max,
+            distFromTop: el.scrollTop + max,
             sepTop: sep ? Math.round(sep.getBoundingClientRect().top - lr.top) : -1,
             rowTop: row ? Math.round(row.getBoundingClientRect().top - lr.top) : -1,
             sepH: sep ? Math.round(sep.getBoundingClientRect().height) : -1,
@@ -1001,7 +1032,7 @@ function makeReporter() {
       //    never 0 — the old overlap hid the first item). Measure the
       //    PINNED separator's row (not the first sep in the list).
       await inB((el) => {
-        el.scrollTop = Math.round((el.scrollHeight - el.clientHeight) * 0.5);
+        el.scrollTop = -Math.round((el.scrollHeight - el.clientHeight) * 0.5);
       });
       await delay(600);
       const pin = await inB((el) => {
@@ -1030,10 +1061,11 @@ function makeReporter() {
         `pinnedJump:${jumpOk ? 'ok' : `BAD sepTop:${afterPin.sepTop} rowTop:${afterPin.rowTop} sepH:${afterPin.sepH} scrollTop:${afterPin.scrollTop} (want ${pinExpected})`}`,
       );
       // 2) Click the FIRST separator (top of the chat): the jump lands near
-      //    the top (< 80px) — the loadOlder trigger must NOT fire and yank
-      //    the view a page away (XWin-B has 60 messages > 1 page).
+      //    the top (< 80px from the older edge) — the loadOlder trigger must
+      //    NOT fire and yank the view a page away (XWin-B has 60 messages >
+      //    1 page).
       await inB((el) => {
-        el.scrollTop = 1200;
+        el.scrollTop = -1200;
       });
       await delay(400);
       const first = await inB((el) => {
@@ -1059,7 +1091,7 @@ function makeReporter() {
         Math.abs(afterTop1.sepTop) <= 2 &&
         Math.abs(afterTop1.rowTop - afterTop1.sepH) <= 2 &&
         Math.abs(afterTop2.scrollTop - afterTop1.scrollTop) <= 3 &&
-        afterTop1.scrollTop < 150;
+        afterTop1.distFromTop < 150;
       why.push(
         `topJump:${topOk ? 'ok' : `BAD sepTop:${afterTop1.sepTop} rowTop:${afterTop1.rowTop} scrollTop:${afterTop1.scrollTop}→${afterTop2.scrollTop} (want ≈${firstOffset}, stable)`}`,
       );
@@ -1075,31 +1107,25 @@ function makeReporter() {
       // their hand immediately keeps the scroll position AT the top, so
       // after the reload the previously loaded content flicked to the top
       // and the next bounce re-triggered loadOlder — page after page, with
-      // flicker. The fix (per the user's prescription): the older page is
-      // appended to the HEAD of the previously loaded content WITHOUT
-      // moving it 1px. When the fetch lands under a HELD finger at the
-      // origin (phase 2), the commit is deferred until the top edge is
-      // quiet — a JS scrollTop write is clobbered by the browser's gesture
-      // controller while the finger is down and native scroll anchoring is
-      // suppressed at scrollTop == 0, so neither could pin the loaded row.
-      // The fetches themselves still start immediately; only the prepend
-      // waits. Away from the origin (phase 1) the exact anchor-part restore
-      // covers the scrollTop==0 edge and the simple trigger stays: once the
-      // load lands, scrollTop is mid-list (grew by the prepend) so no
-      // held-finger scroll event can re-fire.
+      // flicker.
+      //
+      // The fix (per the user's prescription): the older page is appended
+      // to the HEAD of the previously loaded content WITHOUT moving it 1px.
+      // The messages box is an INVERTED scroll container (column-reverse,
+      // origin at the bottom), so prepending grows the FAR end and the
+      // loaded rows keep their exact distance from the origin — the 0px pin
+      // is structural, not a scroll write, which is what makes it hold even
+      // under a held finger / mid-gesture / during iOS's release
+      // animation.
       //
       // Phase 1 (desktop / quiet top): exactly ONE before= fetch from the
       // crossing + scroll burst, the pinned row at 0px drift, position out
-      // of the <80 trigger zone.
+      // of the <80 trigger zone (distFromTop >= 80).
       // Phase 2 (real held finger, touch events): ZERO loads may start
-      // while the finger is held at the origin (0px movement — the list
-      // does not even grow); on touchend exactly one page loads, but even a
-      // FAST fetch must not commit inside the post-release settle window
-      // (the native rubber-band release animation owns scrollTop ~400ms
-      // after a scroll gesture ends at the top — committing there shifts
-      // the loaded content); once the window passes, the finger-held row
-      // lands at the SAME viewport offset and the position leaves the
-      // trigger zone.
+      // while the finger is held at the older edge (0px movement — the
+      // list does not even grow); on touchend exactly one page loads and
+      // commits, the finger-held row lands at the SAME viewport offset and
+      // the position leaves the trigger zone.
       await switchTab('XWin-A');
       const aTile = page
         .locator('.sf-tab-label:has-text("XWin-A:")')
@@ -1127,13 +1153,17 @@ function makeReporter() {
           return row ? row.getBoundingClientRect().top - lr.top : null;
         }, msgId);
       const posInfo = () =>
-        aList.evaluate((el) => ({ top: el.scrollTop, max: el.scrollHeight - el.clientHeight }));
+        aList.evaluate((el) => {
+          const max = el.scrollHeight - el.clientHeight;
+          return { top: el.scrollTop, max, distFromTop: el.scrollTop + max };
+        });
 
       // ── Phase 1: scroll burst at the top, no touch ────────────────────
 
-      // Start mid-list so the coming jump to the top is a real crossing.
+      // Start mid-list so the coming jump to the older edge is a real
+      // crossing.
       await aList.evaluate((el) => {
-        el.scrollTop = Math.round((el.scrollHeight - el.clientHeight) * 0.4);
+        el.scrollTop = -Math.round((el.scrollHeight - el.clientHeight) * 0.4);
       });
       await delay(500);
       let olderFetches = 0;
@@ -1148,10 +1178,11 @@ function makeReporter() {
         await route.continue();
       };
       await page.route('**/api/sessions/messages*', routeCount);
-      // The crossing: scroll to the top → onScroll fires loadOlder. The fetch
-      // is still in flight when we snapshot the held row 120ms later.
+      // The crossing: scroll to the OLDER edge (−max) → onScroll fires
+      // loadOlder. The fetch is still in flight when we snapshot the held
+      // row 120ms later.
       await aList.evaluate((el) => {
-        el.scrollTop = 0;
+        el.scrollTop = -(el.scrollHeight - el.clientHeight);
       });
       await delay(120);
       const before = await heldRow();
@@ -1168,14 +1199,14 @@ function makeReporter() {
       const pos1 = await posInfo();
       await page.unroute('**/api/sessions/messages*', routeCount);
       const pinned1 = before.msgId !== null && afterTop1 !== null && Math.abs(afterTop1 - before.top) <= 1;
-      const leftZone1 = pos1.top >= 80;
+      const leftZone1 = pos1.distFromTop >= 80;
       const phase1Ok = olderFetches === 1 && pinned1 && leftZone1;
 
       // ── Phase 2: a REAL held finger (touch events) ────────────────────
 
       // The touch contract (per the user): the older page is loaded ONLY
-      // after the finger is released. While the finger is down at the
-      // origin, ZERO before= fetches may start; on touchend exactly one
+      // after the finger is released. While the finger is down at the older
+      // edge, ZERO before= fetches may start; on touchend exactly one
       // fetch starts, lands pinned (0px drift), and leaves the position out
       // of the <80 trigger zone. Touch events (not pointer events): iOS
       // Safari dispatches no pointer events for scroll gestures.
@@ -1213,9 +1244,10 @@ function makeReporter() {
           return slot ? slot.getBoundingClientRect().height : -1;
         });
       const slotBefore = await slotHeight();
-      // Mid-list, then put the finger DOWN on the list and cross to the top.
+      // Mid-list, then put the finger DOWN on the list and cross to the
+      // older edge.
       await aList.evaluate((el) => {
-        el.scrollTop = Math.round((el.scrollHeight - el.clientHeight) * 0.4);
+        el.scrollTop = -Math.round((el.scrollHeight - el.clientHeight) * 0.4);
       });
       await delay(400);
       await aList.evaluate((el) => {
@@ -1237,24 +1269,22 @@ function makeReporter() {
         el.addEventListener('scroll', () => window.__tr.scrolls.push(Math.round(el.scrollTop)));
       });
       await aList.evaluate((el) => {
-        el.scrollTop = 0; // crossing to the top while the finger is down
+        el.scrollTop = -(el.scrollHeight - el.clientHeight); // crossing to the older edge while the finger is down
       });
       await delay(150);
       const heldBefore = await heldRow();
       const rowsWhileLoading = await rows();
-      // Hold the finger at the origin for longer than the whole fetch would
-      // take: NO load may start and the list must not grow (rows stay 100,
-      // the held row does not move 1px).
+      // Hold the finger at the older edge for longer than the whole fetch
+      // would take: NO load may start and the list must not grow (rows stay
+      // 100, the held row does not move 1px).
       await delay(750);
       const rowsHeld = await rows();
       const heldDuring = await heldRow();
       const fetchesWhileHeld = touchFetches;
-      // Finger up: the load starts NOW; the commit must WAIT OUT the
-      // post-release settle window (~400ms) even though the fetch completes
-      // in ~200ms (50ms wire delay + backend). The loading spinner stays on
-      // until the commit, so measure when it clears: it must clear no
-      // sooner than the settle window — a premature commit would drop it at
-      // fetch-completion time and shift the loaded content.
+      // Finger up: the load starts NOW and commits as soon as the fetch
+      // completes (the inverted flow makes the commit a pure prepend — the
+      // loaded rows cannot move, so there is no need to wait out any
+      // release animation).
       await aList.evaluate((el) => {
         el.dispatchEvent(new TouchEvent('touchend', { bubbles: true }));
       });
@@ -1272,17 +1302,16 @@ function makeReporter() {
           now: Math.round(performance.now() - tr.t0),
         };
       });
-      // The observed settle window (spinner ON → OFF) must be the post-release
-      // settle window of the REAL device — recompute from the page timestamps.
-      const settleElapsed = trace.spinnerOnRel >= 0 && trace.spinnerOffRel >= 0 ? trace.spinnerOffRel - trace.spinnerOnRel : -1;
       await page.unroute('**/api/sessions/messages*', routeTouch);
       const noLoadWhileHeld =
-        fetchesWhileHeld === 0 && rowsWhileLoading === 100 && rowsHeld === 100 && heldDuring.msgId === heldBefore.msgId;
-      // The spinner must have been held through the release window (~400ms)
-      // after the touchend — a commit inside that window would have cleared
-      // it at fetch-completion time (~200ms after release) and shifted the
-      // loaded content on the touch device.
-      const heldThroughRelease = settleElapsed >= 350;
+        fetchesWhileHeld === 0 &&
+        rowsWhileLoading === 100 &&
+        rowsHeld === 100 &&
+        heldDuring.msgId === heldBefore.msgId;
+      // The spinner must have appeared (load started) and cleared (commit
+      // landed). The span is the fetch duration — the commit is immediate;
+      // the 0px pin no longer depends on timing.
+      const spinnerRan = trace.spinnerOnRel >= 0 && trace.spinnerOffRel >= 0;
       // The load-older slot is PERMANENT: its height above the pinned row is
       // identical before and after the load (the marker only changes text,
       // never geometry). If it were removed on the last page, the whole list
@@ -1291,11 +1320,11 @@ function makeReporter() {
       const pinned2 =
         heldBefore.msgId !== null && heldAfterTop !== null && Math.abs(heldAfterTop - heldBefore.top) <= 1;
       const committed2 = rowsAfter === 110;
-      const leftZone2 = pos2.top >= 80;
+      const leftZone2 = pos2.distFromTop >= 80;
       const phase2Ok =
         touchFetches === 1 &&
         noLoadWhileHeld &&
-        heldThroughRelease &&
+        spinnerRan &&
         slotReserved &&
         committed2 &&
         pinned2 &&
@@ -1305,12 +1334,12 @@ function makeReporter() {
         why:
           `phase1 fetches:${olderFetches} pinned:${pinned1 ? 'yes' : 'no'} ` +
           `(row ${before.msgId} ${before.top} → ${afterTop1}) leftZone:${leftZone1 ? 'yes' : 'no'} ` +
-          `(scrollTop ${pos1.top}/${pos1.max}) | ` +
-          `phase2 fetches:${fetchesWhileHeld}/${touchFetches} spinner-cleared-at:${settleElapsed}ms ` +
-          `(want 0/1, >=350ms) rows:${rowsWhileLoading}/${rowsHeld}/${rowsAfter} (want 100/100/110) ` +
+          `(distFromTop ${pos1.distFromTop}/${pos1.max}) | ` +
+          `phase2 fetches:${fetchesWhileHeld}/${touchFetches} spinner:${trace.spinnerOnRel}→${trace.spinnerOffRel}ms ` +
+          `(want 0/1, on→off) rows:${rowsWhileLoading}/${rowsHeld}/${rowsAfter} (want 100/100/110) ` +
           `slot:${slotBefore}→${slotAfter}px (want equal) held:${heldBefore.msgId}→${heldDuring.msgId}→` +
           `${heldAfterTop} drift:${heldBefore.top}→${heldAfterTop} leftZone:${leftZone2 ? 'yes' : 'no'} ` +
-          `(scrollTop ${pos2.top}/${pos2.max}) trace:${JSON.stringify(trace)}`,
+          `(distFromTop ${pos2.distFromTop}/${pos2.max}) trace:${JSON.stringify(trace)}`,
       };
     })();
     report(

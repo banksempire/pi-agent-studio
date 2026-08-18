@@ -22,7 +22,6 @@ import {
   clearSessionError,
   type DisplayMessage,
   fmtTime,
-  type OlderPage,
   openGroupsOf,
   sessionErrorOf,
   setAttachments,
@@ -142,111 +141,107 @@ function setSticky(v: boolean) {
 
 function scrollToBottom() {
   const el = listEl.value;
-  if (el) pinBottom(el);
+  if (el) pinToEdge(el, 'newer');
 }
 
-/**
- * Programmatic bottom-pin: set the view to the bottom edge AND record the
- * resulting scrollTop so onScroll can recognize the pin's own scroll event
- * (the echo) and never mistake it for a user scroll-away. The recorded
- * value is the POST-clamp scrollTop (the browser clamps the write to
- * scrollHeight - clientHeight), which is exactly what the echo reports.
- */
-function pinBottom(el: HTMLElement) {
-  el.scrollTop = el.scrollHeight;
+// ── INVERTED message flow ─────────────────────────────────────────────────
+//
+// .chat-messages is display:flex; flex-direction:column-reverse with ONE
+// block child (.chat-flow) that lays the rows out NORMALLY (oldest at its
+// top — the OLDER end — newest at its bottom). The wrapper sits at the
+// bottom of the container: the scroll ORIGIN. Every row's distance is then
+// measured from the bottom, so:
+//   * prepending an older page grows the flow's FAR (top) end — every
+//     already-loaded row keeps its exact distance from the origin. The
+//     loaded content CANNOT move a pixel, BY CONSTRUCTION: no scroll
+//     write, no measurement, no anchoring. The old re-anchor + hold-until-
+//     quiet machinery existed because the list grew at the SAME edge the
+//     viewport measured from; that failure mode is structurally gone.
+//   * appending a new message grows the origin end: a viewer "stuck to the
+//     bottom" sees the new message arrive while the previous content
+//     slides up — the native origin behavior, no scroll work needed.
+//     overflow-anchor:none stops the engine from re-anchoring on a visible
+//     row instead (which would strand the view above the new message).
+//
+// Engines disagree on the scrollTop SIGN of column-reverse containers:
+// Chromium reports 0 at the bottom (the origin) and NEGATIVE values toward
+// the top; CSSOM-conventional engines report 0 at the top and max at the
+// bottom. All scroll math goes through posInfo()/pinToEdge(), which detect
+// the convention once with a detached probe.
+
+/** Does scrollTop == 0 mean the bottom (Chromium's column-reverse
+ *  convention: scrollTop ∈ [-(max), 0], origin at the bottom)? Detected
+ *  once, on a detached probe box: the default scroll of a column-reverse
+ *  box shows its bottom; Chromium reports 0 there, conventional engines
+ *  report (scrollHeight - clientHeight). */
+let zeroIsBottom: boolean | null = null;
+function detectScrollConvention(): boolean {
+  if (zeroIsBottom !== null) return zeroIsBottom;
+  const probe = document.createElement('div');
+  probe.style.cssText =
+    'position:absolute;visibility:hidden;display:flex;flex-direction:column-reverse;overflow:auto;height:10px';
+  const child = document.createElement('div');
+  child.style.height = '100px';
+  probe.appendChild(child);
+  document.body.appendChild(probe);
+  const pMax = probe.scrollHeight - probe.clientHeight;
+  const pSt = probe.scrollTop;
+  probe.remove();
+  zeroIsBottom = pMax <= 0 ? true : Math.abs(pSt) < pMax / 2;
+  return zeroIsBottom;
+}
+
+/** Abstracted scroll position of the messages box. distFromTop is the
+ *  distance (px) from the OLDER edge — the edge where loadOlder triggers —
+ *  regardless of engine sign convention; st is the raw scrollTop; max the
+ *  scrollable range [older..newer]. */
+function posInfo(el: HTMLElement) {
+  const max = Math.max(0, el.scrollHeight - el.clientHeight);
+  const st = el.scrollTop;
+  return { max, st, distFromTop: detectScrollConvention() ? st + max : st };
+}
+
+/** Write the viewport to a list edge. Returns the post-clamp scrollTop so
+ *  onScroll can recognize the pin's own echo scroll event (the browser
+ *  clamps the write to the range; the echo reports exactly the clamped
+ *  value within the same frame). */
+function pinToEdge(el: HTMLElement, edge: 'older' | 'newer') {
+  const { max } = posInfo(el);
+  el.scrollTop = edge === 'newer' ? (zeroIsBottom ? 0 : max) : zeroIsBottom ? -max : 0;
   lastPinTop = el.scrollTop;
   lastPinAt = performance.now();
 }
 
-/** scrollTop of the most recent programmatic bottom-pin (-1 = none) and the
- *  moment it was written. Per instance (per tile): the same element serves
- *  every session shown in the tile, and only this instance's pins set it.
- *  The timestamp keeps a stale pin value from absorbing a LATER genuine
- *  user scroll that happens to land on the same pixel: the echo always
- *  arrives within the same frame as the pin, so anything older than a
- *  quarter second is not an echo. */
+/** scrollTop of the most recent programmatic pin (-1 = none) and the moment
+ *  it was written. Per instance (per tile): the same element serves every
+ *  session shown in the tile, and only this instance's pins set it. The
+ *  timestamp keeps a stale pin value from absorbing a LATER genuine user
+ *  scroll that happens to land on the same pixel: the echo always arrives
+ *  within the same frame as the pin. */
 let lastPinTop = -1;
 let lastPinAt = 0;
 
 /** Moment of the most recent separator jump (click on the pinned chat bar).
- *  The jump lands near the top, and its own scroll echo must not read as a
- *  user scroll-up gesture — that would auto-load the older page and
- *  re-anchor the view a page away from the jump target. */
+ *  The jump lands near the older edge, and its own scroll echo must not
+ *  read as a user scroll-up gesture — that would auto-load the older page
+ *  and re-anchor the view a page away from the jump target. */
 let sepJumpAt = 0;
 
 /**
- * Touch-scroll bookkeeping for old-page loads.
- *
- * On a touch device the browser's gesture controller OWNS the scroll
- * position while a finger is down: a JS scrollTop write made mid-gesture is
- * overridden (content "flicks to the top" after a prepend), and NATIVE
- * scroll anchoring is suppressed at the scroll origin (scrollTop == 0) — the
- * exact spot a scroll-to-top load lands. So touching and loading at the
- * same time — commit a page, re-anchor mid-gesture — cannot be made safe
- * with JS. The touch path therefore loads ONLY after the finger has been
- * released: the onScroll trigger is gated on no finger being down
- * (touchDownCount === 0), and touchend starts the load for a scroll gesture
- * that ended in the top zone. At that point the gesture controller has
- * released scrollTop, the JS re-anchor write sticks, and the exact
- * anchor-part restore keeps the previously loaded content at the SAME
- * pixels (per the user's prescription — "append older content on top of
- * previously loaded content without moving 1px of it"). A fetched page is
- * still held (never committed) while the top edge stays active — momentum
- * bouncing after a flick, or a re-touch — and committed when it goes quiet.
- *
- * The 'finger is down' signal MUST come from TOUCH events: iOS Safari
- * dispatches no pointer events for scroll gestures (taps only) and sends
- * pointercancel the moment it takes the gesture over, while touch events
- * stay alive for the whole gesture (touchstart → touchend).
+ * Touch-gesture bookkeeping for old-page loads on touch devices. The USER's
+ * rule: the older page is fetched ONLY after the finger releases — never
+ * while it is down — so the trigger runs on touchend, not on the scroll
+ * events. (With the inverted flow a mid-gesture commit could not shift the
+ * loaded content anyway; the release trigger is the simplification the user
+ * asked for.) The 'finger is down' signal MUST come from TOUCH events: iOS
+ * Safari dispatches no pointer events for scroll gestures (taps only) and
+ * sends pointercancel the moment it takes the gesture over, while touch
+ * events stay alive for the whole gesture (touchstart → touchend).
  */
 let touchDownCount = 0;
 /** The current touch gesture actually scrolled — only then does touchend
  *  start a load (a plain tap on a separator/button/message never will). */
 let gestureScrolled = false;
-/** The most recent scroll event that arrived while in the <80 top zone. */
-let lastTopScrollAt = 0;
-/** Moment the finger lifted. iOS plays a NATIVE release animation after a
- *  touch that ends at the overscrolled top edge: it owns scrollTop for a few
- *  hundred ms WITHOUT emitting any scroll events, so the quiet heuristic
- *  cannot see it and a commit made in that window is clobbered (the loaded
- *  content shifts by the page height). Commits wait this window out. */
-let lastTouchEndAt = 0;
-/** A fetched older page waiting for the top edge to go quiet. */
-let heldOlder: HeldOlder | null = null;
-let heldFlushTimer: ReturnType<typeof setTimeout> | null = null;
-
-/** A fetched older page plus the geometry snapshot needed to re-anchor. */
-interface HeldOlder {
-  sid: string;
-  page: OlderPage;
-  prevHeight: number;
-  prevTop: number;
-  anchorSel: string | null;
-  anchorOffset: number;
-}
-
-/**
- * True while the top edge is still owned by a gesture — the user's finger
- * down, or the engine's momentum still bouncing at the origin. Committing
- * an older page then would be clobbered: the browser's gesture controller
- * overrides a JS scrollTop write, and native scroll anchoring is suppressed
- * at the scroll origin — so the loaded content would flick to the top and
- * re-trigger the load.
- */
-function topEdgeActive(el: HTMLElement) {
-  return (
-    el.scrollTop < 80 &&
-    (touchDownCount > 0 ||
-      performance.now() - lastTopScrollAt < 200 ||
-      // Finger up right after an actual scroll gesture ended at the very
-      // top: the native overscroll-release animation (rubber band snapping
-      // back) still owns scrollTop even though NO scroll events fire and no
-      // touch is down — wait it out before committing, or the re-anchor
-      // write is overridden and the loaded content shifts by the prepended
-      // height. A plain tap (button/separator) has no release animation.
-      (el.scrollTop === 0 && gestureScrolled && performance.now() - lastTouchEndAt < 400))
-  );
-}
 
 function onTouchStart() {
   touchDownCount += 1;
@@ -255,50 +250,16 @@ function onTouchStart() {
 
 function onTouchEnd() {
   touchDownCount = Math.max(0, touchDownCount - 1);
-  lastTouchEndAt = performance.now();
   const el = listEl.value;
   if (!el) return;
-  // A page held for a re-touch/momentum flush, then the load trigger: this
-  // touchend is the ONLY moment a touch user starts the older-page fetch —
-  // never while the finger was down. A plain tap (separator jump, load-older
-  // button, message) does not scroll, so it never loads here.
-  const hadHeld = !!heldOlder;
-  if (hadHeld) flushHeldOlder();
-  if (!hadHeld && gestureScrolled && el.scrollTop < 80 && performance.now() - sepJumpAt > 250) {
+  // This touchend is the ONLY moment a touch user starts the older-page
+  // fetch — never while the finger was down. A plain tap (separator jump,
+  // load-older button, message) does not scroll, so it never loads here.
+  // A separator jump's own near-edge echo is excluded by the sepJumpAt
+  // window (the jump is a navigation, not a scroll-up gesture).
+  if (gestureScrolled && posInfo(el).distFromTop < 80 && performance.now() - sepJumpAt > 250) {
     void loadOlder();
   }
-}
-
-/**
- * Commit a held older page once the top edge is quiet (finger up and no
- * scroll activity in the top zone for a beat — momentum bounce at the
- * origin still owns the position). Re-arms itself while still active, so a
- * finger held at the top indefinitely simply keeps waiting.
- */
-function armHeldFlush() {
-  if (heldFlushTimer || !heldOlder) return;
-  heldFlushTimer = setTimeout(() => {
-    heldFlushTimer = null;
-    const el = listEl.value;
-    if (!heldOlder || !el) return;
-    if (topEdgeActive(el)) {
-      armHeldFlush();
-    } else {
-      flushHeldOlder();
-    }
-  }, 200);
-}
-
-/** Commit the held page now (whenever the current conditions allow). */
-function flushHeldOlder() {
-  const held = heldOlder;
-  if (!held) return;
-  heldOlder = null;
-  if (heldFlushTimer) {
-    clearTimeout(heldFlushTimer);
-    heldFlushTimer = null;
-  }
-  void commitOlder(held);
 }
 
 function onScroll() {
@@ -308,183 +269,53 @@ function onScroll() {
   // A scroll event arriving while a finger is down means the gesture
   // scrolled (see onTouchEnd — only such gestures trigger on release).
   if (touchDownCount > 0) gestureScrolled = true;
-  // Echo of OUR OWN bottom-pin (resize re-pin, keepBottom, send, ↓): the
-  // pin was written when the geometry was smaller — by the time this scroll
-  // event dispatches, the content may have grown (a sash drag reflows the
-  // narrower window taller), so the geometric check below would read
-  // mid-list and wrongly clear sticky, stranding the window above the new
-  // bottom. The echo reports EXACTLY the pinned scrollTop within the same
-  // frame; a genuine user scroll never matches both. Keep the flag, and
-  // re-pin to the CURRENT bottom if the content has grown past the pin.
-  if (lastPinTop >= 0 && el.scrollTop === lastPinTop && performance.now() - lastPinAt < 250) {
-    if (st.sticky && el.scrollTop + el.clientHeight < el.scrollHeight - 48) {
-      pinBottom(el);
-    }
-    st.top = el.scrollTop;
+  const { max, st: stv, distFromTop } = posInfo(el);
+  // Echo of OUR OWN pin (resize re-pin, keepBottom, send, ↓): the pin was
+  // written when the geometry was smaller — by the time this scroll event
+  // dispatches the content may have grown, so the geometric check below
+  // would read mid-list and wrongly clear sticky, stranding the window
+  // above the new bottom. The echo reports EXACTLY the pinned scrollTop
+  // within the same frame; a genuine user scroll never matches both.
+  if (lastPinTop >= 0 && stv === lastPinTop && performance.now() - lastPinAt < 250) {
+    if (st.sticky && distFromTop < max - 48) pinToEdge(el, 'newer');
+    st.top = stv;
     return;
   }
   lastPinTop = -1;
-  st.sticky = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
-  st.top = el.scrollTop;
-  // Top-zone activity (scroll-up gesture or momentum bounce at the origin)
-  // keeps a held older page waiting; leaving the zone commits it — away
-  // from the origin native scroll anchoring pins the loaded row under the
-  // moving finger, which a JS write could not.
-  if (el.scrollTop < 80) lastTopScrollAt = performance.now();
-  if (heldOlder) {
-    if (el.scrollTop >= 80) {
-      flushHeldOlder();
-    } else {
-      armHeldFlush();
-    }
-  }
-  // Scroll-up pagination: near the top → load older messages. NEVER while
-  // a finger is down on a touch device — the gesture controller owns
-  // scrollTop, so a mid-gesture load could never pin the loaded row (it is
-  // what spawned the flick + re-trigger loop); the touchend handler starts
-  // the load once the finger releases. Desktop (mouse/trackpad, no touch
-  // events) keeps the level trigger. Skipped for the echo of a separator
-  // jump: that is a "go to the start" navigation, not a user scroll-up
-  // gesture — auto-loading would re-anchor the view a page away from the
-  // jump target.
-  if (el.scrollTop < 80 && touchDownCount === 0 && performance.now() - sepJumpAt > 250) {
+  // Near the NEWER (bottom) edge → follow new content; anywhere above it
+  // the user is reading history and must never be yanked down.
+  st.sticky = distFromTop > max - 48;
+  st.top = stv;
+  // Scroll-up pagination: near the OLDER edge → load older messages. NEVER
+  // while a finger is down on a touch device (the user's rule: load only
+  // after release — the touchend handler starts it then). Desktop
+  // (mouse/trackpad, no touch events) keeps the level trigger. Skipped for
+  // the echo of a separator jump: a "go to the start" navigation, not a
+  // user scroll-up gesture.
+  if (distFromTop < 80 && touchDownCount === 0 && performance.now() - sepJumpAt > 250) {
     void loadOlder();
   }
 }
 
 /**
- * Load the previous page. FETCHES IMMEDIATELY, but commits (prepends) only
- * when the top edge is quiet: a held finger at the origin must never see
- * the loaded content move — the gesture controller clobbers a JS scrollTop
- * write and native anchoring is suppressed at scrollTop == 0, so an early
- * commit would shift the loaded content down by the page height (flicker)
- * and re-trigger the load from the next bounce event.
+ * Load the previous page and apply it IMMEDIATELY. With the inverted flow
+ * the prepend grows the far (OLDER) end of the list, so the already-loaded
+ * content keeps its exact position with NO scroll adjustment — a commit at
+ * any moment (mid-gesture, during a release animation, while streaming) is
+ * safe, which is what made the previous hold-and-wait design necessary.
+ * The fetch is still gated on the release of the finger for touch users
+ * (their explicit rule) and on the <80px trigger zone for everyone else.
  */
 async function loadOlder() {
   const s = session.value;
-  const el = listEl.value;
-  if (!s || !el || s.loadingOlder || !s.hasMoreOlder) return;
+  if (!s || s.loadingOlder || !s.hasMoreOlder) return;
   const sid = props.sessionId;
-  const prevHeight = el.scrollHeight;
-  const prevTop = el.scrollTop;
-  // Anchor the viewport on the LAST part of the first rendered row. Parts
-  // keep their keys across an older-page prepend (reply ids from the
-  // message, group ids from the first work message of their segment), so
-  // the anchor survives even when the page boundary falls mid-turn and the
-  // row itself is re-created with a new key. After the commit the part's
-  // own screen offset is the true correction: it accounts for the
-  // prepended page AND anything streamed in while the fetch was in flight
-  // — the scrollHeight-delta math over-shoots by the streamed height and
-  // yanks the view down, losing the user's place.
-  const first = el.querySelector('[data-msg-id]') as HTMLElement | null;
-  let anchorSel: string | null = null;
-  const firstKey = first?.getAttribute('data-msg-id');
-  if (first && firstKey) {
-    const parts = first.querySelectorAll('[data-part-id]');
-    const partKey = parts.length > 0 ? parts[parts.length - 1].getAttribute('data-part-id') : null;
-    anchorSel = partKey
-      ? `[data-part-id="${CSS.escape(partKey)}"]`
-      : `[data-msg-id="${CSS.escape(firstKey)}"]`;
-  }
-  const anchorEl = anchorSel ? (el.querySelector(anchorSel) as HTMLElement | null) : null;
-  const anchorOffset = anchorEl ? anchorEl.getBoundingClientRect().top - el.getBoundingClientRect().top : 0;
   const page = await store.loadOlder(s.id);
   if (!page) return;
-  const held: HeldOlder = { sid, page, prevHeight, prevTop, anchorSel, anchorOffset };
-  // Top edge active (finger down, or momentum still bouncing at the
-  // origin): commit when it goes quiet — never under the gesture.
-  if (topEdgeActive(el)) {
-    heldOlder = held;
-    armHeldFlush();
-    return;
-  }
-  void commitOlder(held);
-}
-
-/**
- * Apply a fetched older page and re-anchor the viewport so the previously
- * loaded content does not move 1px. Scope the browser's NATIVE scroll
- * anchoring to THIS prepend: when older content is inserted at the head
- * while a touch user's finger is still down, the engine itself keeps the
- * already-loaded row pinned (scrollTop grows by the prepended height) — a
- * JS scrollTop write made during an active gesture is overridden by the
- * browser's gesture controller, which is why the manual restore alone
- * flicked to the top and re-triggered. The exact anchor-part restore below
- * stays as the scrollTop==0 edge authority (native anchoring does not fire
- * at the origin) and as the frame-level safety net; everything else
- * (resize re-pins, bottom-follow) keeps overflow-anchor:none so the JS
- * math is never double-applied. Normally the commit runs with the top edge
- * quiet (see loadOlder) so the write sticks.
- */
-async function commitOlder(held: HeldOlder) {
-  const el = listEl.value;
-  // The page always lands in the session's data — even when the window
-  // moved on or is gone (tab switched, window closed) — so the user's
-  // place is never stranded a page early. Only the viewport re-anchor
-  // needs the element AND the session it currently shows.
-  if (!el || props.sessionId !== held.sid || session.value?.id !== held.sid) {
-    store.commitOlderPage(held.sid, held.page);
-    return;
-  }
-  const prevAnchor = el.style.overflowAnchor;
-  el.style.overflowAnchor = 'auto';
-  try {
-    store.commitOlderPage(held.sid, held.page);
-    await nextTick();
-  } finally {
-    el.style.overflowAnchor = prevAnchor;
-  }
-  // The commit is async — the user may have switched to ANOTHER window
-  // while it was in flight (a tab click, or the live session kept streaming
-  // elsewhere). The shared component instance then renders other content in
-  // the SAME element, and re-anchoring against it would write the other
-  // session's scrollTop — the cross-window scroll bleed (one window's
-  // loadOlder moved another window's position). Abandon the re-anchor when
-  // the window no longer shows the session the commit belongs to.
-  if (listEl.value !== el || props.sessionId !== held.sid || session.value?.id !== held.sid) return;
-  const nowEl = held.anchorSel ? (el.querySelector(held.anchorSel) as HTMLElement | null) : null;
-  if (nowEl) {
-    const now = nowEl.getBoundingClientRect().top - el.getBoundingClientRect().top;
-    el.scrollTop = el.scrollTop + (now - held.anchorOffset);
-  } else {
-    // No stable anchor — plain scrollHeight delta.
-    el.scrollTop = el.scrollHeight - held.prevHeight + held.prevTop;
-  }
-  // Re-settle over the next frames: some engines (WebKit/iOS Safari) apply
-  // their own scroll-position adjustment AFTER script ran — a late pass
-  // (scroll-anchoring adjustment, async-scroll idempotency, resize reflow)
-  // can move the viewport a frame behind the restore and shift the content.
-  // Re-measuring the anchor every frame and correcting the drift until it
-  // is truly zero makes any late pass self-healing: the LAST correction
-  // before the position stabilizes wins, so the anchored content ends at
-  // exactly its original offset. Bounded to a few frames so a genuinely
-  // animated position (user scrolling away right after a commit) is never
-  // fought.
-  let settleFrames = 0;
-  const settle = () => {
-    const list = listEl.value;
-    // Same guard as above: the element may now show a different session
-    // (or the window was swapped on mobile), never settle scroll there.
-    if (
-      !list ||
-      !held.anchorSel ||
-      list !== el ||
-      props.sessionId !== held.sid ||
-      session.value?.id !== held.sid
-    ) {
-      return;
-    }
-    const settleEl = list.querySelector(held.anchorSel) as HTMLElement | null;
-    if (settleEl) {
-      const drift = settleEl.getBoundingClientRect().top - list.getBoundingClientRect().top - held.anchorOffset;
-      if (Math.abs(drift) > 0.5) list.scrollTop = list.scrollTop + drift;
-      if (Math.abs(drift) > 0.5 && settleFrames < 5) {
-        settleFrames += 1;
-        requestAnimationFrame(settle);
-      }
-    }
-  };
-  requestAnimationFrame(settle);
+  // Always lands in the session's data — even when the window moved on
+  // (tab switched, window closed) — so the user's place is never stranded
+  // a page early. With the inverted flow there is nothing to re-anchor.
+  store.commitOlderPage(sid, page);
 }
 
 // Re-run on new messages and on streaming text/thinking growth. A cheap
@@ -494,7 +325,9 @@ async function commitOlder(held: HeldOlder) {
 // is required because tool_start / tool_partial / tool_result MUTATE the
 // tail message's toolCalls in place (id/text/thinking unchanged) — without
 // it the scroll never re-anchors while a tool runs. The DOM must be updated
-// before measuring, so scroll runs after the render flush.
+// before measuring, so scroll runs after the render flush. With the
+// inverted flow appends follow natively at the origin (see the INVERTED
+// note); the pin re-write covers the user a few px above it.
 const keepBottom = () => {
   if (sticky()) nextTick(scrollToBottom);
 };
@@ -646,24 +479,34 @@ function rowKey(item: ChatItem): string {
 }
 
 /** Clicking a separator (the pinned chat bar) jumps to the start of that
- *  message: the SEPARATOR aligns with the list's content top, so the row
+ *  message: the SEPARATOR aligns with the list's top edge, so the row
  *  starts right below it. Aligning the ROW instead leaves the sticky
  *  separator pinned ON TOP of the row, hiding its first item — a bubble
- *  loses its top (the reported jump undershoot). */
+ *  loses its top (the reported jump undershoot).
+ *
+ *  The offset must be measured from the ROW, not from the sep: a sticky
+ *  sep that is currently PINNED at the top edge is displaced from its
+ *  in-flow position (the row follows the in-flow position), so aligning
+ *  the sep's rendered position would leave the row clipped above the edge.
+ *  st + rowScreenOffset - sepHeight lands the row's top exactly sepHeight
+ *  below the top edge in every scroll convention (moving scrollTop by Δ
+ *  moves content by -Δ on screen, whatever the engine's sign). */
 function jumpToSep(e: MouseEvent) {
   const el = listEl.value;
   const sep = e.currentTarget as HTMLElement;
-  // The separator is a list sibling directly ABOVE its message row.
+  if (!el || !sep) return;
   const row = sep.nextElementSibling as HTMLElement | null;
-  if (!el || !row) return;
+  if (!row) return;
+  const { max } = posInfo(el);
   const padTop = parseFloat(getComputedStyle(el).paddingTop) || 0;
-  const top =
-    row.getBoundingClientRect().top -
-    el.getBoundingClientRect().top +
-    el.scrollTop -
+  const target =
+    el.scrollTop +
+    (row.getBoundingClientRect().top - el.getBoundingClientRect().top) -
     padTop -
     sep.offsetHeight;
-  el.scrollTop = Math.max(0, Math.min(top, el.scrollHeight - el.clientHeight));
+  const lo = zeroIsBottom ? -max : 0;
+  const hi = zeroIsBottom ? 0 : max;
+  el.scrollTop = Math.max(lo, Math.min(target, hi));
   sepJumpAt = performance.now();
 }
 
@@ -1437,10 +1280,10 @@ onMounted(() => {
   // target (the textarea's own handler only sees keys pressed on it).
   window.addEventListener('keydown', onWindowShiftKey, true);
   window.addEventListener('keyup', onWindowShiftKey, true);
-  // Touch gesture bookkeeping for old-page commits (see onTouchStart). iOS
+  // Touch gesture bookkeeping for old-page loads (see onTouchStart). iOS
   // Safari dispatches NO pointer events for scroll gestures (taps only), so
-  // the touch events are the reliable 'finger is down' signal the hold
-  // decision depends on.
+  // the touch events are the reliable 'finger is down' signal the
+  // release-only trigger depends on.
   el?.addEventListener('touchstart', onTouchStart);
   el?.addEventListener('touchend', onTouchEnd);
   el?.addEventListener('touchcancel', onTouchEnd);
@@ -1464,32 +1307,17 @@ onMounted(() => {
         firstObs = false;
         return;
       }
-      if (sticky()) pinBottom(el);
+      if (sticky()) pinToEdge(el, 'newer');
     });
     listObserver.observe(el);
   }
 });
 
 onUnmounted(() => {
-  // A page held for a gesture that never finished (window closed, mobile
-  // remount): the data still belongs to the session — land it in the store
-  // (there is no DOM left to anchor).
-  if (heldOlder) {
-    store.commitOlderPage(heldOlder.sid, heldOlder.page);
-    heldOlder = null;
-  }
-  if (heldFlushTimer) {
-    clearTimeout(heldFlushTimer);
-    heldFlushTimer = null;
-  }
   // Capture the scroll position before the DOM goes away — survives tab
   // switches and remounts via the store's per-session scroll memory.
   const el = listEl.value;
-  if (el) {
-    const st = chatScrollOf(props.sessionId);
-    st.top = el.scrollTop;
-    st.sticky = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
-  }
+  if (el) captureScroll(el, chatScrollOf(props.sessionId));
   window.removeEventListener('resize', onViewportResize);
   window.removeEventListener('keydown', onWindowShiftKey, true);
   window.removeEventListener('keyup', onWindowShiftKey, true);
@@ -1501,6 +1329,13 @@ onUnmounted(() => {
 });
 
 let listObserver: ResizeObserver | null = null;
+
+/** Snapshot the current position into the session's scroll memory. */
+function captureScroll(el: HTMLElement, mem: ReturnType<typeof chatScrollOf>) {
+  const { max, st, distFromTop } = posInfo(el);
+  mem.top = st;
+  mem.sticky = distFromTop > max - 48;
+}
 
 /**
  * Restore a session's remembered scroll position after its content has
@@ -1514,21 +1349,26 @@ function restoreScroll(sessionId: string) {
     const el = listEl.value;
     if (!el || props.sessionId !== sessionId) return;
     const st = chatScrollOf(sessionId);
-    const max = Math.max(0, el.scrollHeight - el.clientHeight);
+    const { max } = posInfo(el);
     if (st.sticky) {
-      // Pinned to the bottom: the bottom edge is the newest content at
-      // ANY tile width, so restore to the bottom — never to a remembered
-      // bottom PIXEL, which was measured at a possibly different width
-      // (a tab split into a new half-width tile would sit mid-list). This
+      // Pinned to the bottom: the bottom edge is the newest content at ANY
+      // tile width, so restore to the bottom — never to a remembered
+      // bottom PIXEL, which was measured at a possibly different width (a
+      // tab split into a new half-width tile would sit mid-list). This
       // also covers fresh memory: a reload wipes the runtime scroll
       // memory, so every session starts top=0/sticky=true and must come
       // back at the bottom, never stranded on the oldest page. A genuine
       // user scroll away from the bottom always leaves sticky=false, so
       // the flag cannot mislead here.
-      el.scrollTop = el.scrollHeight;
+      pinToEdge(el, 'newer');
     } else {
-      el.scrollTop = Math.min(st.top, max);
-      st.sticky = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+      // A raw scrollTop round-trips within the same engine (its sign
+      // convention is per-engine but consistent); clamp into the valid
+      // range for the detected convention.
+      const lo = zeroIsBottom ? -max : 0;
+      const hi = zeroIsBottom ? 0 : max;
+      el.scrollTop = Math.max(lo, Math.min(st.top, hi));
+      captureScroll(el, st);
     }
   });
 }
@@ -1542,15 +1382,9 @@ function restoreScroll(sessionId: string) {
 watch(
   () => props.sessionId,
   (newId, oldId) => {
-    // A page held under a stale gesture belongs to the OLD session — commit
-    // it before the element switches content (commitOlder's own guard
-    // abandons the re-anchor, so the new window's scroll is never touched).
-    if (oldId && heldOlder) flushHeldOlder();
     const el = listEl.value;
     if (el && oldId) {
-      const old = chatScrollOf(oldId);
-      old.top = el.scrollTop;
-      old.sticky = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+      captureScroll(el, chatScrollOf(oldId));
     }
     if (newId) {
       // Per-window transient UI must not ride into the next session: an
@@ -1569,12 +1403,20 @@ watch(
 <template>
   <div class="chat-window">
     <!-- Messages -->
+    <!-- Messages: INVERTED scroll container. The .chat-flow wrapper is the
+         ONE flex item of this column-reverse box; it sits at the bottom
+         (the scroll origin) and lays its rows out NORMALLY (oldest at its
+         top, newest at its bottom). Prepending older content grows the
+         flow's FAR (oldest) end, so the already-loaded rows keep their
+         exact distance from the origin — the loaded content cannot move a
+         pixel (see the INVERTED flow note in the script). -->
     <div ref="listEl" class="chat-messages" @scroll="onScroll">
-      <div v-if="!session" class="chat-empty">Session not found.</div>
-      <div v-else-if="session.messages.length === 0" class="chat-empty">
-        No messages yet — say hello. Type <code>/</code> for slash commands.
-      </div>
-      <template v-else>
+      <div class="chat-flow">
+        <div v-if="!session" class="chat-empty">Session not found.</div>
+        <div v-else-if="session.messages.length === 0" class="chat-empty">
+          No messages yet — say hello. Type <code>/</code> for slash commands.
+        </div>
+        <template v-else>
         <!-- Scroll-up pagination: older messages load on demand. The slot is
              PERMANENT — it NEVER leaves the DOM, so the height above the
              first message is constant at every moment (before, during, and
@@ -1762,6 +1604,7 @@ watch(
         </div>
         </div>
       </template>
+      </div>
     </div>
 
     <div class="chat-composer">

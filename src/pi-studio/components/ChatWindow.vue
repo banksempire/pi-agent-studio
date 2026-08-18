@@ -173,6 +173,19 @@ let lastPinAt = 0;
  *  re-anchor the view a page away from the jump target. */
 let sepJumpAt = 0;
 
+/** Last time an older-page load was triggered (auto or the Load-older
+ *  button) and whether the previous scroll position was inside the top
+ *  pagination zone. Auto-loading is EDGE-triggered — it fires only when
+ *  the position CROSSES into the zone — and gated by a cooldown. A touch
+ *  user who scrolls to the top and keeps their finger down leaves the
+ *  scroll position at the top while the prepend + re-anchor keeps bouncing
+ *  the position across the threshold; without the edge+cooldown every
+ *  bounce starts another loadOlder and the chat pages through its whole
+ *  history, re-anchoring (and flickering) each time. */
+let lastAutoLoadAt = 0;
+let prevNearTop = false;
+const AUTO_LOAD_COOLDOWN_MS = 800;
+
 function onScroll() {
   const el = listEl.value;
   if (!el) return;
@@ -195,11 +208,21 @@ function onScroll() {
   lastPinTop = -1;
   st.sticky = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
   st.top = el.scrollTop;
-  // Scroll-up pagination: near the top → load older messages. Skipped for
-  // the echo of a separator jump: that is a "go to the start" navigation,
-  // not a user scroll-up gesture — auto-loading would re-anchor the view a
-  // page away from the jump target.
-  if (el.scrollTop < 80 && performance.now() - sepJumpAt > 250) void loadOlder();
+  // Scroll-up pagination: near the top → load older messages. Edge-triggered:
+  // only when the position CROSSES into the top zone (never while it just
+  // sits there — a held finger on a touch device fires scroll events at the
+  // top forever), and never more than once per cooldown (the prepend +
+  // re-anchor bounces the position across the threshold; without the gap
+  // each bounce starts another page). Skipped for the echo of a separator
+  // jump: that is a "go to the start" navigation, not a user scroll-up
+  // gesture — auto-loading would re-anchor the view a page away from the
+  // jump target.
+  const nearTop = el.scrollTop < 80;
+  const now = performance.now();
+  if (nearTop && !prevNearTop && now - sepJumpAt > 250 && now - lastAutoLoadAt > AUTO_LOAD_COOLDOWN_MS) {
+    void loadOlder();
+  }
+  prevNearTop = nearTop;
 }
 
 /** Load the previous page and keep the viewport anchored. */
@@ -207,6 +230,7 @@ async function loadOlder() {
   const s = session.value;
   const el = listEl.value;
   if (!s || !el || s.loadingOlder || !s.hasMoreOlder) return;
+  lastAutoLoadAt = performance.now();
   const sid = props.sessionId;
   const prevHeight = el.scrollHeight;
   const prevTop = el.scrollTop;

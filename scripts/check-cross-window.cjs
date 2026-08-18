@@ -29,6 +29,12 @@
  *    row right below it (never clipped under the sticky bar), and the
  *    jump's own near-top scroll must not trigger loadOlder (which would
  *    re-anchor the view a page away).
+ *  - T14 held-finger top bounce: scroll-up auto-pagination is
+ *    EDGE-triggered — it fires once when the position CROSSES into the top
+ *    zone, then holds off while the position just sits there (and for a
+ *    cooldown), so on a touch device a user who keeps their finger down at
+ *    the top can't page through the whole history with every bounce event
+ *    (content flicker).
  *
  * Runs its own three-service stack (pi-nest + gateway + vite) on free
  * ports (override with XWIN_NEST_PORT / XWIN_BACKEND_PORT / XWIN_VITE_PORT)
@@ -1053,6 +1059,74 @@ function makeReporter() {
       return { ok: jumpOk && topOk, why: why.join(' | ') };
     })();
     report('T13 separator click jumps to the message start — no clip, no loadOlder yank', t13.ok, t13.why);
+
+    // ── T14: held-finger top bounce must not page through history ────────
+
+    const t14 = await (async () => {
+      // Repro (reported on a touch device): scroll to the top of the loaded
+      // content auto-loads the older page; a user who does not release
+      // their hand immediately keeps the scroll position AT the top, so
+      // every bounce/rubber-band event re-triggers loadOlder once the
+      // previous fetch lands — the chat pages through its whole history,
+      // re-anchoring and flickering each time. Auto-loading must be
+      // EDGE-triggered (cross into the top zone once) and gated by a
+      // cooldown, so a held finger at the top loads exactly one page.
+      //
+      // The old trigger fired loadOlder whenever scrollTop < 80 on ANY
+      // event. Here we jam the position at the top and fire a burst of
+      // scroll events (as a held finger does) while a slow older-fetch is
+      // in flight; a burst with the fix results in exactly ONE
+      // before= fetch, the old code in two or three.
+      await switchTab('XWin-A');
+      const aTile = page
+        .locator('.sf-tab-label:has-text("XWin-A:")')
+        .locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " sf-tile ")][1]');
+      const aList = aTile.locator('.chat-messages');
+      // Start mid-list (not near the top) so the coming jump is a real
+      // crossing, not the initial mount position.
+      await aList.evaluate((el) => {
+        el.scrollTop = Math.round((el.scrollHeight - el.clientHeight) * 0.4);
+      });
+      await delay(500);
+      let olderFetches = 0;
+      // Count (and neutralize) the older-page fetches so the burst cannot
+      // actually prepend content; the cursor stays alive (oldestId +
+      // hasMore) so every subsequent loadOlder call would legitimately
+      // pass the store's guards — the old fire-on-every-event trigger must
+      // rack up one fetch per scroll event.
+      const routeCount = (route) => {
+        if (route.request().url().includes('before=')) {
+          olderFetches++;
+          route.fulfill({ json: { messages: [], hasMore: true, oldestId: 'cursor-keep' } });
+        } else {
+          route.continue();
+        }
+      };
+      await page.route('**/api/sessions/messages*', routeCount);
+      // The crossing: one normal scroll to the top.
+      await aList.evaluate((el) => {
+        el.scrollTop = 0;
+      });
+      await delay(150);
+      // The held finger: the position sits AT the top and the browser keeps
+      // firing scroll events there (rubber-band bounce) without the
+      // position leaving the zone. Dispatch real scroll events at scrollTop
+      // 0 — the same handler a finger would drive.
+      for (let i = 0; i < 8; i++) {
+        await aList.evaluate((el) => {
+          el.scrollTop = 0; // explicit no-op: keeps the element at the top
+          el.dispatchEvent(new Event('scroll'));
+        });
+        await delay(120);
+      }
+      await page.unroute('**/api/sessions/messages*', routeCount);
+      const topNow = await aList.evaluate((el) => el.scrollTop);
+      return {
+        ok: olderFetches === 1,
+        why: `older fetches in the burst: ${olderFetches} (want 1 — a held finger at the top must not page through history); top:${topNow}`,
+      };
+    })();
+    report('T14 held finger at the top loads exactly one older page (touch bounce)', t14.ok, t14.why);
 
     // ── Summary ────────────────────────────────────────────────────────────
 

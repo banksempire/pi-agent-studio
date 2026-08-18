@@ -36,8 +36,10 @@
  *    the reported flick-to-top + re-trigger loop). With a REAL held finger
  *    (touch events; iOS Safari fires no pointer events for scroll
  *    gestures) zero before= fetches start while the finger is down and the
- *    list does not move 1px; on touchend exactly one fetch lands with 0px
- *    drift and the position left out of the <80 trigger zone. Away from
+ *    list does not move 1px; on touchend exactly one fetch lands — held
+ *    through the post-release settle window (the native rubber-band
+ *    release animation owns scrollTop without emitting scroll events)
+ *    — with 0px drift and the position left out of the <80 trigger zone. Away from
  *    the origin the exact anchor-part restore (scoped native anchoring
  *    included) covers the scrollTop==0 edge.
  *
@@ -1091,9 +1093,13 @@ function makeReporter() {
       // of the <80 trigger zone.
       // Phase 2 (real held finger, touch events): ZERO loads may start
       // while the finger is held at the origin (0px movement — the list
-      // does not even grow); on touchend exactly one page loads, the
-      // finger-held row lands at the SAME viewport offset, and the position
-      // leaves the trigger zone.
+      // does not even grow); on touchend exactly one page loads, but even a
+      // FAST fetch must not commit inside the post-release settle window
+      // (the native rubber-band release animation owns scrollTop ~400ms
+      // after a scroll gesture ends at the top — committing there shifts
+      // the loaded content); once the window passes, the finger-held row
+      // lands at the SAME viewport offset and the position leaves the
+      // trigger zone.
       await switchTab('XWin-A');
       const aTile = page
         .locator('.sf-tab-label:has-text("XWin-A:")')
@@ -1174,13 +1180,31 @@ function makeReporter() {
       // of the <80 trigger zone. Touch events (not pointer events): iOS
       // Safari dispatches no pointer events for scroll gestures.
       let touchFetches = 0;
+      // Stub the older-page response INSTANTLY (no network — a real fetch
+      // would take ~440ms in this harness and outlast the release window,
+      // masking the bug). The remaining older messages of XWin-A are u1..a10.
+      const older10 = Array.from({ length: 10 }, (_, i) => {
+        const n = i + 1;
+        const user = n % 2 === 1;
+        return {
+          id: user ? `u${n}` : `a${n}`,
+          role: user ? 'user' : 'assistant',
+          text: `older ${n} — ${'padding '.repeat(20)}`,
+          ts: 1700000000000 + n * 60000,
+        };
+      });
       const routeTouch = async (route) => {
         const url = route.request().url();
         if (url.includes('before=')) {
           touchFetches += 1;
-          await delay(600);
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ messages: older10, oldestId: null, hasMore: false }),
+          });
+        } else {
+          await route.continue();
         }
-        await route.continue();
       };
       await page.route('**/api/sessions/messages*', routeTouch);
       // Mid-list, then put the finger DOWN on the list and cross to the top.
@@ -1190,6 +1214,21 @@ function makeReporter() {
       await delay(400);
       await aList.evaluate((el) => {
         el.dispatchEvent(new TouchEvent('touchstart', { bubbles: true }));
+      });
+      await aList.evaluate((el) => {
+        // Page-side trace: when the loading spinner appears (load started)
+        // and clears (commit landed), plus every scroll event — the settle
+        // window is the spinner ON→OFF span.
+        window.__tr = { scrolls: [], t0: performance.now(), spinnerOn: -1, spinnerOff: -1 };
+        const mo = new MutationObserver(() => {
+          const on = !!el.querySelector('.chat-load-older--loading');
+          const t = performance.now();
+          if (on && window.__tr.spinnerOn < 0) window.__tr.spinnerOn = t;
+          if (!on && window.__tr.spinnerOn >= 0 && window.__tr.spinnerOff < 0) window.__tr.spinnerOff = t;
+        });
+        mo.observe(el, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] });
+        window.__mo = mo;
+        el.addEventListener('scroll', () => window.__tr.scrolls.push(Math.round(el.scrollTop)));
       });
       await aList.evaluate((el) => {
         el.scrollTop = 0; // crossing to the top while the finger is down
@@ -1204,40 +1243,55 @@ function makeReporter() {
       const rowsHeld = await rows();
       const heldDuring = await heldRow();
       const fetchesWhileHeld = touchFetches;
-      // Finger up: NOW the load starts (the gesture controller has released
-      // scrollTop — the re-anchor write sticks). Post-release momentum
-      // scrolls (3 bounces) must NOT start a second page.
+      // Finger up: the load starts NOW; the commit must WAIT OUT the
+      // post-release settle window (~400ms) even though the fetch completes
+      // in ~200ms (50ms wire delay + backend). The loading spinner stays on
+      // until the commit, so measure when it clears: it must clear no
+      // sooner than the settle window — a premature commit would drop it at
+      // fetch-completion time and shift the loaded content.
       await aList.evaluate((el) => {
         el.dispatchEvent(new TouchEvent('touchend', { bubbles: true }));
       });
-      for (let i = 0; i < 3; i++) {
-        await aList.evaluate((el) => {
-          el.dispatchEvent(new Event('scroll'));
-        });
-        await delay(120);
-      }
-      await delay(900); // fetch (600ms) + re-anchor settle
+      await delay(700); // commit + re-anchor + settle
       const rowsAfter = await rows();
       const heldAfterTop = await rowOffset(heldBefore.msgId);
       const pos2 = await posInfo();
+      const trace = await aList.evaluate(() => {
+        const tr = window.__tr;
+        return {
+          ...tr,
+          spinnerOnRel: tr.spinnerOn >= 0 ? Math.round(tr.spinnerOn - tr.t0) : -1,
+          spinnerOffRel: tr.spinnerOff >= 0 ? Math.round(tr.spinnerOff - tr.t0) : -1,
+          now: Math.round(performance.now() - tr.t0),
+        };
+      });
+      // The observed settle window (spinner ON → OFF) must be the post-release
+      // settle window of the REAL device — recompute from the page timestamps.
+      const settleElapsed = trace.spinnerOnRel >= 0 && trace.spinnerOffRel >= 0 ? trace.spinnerOffRel - trace.spinnerOnRel : -1;
       await page.unroute('**/api/sessions/messages*', routeTouch);
       const noLoadWhileHeld =
         fetchesWhileHeld === 0 && rowsWhileLoading === 100 && rowsHeld === 100 && heldDuring.msgId === heldBefore.msgId;
+      // The spinner must have been held through the release window (~400ms)
+      // after the touchend — a commit inside that window would have cleared
+      // it at fetch-completion time (~200ms after release) and shifted the
+      // loaded content on the touch device.
+      const heldThroughRelease = settleElapsed >= 350;
       const pinned2 =
         heldBefore.msgId !== null && heldAfterTop !== null && Math.abs(heldAfterTop - heldBefore.top) <= 1;
       const committed2 = rowsAfter === 110;
       const leftZone2 = pos2.top >= 80;
-      const phase2Ok = touchFetches === 1 && noLoadWhileHeld && committed2 && pinned2 && leftZone2;
+      const phase2Ok =
+        touchFetches === 1 && noLoadWhileHeld && heldThroughRelease && committed2 && pinned2 && leftZone2;
       return {
         ok: phase1Ok && phase2Ok,
         why:
           `phase1 fetches:${olderFetches} pinned:${pinned1 ? 'yes' : 'no'} ` +
           `(row ${before.msgId} ${before.top} → ${afterTop1}) leftZone:${leftZone1 ? 'yes' : 'no'} ` +
           `(scrollTop ${pos1.top}/${pos1.max}) | ` +
-          `phase2 fetches:${fetchesWhileHeld}/${touchFetches} rows:${rowsWhileLoading}/${rowsHeld}/${rowsAfter} ` +
-          `(want 0/1, 100/100/110) held:${heldBefore.msgId}→${heldDuring.msgId}→` +
-          `${heldAfterTop} drift:${heldBefore.top}→${heldAfterTop} leftZone:${leftZone2 ? 'yes' : 'no'} ` +
-          `(scrollTop ${pos2.top}/${pos2.max})`,
+          `phase2 fetches:${fetchesWhileHeld}/${touchFetches} spinner-cleared-at:${settleElapsed}ms ` +
+          `(want 0/1, >=350ms) rows:${rowsWhileLoading}/${rowsHeld}/${rowsAfter} (want 100/100/110) ` +
+          `held:${heldBefore.msgId}→${heldDuring.msgId}→${heldAfterTop} drift:${heldBefore.top}→${heldAfterTop} ` +
+          `leftZone:${leftZone2 ? 'yes' : 'no'} (scrollTop ${pos2.top}/${pos2.max}) trace:${JSON.stringify(trace)}`,
       };
     })();
     report(

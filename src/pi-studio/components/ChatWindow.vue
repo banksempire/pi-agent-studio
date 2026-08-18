@@ -205,6 +205,12 @@ let touchDownCount = 0;
 let gestureScrolled = false;
 /** The most recent scroll event that arrived while in the <80 top zone. */
 let lastTopScrollAt = 0;
+/** Moment the finger lifted. iOS plays a NATIVE release animation after a
+ *  touch that ends at the overscrolled top edge: it owns scrollTop for a few
+ *  hundred ms WITHOUT emitting any scroll events, so the quiet heuristic
+ *  cannot see it and a commit made in that window is clobbered (the loaded
+ *  content shifts by the page height). Commits wait this window out. */
+let lastTouchEndAt = 0;
 /** A fetched older page waiting for the top edge to go quiet. */
 let heldOlder: HeldOlder | null = null;
 let heldFlushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -228,7 +234,18 @@ interface HeldOlder {
  * re-trigger the load.
  */
 function topEdgeActive(el: HTMLElement) {
-  return el.scrollTop < 80 && (touchDownCount > 0 || performance.now() - lastTopScrollAt < 200);
+  return (
+    el.scrollTop < 80 &&
+    (touchDownCount > 0 ||
+      performance.now() - lastTopScrollAt < 200 ||
+      // Finger up right after an actual scroll gesture ended at the very
+      // top: the native overscroll-release animation (rubber band snapping
+      // back) still owns scrollTop even though NO scroll events fire and no
+      // touch is down — wait it out before committing, or the re-anchor
+      // write is overridden and the loaded content shifts by the prepended
+      // height. A plain tap (button/separator) has no release animation.
+      (el.scrollTop === 0 && gestureScrolled && performance.now() - lastTouchEndAt < 400))
+  );
 }
 
 function onTouchStart() {
@@ -238,6 +255,7 @@ function onTouchStart() {
 
 function onTouchEnd() {
   touchDownCount = Math.max(0, touchDownCount - 1);
+  lastTouchEndAt = performance.now();
   const el = listEl.value;
   if (!el) return;
   // A page held for a re-touch/momentum flush, then the load trigger: this

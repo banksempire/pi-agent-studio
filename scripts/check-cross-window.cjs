@@ -1071,6 +1071,58 @@ function makeReporter() {
       t14.why,
     );
 
+    const t15 = await (async () => {
+      const aIdx = await tabIndex('XWin-A:');
+      if (aIdx < 0) return { ok: false, why: 'XWin-A tab not found' };
+      await switchTab('XWin-A:');
+      const aTile = page
+        .locator('.sf-tab')
+        .nth(aIdx)
+        .locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " sf-tile ")][1]');
+      const tabLabel = () => aTile.locator('.sf-tab-label').allInnerTexts();
+      let rowCount = 0;
+      for (let i = 0; i < 40 && rowCount === 0; i++) {
+        rowCount = await page.locator('.chat-list-item').count();
+        if (rowCount === 0) await delay(500);
+      }
+      const aRows = await page.locator('.chat-list-item:has-text("XWin-A:")').count();
+      if (aRows === 0) return { ok: false, why: 'XWin-A row missing in the session list' };
+      const aRow = page.locator('.chat-list-item:has-text("XWin-A:")').first();
+      const origTitle = (await aRow.locator('.chat-list-title').innerText()).trim();
+      const newTitle = 'XWin-A renamed without reload';
+      const why = [];
+      await aRow.hover();
+      await aRow.locator('.chat-item-menu').click();
+      await page.getByText('Rename', { exact: true }).click();
+      await page.locator('.chat-dialog-input').fill(newTitle);
+      await page.getByRole('button', { name: 'Save' }).click();
+      let rowUpdated = false;
+      let tabShowsNew = false;
+      for (let i = 0; i < 40 && !(rowUpdated && tabShowsNew); i++) {
+        if (!rowUpdated) {
+          rowUpdated = (await page.locator(`.chat-list-item:has-text("${newTitle}")`).count()) > 0;
+        }
+        if (!tabShowsNew) tabShowsNew = (await tabLabel()).some((t) => t.includes(newTitle));
+        if (!(rowUpdated && tabShowsNew)) await delay(400);
+      }
+      why.push(`row:${rowUpdated ? 'ok' : 'stale'}`);
+      why.push(`tab:${tabShowsNew ? 'ok' : 'stale'}`);
+      const renamedRow = page.locator(`.chat-list-item:has-text("${newTitle}")`).first();
+      await renamedRow.hover();
+      await renamedRow.locator('.chat-item-menu').click();
+      await page.getByText('Rename', { exact: true }).click();
+      await page.locator('.chat-dialog-input').fill(origTitle);
+      await page.getByRole('button', { name: 'Save' }).click();
+      let tabShowsOrig = false;
+      for (let i = 0; i < 20 && !tabShowsOrig; i++) {
+        tabShowsOrig = (await tabLabel()).some((t) => t.includes('XWin-A:'));
+        if (!tabShowsOrig) await delay(400);
+      }
+      why.push(`restore:${tabShowsOrig ? 'ok' : 'stale'}`);
+      return { ok: rowUpdated && tabShowsNew && tabShowsOrig, why: why.join(' | ') };
+    })();
+    report('T15 rename updates the open tab label and history row (no reload)', t15.ok, t15.why);
+
     if (errors.length) console.log(`page errors: ${errors.join(' | ')}`);
     const failed = isFailed() || errors.length > 0;
     console.log(failed ? '\nCROSS-WINDOW CHECKS FAILED' : '\nALL CROSS-WINDOW CHECKS PASSED');

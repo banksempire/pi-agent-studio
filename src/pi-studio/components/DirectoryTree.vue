@@ -5,15 +5,10 @@ import { type DirNode, useChatStore } from '../store/chat';
 
 const store = useChatStore();
 
-// The tree is fetched ONCE (store.loadTree) and kept fresh by backend SSE
-// pushes — remounting this section never refetches. Expand/collapse and the
-// multi-selection live in the store too, so flipping sections or panels
-// preserves them.
 onMounted(() => {
   if (!store.tree) void store.loadTree();
 });
 
-/** Flattened rows (indent by depth) honoring the store's collapsed set. */
 const flat = computed<{ node: DirNode; depth: number }[]>(() => {
   const out: { node: DirNode; depth: number }[] = [];
   const walk = (n: DirNode, depth: number) => {
@@ -26,8 +21,6 @@ const flat = computed<{ node: DirNode; depth: number }[]>(() => {
   return out;
 });
 
-/** Checkbox state: 'on' (in the selection, or every descendant selected),
- *  'mid' (some descendants selected), or 'off'. */
 function allSelected(n: DirNode): boolean {
   if (store.selectedDirs.has(n.path)) return true;
   if (n.children.length === 0) return false;

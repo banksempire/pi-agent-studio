@@ -1,12 +1,4 @@
 <script setup lang="ts">
-/**
- * User-message image attachments, rendered OUTSIDE the blue text bubble.
- *
- * Layout: all images in ONE horizontal row when they fit the available
- * width; otherwise a poker-card fan (leaves rotated around their bottom
- * edge, max 5 leaves — any extras are counted in a "+N" chip). A
- * ResizeObserver re-decides on panel/window resizes.
- */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
 export interface MessageImage {
@@ -21,11 +13,9 @@ const box = ref<HTMLElement | null>(null);
 const ratios = ref<number[]>([]);
 const fan = ref(false);
 
-/** Row-mode geometry: fixed thumb height, natural aspect up to a width cap. */
 const THUMB_H = 150;
 const ROW_MAX_W = 340;
 const GAP = 8;
-/** Fan-mode geometry: uniform cards so the leaves read as one structure. */
 const FAN_W = 190;
 const FAN_H = 150;
 
@@ -34,7 +24,6 @@ const urls = computed(() => props.images.map((im) => `data:${im.mimeType};base64
 const fanLeaves = computed(() => Math.min(props.images.length, 5));
 const fanExtra = computed(() => props.images.length - fanLeaves.value);
 
-/** Leaf rotations: symmetric around 0°, spread ≤ 48°. */
 const fanAngles = computed(() => {
   const n = fanLeaves.value;
   if (n <= 1) return [0];
@@ -42,7 +31,6 @@ const fanAngles = computed(() => {
   return Array.from({ length: n }, (_, i) => (i - (n - 1) / 2) * step);
 });
 
-/** Fan container height = the rotated card's bounding box + shadow slack. */
 const fanHeight = computed(() => {
   const maxA = (Math.max(0, ...fanAngles.value.map((a) => Math.abs(a))) * Math.PI) / 180;
   return Math.ceil(FAN_H * Math.cos(maxA) + FAN_W * Math.sin(maxA)) + 18;
@@ -90,7 +78,6 @@ onBeforeUnmount(() => ro?.disconnect());
 
 <template>
   <div ref="box" class="msg-images" :class="{ 'msg-images--fan': fan }">
-    <!-- Horizontal row: everything fits in one line -->
     <template v-if="!fan">
       <a
         v-for="(im, i) in images"
@@ -105,7 +92,6 @@ onBeforeUnmount(() => ro?.disconnect());
         <img :src="urls[i]" class="msg-image" loading="lazy" alt="attached image" />
       </a>
     </template>
-    <!-- Poker-card fan: leaves rotate around their bottom edge -->
     <template v-else>
       <div class="msg-fan" :style="{ height: fanHeight + 'px' }">
         <a

@@ -1,12 +1,3 @@
-/**
- * Slash command execution. Ported from the old app backend: every command
- * that touches a live agent runs HERE (pi-nest owns the agents), so a
- * front-end restart can't orphan an in-flight /compact, /fork, /reload, ...
- *
- * Returns { ok, notice?, error?, data? } with data always JSON-serializable
- * (the gRPC layer stringifies it as data_json).
- */
-
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -19,7 +10,6 @@ import {
   supportedThinkingLevels,
 } from './sdk-bridge.mjs';
 
-/** Builtin commands that only make sense in the pi TUI — answered with a reason. */
 const NA_COMMANDS = {
   settings: 'Settings are configured in the pi TUI (/settings there).',
   login: 'Provider authentication requires the pi TUI (opens OAuth in the terminal).',
@@ -37,8 +27,6 @@ function serializeModel(m) {
     name: m.name,
     reasoning: !!m.reasoning,
     contextWindow: m.contextWindow ?? 0,
-    // Per-1M-token price list (cache-waste fallback in the gateway's
-    // session-stats derivation needs the cacheRead rate).
     cost: m.cost
       ? {
           input: m.cost.input ?? 0,
@@ -47,8 +35,6 @@ function serializeModel(m) {
           cacheWrite: m.cost.cacheWrite ?? 0,
         }
       : undefined,
-    // Per-model thinking levels from the model configuration — a model that
-    // doesn't support reasoning offers only ['off'] (the UI shows "(None)").
     thinkingLevels: supportedThinkingLevels(m),
   };
 }
@@ -62,7 +48,6 @@ function treeToJson(nodes) {
   }));
 }
 
-/** Create a new session file branched from `targetLeafId` and open it. */
 async function forkSession(registry, live, targetLeafId) {
   const sm = live.session.sessionManager;
   const file = live.session.sessionFile;
@@ -76,13 +61,6 @@ async function forkSession(registry, live, targetLeafId) {
   return forkedPath;
 }
 
-/**
- * Read the model catalog through a throwaway in-memory session. Lazy new
- * chats must not be materialized by a catalog read (a real agent would burn
- * the virtual reservation), so the catalog + environment default come from
- * a temp session that is disposed right after. Same call shape as the real
- * materialization, so the models/current are exactly what the chat will get.
- */
 async function catalogOf(cwd) {
   const sm = sdk.SessionManager.inMemory(cwd);
   const { session } = await sdk.createAgentSession({ sessionManager: sm });
@@ -96,15 +74,10 @@ async function catalogOf(cwd) {
   } finally {
     try {
       session.dispose();
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   }
 }
 
-// A throwaway SDK session is expensive (~100-500ms) and the catalog only
-// changes with models.json/provider configs — cache briefly so repeated
-// picker opens (mount, file flips, model changes) reuse the same read.
 let catalogCache = null;
 let catalogCachedAt = 0;
 const CATALOG_TTL_MS = 30 * 1000;
@@ -122,17 +95,10 @@ async function pendingCatalog(pending) {
 }
 
 function findModel(models, term) {
-  // Only the fully-qualified form is accepted — several providers ship the
-  // same model ids (opencode vs opencode-go vs volcengine-plan …), so a
-  // bare id or display name is ambiguous and must not silently pick one.
   const t = term.toLowerCase();
   return models.find((m) => `${m.provider}/${m.id}`.toLowerCase() === t);
 }
 
-/**
- * Execute one slash command. `registry` is the AgentRegistry; `extra` is the
- * parsed extra_json from the request (entryId, modelIds, ...).
- */
 export async function execSlash(registry, { agentId, command, args, extra = {} }) {
   const name = String(command ?? '')
     .replace(/^\/+/, '')
@@ -143,10 +109,6 @@ export async function execSlash(registry, { agentId, command, args, extra = {} }
 
   switch (name) {
     case '_models': {
-      // Internal (absent from the user-facing catalog): the model catalog
-      // alone, no agent involvement — the gateway resolves model context
-      // windows through this. Never materializes a session (catalog comes
-      // from the same cached throwaway read as the lazy-chat picker).
       const { models, defaultModel } = await pendingCatalog({
         cwd: NEW_CHAT_CWD,
         model: null,
@@ -159,10 +121,9 @@ export async function execSlash(registry, { agentId, command, args, extra = {} }
     }
 
     case 'new': {
-      // Same as the ➕ New Chat flow: fresh session (frontend opens the window).
       const cwd = args?.trim() || NEW_CHAT_CWD;
       const { file: f } = registry.createSession(cwd);
-      await registry.open(f); // materialize now (matches old behavior)
+      await registry.open(f);
       return { ok: true, data: { file: f } };
     }
 
@@ -170,8 +131,6 @@ export async function execSlash(registry, { agentId, command, args, extra = {} }
       const live = await registry.open(file);
       const stats = live.session.getSessionStats();
       const sm = live.session.sessionManager;
-      // Sessions without usage entries report no token stats — guard like the
-      // old backend (previously crashed with "reading 'input' of undefined").
       const t = stats.tokens ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
       const lines = [
         'Session Info',
@@ -223,9 +182,6 @@ export async function execSlash(registry, { agentId, command, args, extra = {} }
         await live.session.compact(args?.trim() || undefined);
         return { ok: true, notice: 'Compaction complete — the conversation was summarized.' };
       } catch (e) {
-        // The SDK throws "Already compacted" when the last entry is already a
-        // compaction. That's a fine outcome — the summary is in the chat, and
-        // compaction_end was mapped to the done box, so the user can audit it.
         if (e instanceof Error && /already compacted/i.test(e.message)) {
           return {
             ok: true,
@@ -247,11 +203,6 @@ export async function execSlash(registry, { agentId, command, args, extra = {} }
       const requested = args?.trim() ?? '';
       const wantedLevel = extra?.thinkLevel ?? null;
 
-      // A lazy new chat has no agent yet — changing its model must NOT
-      // materialize it: the preference is stored on the reservation and
-      // applied when the first message turns it real. The catalog/current
-      // come from a throwaway in-memory session (same defaults the chat
-      // would get), so the menu works exactly like on a real session.
       const pending = registry.pendingInfo(file);
       if (pending) {
         const { models, current, currentLevel } = await pendingCatalog(pending);
@@ -460,10 +411,6 @@ export async function execSlash(registry, { agentId, command, args, extra = {} }
     }
 
     case 'delete': {
-      // Remove a session. The agent must be idle — a running turn or queued
-      // messages must not be killed by a UI delete. The agent is then closed
-      // (dispose the SDK session so it can't re-append to the file) and the
-      // EXACT path is unlinked — never a glob.
       const st = registry.state(file);
       if (st?.status === 'running') {
         return { ok: false, error: 'The session is generating a response — stop it first.' };
@@ -491,7 +438,6 @@ export async function execSlash(registry, { agentId, command, args, extra = {} }
 
 export { BUILTIN_SLASH_COMMANDS, NA_COMMANDS };
 
-/** Builtin command catalog + skill list for the app's autocomplete. */
 export function slashCatalog() {
   return BUILTIN_SLASH_COMMANDS.map((c) => ({
     name: c.name,
@@ -502,8 +448,6 @@ export function slashCatalog() {
   }));
 }
 
-// loadSkills scans the filesystem (agentDir + cwd + skill paths) — the slash
-// catalog endpoint hits this on every composer open, so cache briefly.
 let skillsCache = null;
 let skillsCachedAt = 0;
 const SKILLS_TTL_MS = 60 * 1000;
@@ -521,6 +465,6 @@ export function listSkills() {
     skillsCachedAt = Date.now();
     return skillsCache;
   } catch {
-    return []; // skills unavailable — autocomplete just omits them
+    return [];
   }
 }

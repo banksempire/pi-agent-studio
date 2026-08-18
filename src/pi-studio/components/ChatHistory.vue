@@ -14,7 +14,6 @@ function preview(s: ChatSession): string {
   return t.length > 56 ? `${t.slice(0, 56)}…` : t;
 }
 
-/** Which row's ⋮ action menu is open (session id; null = none). */
 const menuOpenFor = ref<string | null>(null);
 
 function menuItems(_s: ChatSession): MenuNodeDef[] {
@@ -24,7 +23,6 @@ function menuItems(_s: ChatSession): MenuNodeDef[] {
   ];
 }
 
-/** Inline themed dialog (no browser popups): rename input or delete confirm. */
 type RowDialog = { kind: 'rename'; session: ChatSession } | { kind: 'delete'; session: ChatSession };
 const dialog = ref<RowDialog | null>(null);
 const dialogEl = ref<HTMLElement | null>(null);
@@ -88,7 +86,6 @@ function onMenuSelect(s: ChatSession, item: MenuNodeDef) {
       <div class="chat-list-row1">
         <span class="chat-list-title">{{ s.title }}</span>
         <span class="chat-list-time">{{ timeAgo(s.lastActivity) }}</span>
-        <!-- Row action menu: ⋮ appears on hover; rename / delete. -->
         <Menu
           :items="menuItems(s)"
           :open="menuOpenFor === s.id"
@@ -113,8 +110,6 @@ function onMenuSelect(s: ChatSession, item: MenuNodeDef) {
       </div>
     </div>
 
-    <!-- Inline themed dialog — rename input / delete confirm. Never the
-         browser's native popup. -->
     <div v-if="dialog" class="chat-dialog-backdrop" @click.self="closeDialog">
       <div
         ref="dialogEl"

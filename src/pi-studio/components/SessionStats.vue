@@ -8,8 +8,6 @@ const session = computed<ChatSession | null>(() =>
   store.activeChatId ? (store.findSession(store.activeChatId) ?? null) : null,
 );
 
-/** Middle-truncate the full session-file path (the TUI prints it whole;
- *  the panel keeps a readable head + the session filename). */
 function truncateMiddle(text: string, head: number, tail: number): string {
   return text.length <= head + tail + 1 ? text : `${text.slice(0, head)}…${text.slice(-tail)}`;
 }
@@ -21,7 +19,6 @@ const shortId = computed(() => {
   return id.length > 16 ? `${id.slice(0, 13)}…` : id;
 });
 
-/** TUI /session cost formatting: always three decimals ($2.521). */
 function tuiCost(usd: number): string {
   return `$${usd.toFixed(3)}`;
 }
@@ -30,17 +27,12 @@ interface StatRow {
   label: string;
   value: string;
   section?: boolean;
-  /** hover tooltip (full untruncated value) */
   title?: string;
 }
 
-/** Index of the row whose value briefly shows "✓ Copied" after a click. */
 const copiedIndex = ref<number | null>(null);
 let copyTimer: number | undefined;
 
-/** execCommand fallback — Edge/Chrome only expose navigator.clipboard in
- *  secure contexts (https or localhost); on http://<hostname> the API is
- *  absent, so the copy must go through a hidden textarea. */
 function legacyCopy(text: string, done: () => void) {
   try {
     const ta = document.createElement('textarea');
@@ -52,13 +44,9 @@ function legacyCopy(text: string, done: () => void) {
     document.execCommand('copy');
     document.body.removeChild(ta);
     done();
-  } catch {
-    /* clipboard unavailable */
-  }
+  } catch {}
 }
 
-/** Click a stat row → copy "key: value" (full untruncated values) to the
- *  clipboard, with a transient ✓ feedback on the row. */
 function copyRow(row: StatRow, index: number) {
   const text = `${row.label.trim()}: ${row.title ?? row.value}`;
   const done = () => {
@@ -70,17 +58,13 @@ function copyRow(row: StatRow, index: number) {
   };
   try {
     if (navigator.clipboard?.writeText) {
-      // Clipboard API present (secure context) — but a rejected promise
-      // (e.g. permission denied) still falls back to the textarea copy.
       navigator.clipboard
         .writeText(text)
         .then(done)
         .catch(() => legacyCopy(text, done));
       return;
     }
-  } catch {
-    /* fall through to legacy */
-  }
+  } catch {}
   legacyCopy(text, done);
 }
 
@@ -93,7 +77,6 @@ const rows = computed<StatRow[]>(() => {
   const push = (label: string, value: string, extra?: Partial<StatRow>) =>
     out.push({ label, value, ...extra });
 
-  // ── General (first): File / ID / Working dir / Started / Last activity ──
   section('General');
   push('  File', shortFile.value, { title: s.file });
   push('  ID', shortId.value, { title: s.sessionId ?? s.file });
@@ -101,15 +84,12 @@ const rows = computed<StatRow[]>(() => {
   push('  Started', fmtDateTime(st.startedAt));
   push('  Last activity', fmtDateTime(st.lastActivity));
 
-  // ── Messages (TUI /session) — sub-level rows carry leading spaces in
-  // the key ("  calls") instead of CSS indentation. ──
   section('Messages');
   push('  Total', fmtTokens(st.messageCount));
   push('  User', fmtTokens(st.userMessages));
   push('  Assistant', fmtTokens(st.assistantMessages));
   push('  Tools', fmtTokens(st.toolResults));
 
-  // ── Tokens ──
   section('Tokens');
   push('  Input', fmtTokens(st.promptTokens));
   if (st.promptTokens > 0 && (st.cacheRead > 0 || st.cacheWrite > 0)) {
@@ -122,11 +102,9 @@ const rows = computed<StatRow[]>(() => {
   push('  Output', fmtTokens(st.tokensOut));
   push('  Total', fmtTokens(st.promptTokens + st.tokensOut));
 
-  // ── Cost (only when there is something to report) ──
   if (st.costUsd > 0 || st.cacheWaste.missedTokens > 0) {
     section('Cost');
     push('  Total', tuiCost(st.costUsd));
-    // Per-model attribution (hidden when everything lands in one bucket).
     if (st.costBreakdown.length > 1) {
       for (const b of st.costBreakdown) {
         push(`  ${b.key}`, `${tuiCost(b.cost)} (${fmtCompactTokens(b.tokens)})`);

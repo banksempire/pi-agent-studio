@@ -1,8 +1,3 @@
-/**
- * pi-nest gRPC client. Imported by front-end services (pi-agent-studio's
- * backend today, sub-agent tooling later) to drive agents without owning
- * them. All calls are promise-based; Subscribe returns a grpc stream.
- */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import grpc from '@grpc/grpc-js';
@@ -24,10 +19,6 @@ export class PiNestClient {
     host = process.env.PI_NEST_HOST ?? '127.0.0.1',
     port = Number(process.env.PI_NEST_PORT ?? 7495),
   } = {}) {
-    // Keepalive pings make the channel notice a dead connection (e.g. after a
-    // pi-nest restart) within keepalive_time_ms + keepalive_timeout_ms, so
-    // Subscribe streams fire 'error' and consumers (the gateway relay) can
-    // resubscribe instead of silently parking forever with no events.
     this.client = new piNest.PiNest(`${host}:${port}`, grpc.credentials.createInsecure(), {
       'grpc.keepalive_time_ms': 10000,
       'grpc.keepalive_timeout_ms': 5000,
@@ -92,19 +83,16 @@ export class PiNestClient {
     return this.#unary('getAgentState', { agentId });
   }
 
-  /** Server-stream of agent events ({ type, file, json }). */
   subscribe(agentId = '') {
     return this.client.subscribe({ agentId });
   }
 }
 
-/** Create a client, waiting (with backoff) until pi-nest answers Ping. */
 export function createClient(options) {
   const c = new PiNestClient(options);
   return c;
 }
 
-/** Retry Ping until pi-nest is reachable (or give up after `timeoutMs`). */
 export async function waitForNest(client, { timeoutMs = 15000, log = console.error } = {}) {
   const deadline = Date.now() + timeoutMs;
   let lastErr;

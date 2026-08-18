@@ -1,11 +1,4 @@
 <script setup lang="ts">
-/**
- * In-chat image review overlay. Rendered INSIDE the chat window the
- * images belong to (absolute over the window root — never a global
- * modal). Big image on top, a small-thumbnail gallery strip below —
- * the gallery only renders when the message has more than one image.
- * Close: ✕ button, Escape, or clicking the backdrop; ←/→ switch.
- */
 import SvgIcon from '@sf/components/SvgIcon.vue';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import type { MessageImage } from './MessageImages.vue';

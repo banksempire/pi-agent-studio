@@ -6,7 +6,6 @@ export default defineConfig({
   plugins: [vue()],
   resolve: {
     alias: {
-      // Consume StudioFramework source directly (sibling repo)
       '@sf': fileURLToPath(new URL('../StudioFramework/src', import.meta.url)),
     },
   },
@@ -15,18 +14,12 @@ export default defineConfig({
     port: 7492,
     allowedHosts: ['mbp', 'localhost', '.local'],
     watch: {
-      // Editors write files non-atomically; without this the watcher can
-      // read a half-written file and vite caches the failed (empty) CSS
-      // transform until the next change.
       awaitWriteFinish: {
         stabilityThreshold: 150,
         pollInterval: 20,
       },
     },
     proxy: {
-      // pi-agent-studio backend (src/pi-studio/server/index.mjs) — real pi agent sessions
-      // PI_API_PROXY overrides the target for parallel test stacks (a second
-      // backend on another port while the product one keeps 7493).
       '/api': {
         target: process.env.PI_API_PROXY ?? 'http://127.0.0.1:7493',
         changeOrigin: true,

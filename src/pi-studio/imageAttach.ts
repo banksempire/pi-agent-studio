@@ -1,20 +1,10 @@
-/**
- * Client-side image attachment processing: downscale + re-encode so the
- * session file and the model payload stay small. Images that are already
- * small enough are kept byte-for-byte (lossless).
- */
-
 export interface AttachedImage {
-  /** base64 payload, no `data:` prefix */
   data: string;
   mimeType: string;
 }
 
-/** Longest edge of an attached image after downscaling (px). */
 const MAX_EDGE = 1600;
-/** Attachments below this size are never re-encoded. */
 const MAX_KEEP_BYTES = 1_500_000;
-/** JPEG quality for downscaled re-encodes. */
 const JPEG_QUALITY = 0.85;
 
 function loadImage(url: string): Promise<HTMLImageElement> {
@@ -35,7 +25,6 @@ function readAsDataUrl(file: File): Promise<string> {
   });
 }
 
-/** Read a picked File into a compact AttachedImage (base64 + mimeType). */
 export async function processImageFile(file: File): Promise<AttachedImage> {
   const dataUrl = await readAsDataUrl(file);
   const img = await loadImage(dataUrl);
@@ -52,7 +41,6 @@ export async function processImageFile(file: File): Promise<AttachedImage> {
   canvas.height = Math.max(1, Math.round(h * scale));
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('canvas unavailable');
-  // JPEG has no alpha — flatten transparency onto white.
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
@@ -61,7 +49,6 @@ export async function processImageFile(file: File): Promise<AttachedImage> {
   return { data: out.slice(comma + 1), mimeType: 'image/jpeg' };
 }
 
-/** Data URL for <img> rendering / chip thumbnails. */
 export function dataUrlOf(im: AttachedImage): string {
   return `data:${im.mimeType};base64,${im.data}`;
 }

@@ -2,14 +2,11 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useChatStore } from '../store/chat';
 
-/** Above this /api/health round-trip the dot turns yellow (high ping). */
 const HIGH_PING_MS = 500;
-/** The latency popup's rolling window (matches the store's sample window). */
 const WINDOW_MS = 5 * 60_000;
 
 const store = useChatStore();
 
-/** 'ok' (green) | 'highping' (yellow) | 'err' (red). */
 const dotClass = computed(() => {
   if (store.backend !== 'online') return 'status-backend-dot--err';
   if (store.backendLost) return 'status-backend-dot--highping';
@@ -22,12 +19,7 @@ const label = computed(() => {
   if (store.backend !== 'online') {
     return store.backend === 'connecting' ? 'connecting…' : 'offline';
   }
-  // The latest heartbeat got no answer in time — report the lost packet
-  // instead of a stale number (the late answer is discarded as lost, it
-  // never shows up as an enormous ping).
   if (store.backendLost) return 'lost';
-  // The live ping, refreshed every 5s (the store's fixed ping interval);
-  // the dot color carries the status (green ≤500ms, yellow above).
   return store.backendPing !== null ? `${store.backendPing}ms` : 'live';
 });
 
@@ -38,8 +30,6 @@ const title = computed(() => {
     ? `pi agent reachable (last heartbeat lost — no response within 3s; last good ping ${ping})`
     : `pi agent reachable (${ping})`;
 });
-
-// ── Click-to-open latency popup ───────────────────────────────────────────
 
 const open = ref(false);
 

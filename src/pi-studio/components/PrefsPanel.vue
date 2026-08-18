@@ -6,7 +6,6 @@ const store = useChatStore();
 
 <template>
   <div class="prefs-panel">
-    <!-- Global: which key sends; the other key inserts a new line. -->
     <div class="prefs-row">
       <span class="prefs-key">Send with</span>
       <span class="prefs-right">
@@ -22,7 +21,6 @@ const store = useChatStore();
       </span>
     </div>
 
-    <!-- Global: render message text as markdown in every chat window. -->
     <div class="prefs-row">
       <span class="prefs-key">Markdown</span>
       <span class="prefs-right">

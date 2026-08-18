@@ -1,8 +1,3 @@
-/**
- * gRPC service implementation. Thin: each handler delegates to the
- * AgentRegistry (agents/queue/events) or the slash executor. Adding a
- * sub-agent RPC later = one proto method + one handler here.
- */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import grpc from '@grpc/grpc-js';
@@ -20,20 +15,10 @@ const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
   oneofs: true,
 });
 
-// Image-attachment limits (mirror the gateway's /api/chat validation so
-// the daemon stays a safe boundary for direct gRPC callers): at most 4
-// images, image/* mime only, ≤8 MiB binary each (base64 ≈ 4/3, plus a
-// little slack for the JSON envelope when parsed).
 const MAX_IMAGES = 4;
 const MAX_IMAGE_BASE64 = 11_200_000;
 const MAX_IMAGES_JSON = 50_000_000;
 
-/**
- * Parse the images_json envelope into [{ mimeType, data }] attachments.
- * Degrades to [] on malformed input; drops non-image mimes, empty data,
- * oversized payloads, and anything past MAX_IMAGES (mirroring the
- * gateway's /api/chat validation).
- */
 export function parseImagesJson(json) {
   if (typeof json !== 'string' || !json || json.length > MAX_IMAGES_JSON) return [];
   try {
@@ -91,16 +76,10 @@ export function createServer({ registry = new AgentRegistry(), onStateChange: _o
 
     Prompt: async (call, cb) => {
       try {
-        // Acknowledge receipt immediately: the frontend lights its pending
-        // UI (optimistic row / WIP bubble) on this event, not on completion.
         registry.broadcast('ack', call.request.agentId, {
           reqId: call.request.reqId ?? '',
           kind: 'message',
         });
-        // Image attachments ride as a JSON array of { mimeType, data }
-        // (base64). Malformed or oversized payloads degrade to a text-only
-        // prompt — the imagesJson envelope itself is also capped so a huge
-        // string never reaches JSON.parse.
         const images = parseImagesJson(call.request.imagesJson);
         await registry.prompt(call.request.agentId, call.request.message, {
           interrupt: call.request.interrupt !== false,
@@ -123,8 +102,6 @@ export function createServer({ registry = new AgentRegistry(), onStateChange: _o
 
     Slash: async (call, cb) => {
       try {
-        // Acknowledge receipt right away (the call resolves only when the
-        // command completes — compaction can take tens of seconds).
         registry.broadcast('ack', call.request.agentId ?? '', {
           reqId: call.request.reqId ?? '',
           kind: 'slash',
@@ -133,9 +110,7 @@ export function createServer({ registry = new AgentRegistry(), onStateChange: _o
         let extra = {};
         try {
           extra = call.request.extraJson ? JSON.parse(call.request.extraJson) : {};
-        } catch {
-          /* ignore */
-        }
+        } catch {}
         const r = await execSlash(registry, {
           agentId: call.request.agentId,
           command: call.request.command,
@@ -185,22 +160,14 @@ export function createServer({ registry = new AgentRegistry(), onStateChange: _o
       const handler = (ev) => {
         if (filter && ev.file !== filter) return;
         try {
-          // broadcast() pre-stringified the payload once for all subscribers
           call.write({ type: ev.type, file: ev.file, json: ev.json });
-        } catch {
-          /* client gone */
-        }
+        } catch {}
       };
       registry.on('event', handler);
-      // Replay the current per-agent state: a (re)connecting relay must not
-      // lose in-flight transient events (compaction WIP, run status flips)
-      // that were broadcast while its stream was down.
       for (const snap of registry.snapshot(filter)) {
         try {
           call.write(snap);
-        } catch {
-          /* client gone */
-        }
+        } catch {}
       }
       call.on('cancelled', () => registry.off('event', handler));
       call.on('error', () => registry.off('event', handler));

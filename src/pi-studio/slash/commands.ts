@@ -1,18 +1,4 @@
-/**
- * Slash commands for the web UI — the pi TUI command set, web-adapted.
- *
- * Typing `/` in the chat composer opens an autocomplete of commands. Enter
- * runs the command against the backend (/api/slash), which dispatches to
- * the real pi SDK (compact, fork, clone, name, model, export, …). Commands
- * that only make sense in the TUI (login, share, …) answer with a reason.
- *
- * Results are returned as a discriminated union; ChatWindow renders them
- * (system message, clipboard copy, file download, picker dialog, …).
- */
-
 import { useChatStore } from '../store/chat';
-
-// ── Types ──────────────────────────────────────────────────────────────────
 
 export interface SlashCommandInfo {
   name: string;
@@ -33,12 +19,10 @@ export interface PickerItem {
   detail?: string;
 }
 
-/** A picker dialog request; ChatWindow renders it and calls `onSelect`. */
 export interface SlashPicker {
   kind: 'picker';
   title: string;
   items: PickerItem[];
-  // biome-ignore lint/suspicious/noConfusingVoidType: picker rows may resolve nothing (void, e.g. open a chat) or return a slash result.
   onSelect: (id: string) => void | Promise<SlashResult | void>;
 }
 
@@ -49,8 +33,6 @@ export type SlashResult =
   | { kind: 'clipboard'; text: string }
   | { kind: 'download'; content: string; filename: string; mime: string }
   | SlashPicker;
-
-// ── Catalog (cached) ──────────────────────────────────────────────────────
 
 interface Catalog {
   commands: SlashCommandInfo[];
@@ -71,7 +53,6 @@ async function fetchCatalog(): Promise<Catalog> {
   return catalog;
 }
 
-/** All selectable commands: builtins + skills, for autocomplete. */
 export async function allSlashCommands(): Promise<SlashCommandInfo[]> {
   const c = await fetchCatalog();
   return [
@@ -84,25 +65,19 @@ export async function allSlashCommands(): Promise<SlashCommandInfo[]> {
   ];
 }
 
-// ── Parsing ───────────────────────────────────────────────────────────────
-
 export interface ParsedSlash {
   command: string;
   args: string;
 }
 
-/** `/name foo` → { command: 'name', args: 'foo' }; null when not a command. */
 export function parseSlash(text: string): ParsedSlash | null {
   const t = text.trim();
   if (!t.startsWith('/')) return null;
-  // `/` alone or escaped `//` is a literal message.
   if (t === '/' || t.startsWith('//')) return null;
   const sp = t.indexOf(' ');
   if (sp < 0) return { command: t.slice(1).trim().toLowerCase(), args: '' };
   return { command: t.slice(1, sp).trim().toLowerCase(), args: t.slice(sp + 1).trim() };
 }
-
-// ── Backend execution ─────────────────────────────────────────────────────
 
 interface SlashResponse {
   ok: boolean;
@@ -126,21 +101,14 @@ async function postSlash(body: Record<string, unknown>): Promise<SlashResponse> 
   return j;
 }
 
-// ── Execution ─────────────────────────────────────────────────────────────
-
 const store = useChatStore();
 
-/**
- * Run a slash command. `sessionId` is the active chat window's session
- * (commands like /clone, /compact, /model apply to it).
- */
 export async function runSlash(sessionId: string, parsed: ParsedSlash): Promise<SlashResult> {
   const { command, args } = parsed;
 
   const session = store.findSession(sessionId);
   const file = session?.file;
 
-  // ── Frontend-native commands ──
   if (command === 'new') {
     await store.newChat();
     return { kind: 'none' };
@@ -176,7 +144,6 @@ export async function runSlash(sessionId: string, parsed: ParsedSlash): Promise<
     };
   }
 
-  // ── Commands that need an open session window ──
   const needsSession = [
     'session',
     'name',
@@ -196,13 +163,9 @@ export async function runSlash(sessionId: string, parsed: ParsedSlash): Promise<
     }
   }
 
-  // ── Backend commands ──
   try {
     const r = await postSlash({ file, command, args, extra: {} });
 
-    // /compact: no system line — the WIP action-bubble shows progress, the
-    // summary entry in the flow is the result record, and a failed compaction
-    // flashes the bubble red (with the reason in the error banner).
     if (command === 'compact') {
       if (!r.ok) store.markCompactFailed(sessionId, r.error ?? null);
       return { kind: 'none' };
@@ -210,7 +173,6 @@ export async function runSlash(sessionId: string, parsed: ParsedSlash): Promise<
 
     if (!r.ok) return { kind: 'error', text: r.error ?? `/${command} failed` };
     if (r.data?.file) {
-      // clone / fork / import / new: open the resulting session window.
       const newId = encodeURIComponent(r.data.file);
       await store.refreshList();
       store.openChat(newId);
@@ -312,8 +274,6 @@ export async function runSlash(sessionId: string, parsed: ParsedSlash): Promise<
     if (r.notice) return { kind: 'notice', text: r.notice };
     return { kind: 'none' };
   } catch (e) {
-    // A transport/HTTP failure of /compact is a failed compaction: flash the
-    // bubble (no line). Other commands surface the error as a line.
     if (command === 'compact') {
       store.markCompactFailed(sessionId, `/${command} failed: ${e instanceof Error ? e.message : String(e)}`);
       return { kind: 'none' };
@@ -322,7 +282,6 @@ export async function runSlash(sessionId: string, parsed: ParsedSlash): Promise<
   }
 }
 
-/** Flatten a session tree (from /api/slash tree) into depth-first items. */
 function flattenTree(nodes: any[], depth = 0, acc: any[] = []): any[] {
   for (const n of nodes ?? []) {
     acc.push({ ...n, depth });

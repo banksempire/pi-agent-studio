@@ -15,13 +15,9 @@ import SessionStats from './components/SessionStats.vue';
 import WelcomeContent from './components/WelcomeContent.vue';
 import StudioShell from './shell/StudioShell.vue';
 
-// ── Register content renderers referenced by the layout JSON ──────────────
-
-// Workspace tab content
 registerTabContent('welcome', WelcomeContent);
 registerTabContent('chat-window', ChatWindow);
 
-// Custom panel components
 registerPanelComponent('chat-history', ChatHistory);
 registerPanelComponent('chat-sessions', ChatSessions);
 registerPanelComponent('directory-tree', DirectoryTree);
@@ -30,7 +26,6 @@ registerStatusComponent('backend-status', BackendStatus);
 registerPanelComponent('model-picker', ModelPicker);
 registerPanelComponent('prefs', PrefsPanel);
 
-// The Workspace app (docker item "workspace") — saved-workspace management.
 registerPanelComponent('workspace-panel', WorkspacePanel);
 
 createApp(StudioShell).mount('#app');

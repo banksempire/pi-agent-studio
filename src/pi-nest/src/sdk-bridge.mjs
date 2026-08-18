@@ -1,9 +1,3 @@
-/**
- * SDK bridge: finds the global pi SDK and converts SDK messages/events into
- * the wire display shape. This is the ONLY module that imports the SDK —
- * pi-nest's registry and slash executor go through it, so the rest of the
- * host never touches SDK types directly (and a later SDK swap stays local).
- */
 import { execSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -12,7 +6,6 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export const SESSIONS_ROOT = path.join(os.homedir(), '.pi', 'agent', 'sessions');
-/** Working directory for newly created sessions. */
 export const NEW_CHAT_CWD = process.env.PI_NEST_CWD ?? '/workspace/sf';
 
 export function findSdkDir() {
@@ -21,9 +14,7 @@ export function findSdkDir() {
     const root = execSync('npm root -g', { encoding: 'utf8' }).trim();
     const p = path.join(root, '@earendil-works', 'pi-coding-agent');
     if (existsSync(path.join(p, 'dist', 'index.js'))) return p;
-  } catch {
-    /* fall through */
-  }
+  } catch {}
   return null;
 }
 
@@ -39,8 +30,6 @@ const { BUILTIN_SLASH_COMMANDS } = await import(
 
 export { BUILTIN_SLASH_COMMANDS, sdk, sdkDir };
 
-/** Stable id for compaction/branch summaries: derived from the text, so the
- *  live SSE copy and the file-parse copy upsert to the same message. */
 export function hashId(text) {
   let h = 0;
   for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) | 0;
@@ -65,9 +54,6 @@ function textOf(content) {
 
 export { textOf };
 
-/** Extract image blocks from message content. Handles both the storage
- *  shape ({ type:'image', data, mimeType }) and the prompt shape
- *  ({ type:'image', source:{ type:'base64', mediaType, data } }). */
 export function extractImages(content) {
   if (!Array.isArray(content)) return [];
   const out = [];
@@ -82,10 +68,6 @@ export function extractImages(content) {
   return out;
 }
 
-/** Text of the text blocks only — no [📷 …] marker (images render inline).
- *  Trimmed: the SDK persists prompt text with a trailing newline; the live
- *  optimistic rows carry the trimmed text, and the dedupe paths compare
- *  them exactly. */
 function plainText(content) {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
@@ -99,7 +81,6 @@ function plainText(content) {
   return '';
 }
 
-/** Convert an SDK AgentMessage into the wire/display shape. */
 export function toDisplayMessage(message) {
   const d = { role: message.role, text: '', ts: message.timestamp ?? Date.now() };
   if (message.role === 'assistant') {
@@ -125,8 +106,6 @@ export function toDisplayMessage(message) {
     d.thinking = thinking.length ? thinking.join('\n') : undefined;
     d.toolCalls = toolCalls.length ? toolCalls : undefined;
   } else if (message.role === 'user') {
-    // User messages may carry image attachments — the UI renders them
-    // directly (no [📷 N image] marker in the text).
     d.text = plainText(message.content);
     const imgs = extractImages(message.content);
     if (imgs.length) d.images = imgs;
@@ -151,7 +130,6 @@ export function toDisplayMessage(message) {
   return d;
 }
 
-/** Stable per-message ids for the live stream (file parse uses entry ids). */
 export function messageId(message) {
   if (message.role === 'assistant') return `asst-${message.timestamp ?? Date.now()}`;
   if (message.role === 'user') return `user-${message.timestamp ?? Date.now()}`;
@@ -171,11 +149,6 @@ export function extractText(result) {
   return '';
 }
 
-/** The thinking levels a model actually offers, per its configuration.
- *  Mirrors pi-ai's getSupportedThinkingLevels (reasoning flag + per-level
- *  thinkingLevelMap: null disables a level; xhigh/max require an explicit
- *  mapping). Kept in sync with the SDK so the model menu never shows levels
- *  the model doesn't support (e.g. the full OpenAI list). */
 const EXTENDED_THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
 export function supportedThinkingLevels(model) {
@@ -188,7 +161,6 @@ export function supportedThinkingLevels(model) {
   });
 }
 
-/** Mirror the SDK's session-file naming so a lazy session lands on its path. */
 export function newSessionPath(cwd) {
   const resolved = path.resolve(cwd);
   const safe = `--${resolved.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`;

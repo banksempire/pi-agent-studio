@@ -8,7 +8,6 @@ import type { ModelCatalog, ModelInfo } from '../modelInfo';
 import { cachedModelMatches, getModelInfo, setCachedModel } from '../modelInfo';
 import { api, useChatStore } from '../store/chat';
 
-/** Same descriptions as the pi TUI's thinking selector. */
 const LEVEL_DESCRIPTIONS: Record<string, string> = {
   off: 'No reasoning',
   minimal: 'Very brief reasoning (~1k tokens)',
@@ -36,12 +35,8 @@ async function load(force = false) {
   }
   error.value = '';
   try {
-    // Per-window cache: activating an already-visited window needs no
-    // backend round-trip (modelInfo.ts keeps the snapshot per file).
     catalog.value = await getModelInfo(s.file, force);
   } catch (e) {
-    // Connectivity failures are silent — the status-bar dot is the only
-    // indicator; real backend rejections (j.ok === false) still show.
     if (!(e instanceof TypeError)) {
       error.value = String((e as Error)?.message ?? e);
     }
@@ -49,18 +44,11 @@ async function load(force = false) {
   }
 }
 
-// A new chat window (or none) resets and shows its cached model info.
-// Watch the FILE PATH, not the session object: a refresh re-syncs the
-// session list (new object identities) and would otherwise churn on
-// every model change.
 const activeFile = computed(() => active.value?.file ?? null);
 watch(activeFile, () => {
   open.value = false;
   void load();
 });
-// The model can also change from outside the menu (e.g. /model in chat):
-// refresh that window's info. An SSE stats update that merely echoes the
-// picker's own commit matches the cache — no refetch for that.
 watch(
   () => active.value?.stats.model ?? null,
   (m) => {
@@ -70,8 +58,6 @@ watch(
   },
 );
 onMounted(() => void load());
-
-// ── Menu items: Provider → Model → Think level ────────────────────────────
 
 const providers = computed(() => {
   if (!catalog.value) return [];
@@ -105,7 +91,6 @@ function onSelect(item: MenuNodeDef) {
   if (d) void commit(d.model, d.level);
 }
 
-/** Current model's display values for the Provider / Model / Thinking lines. */
 const current = computed(() => catalog.value?.current ?? null);
 const thinkingLabel = computed(() => {
   const lvl = catalog.value?.currentThinkingLevel;
@@ -130,9 +115,6 @@ async function commit(m: ModelInfo, thinkLevel: string) {
       body: JSON.stringify({
         file: s.file,
         command: 'model',
-        // Fully-qualified provider/model id — several providers ship the
-        // same model id (opencode, opencode-go, volcengine-plan …) and a
-        // bare id would match whichever catalog entry comes first.
         args: `${m.provider}/${m.id}`,
         extra: { thinkLevel },
       }),
@@ -140,17 +122,10 @@ async function commit(m: ModelInfo, thinkLevel: string) {
     if (!j.ok) {
       error.value = j.error || 'Failed to apply model';
     } else {
-      // Record the commit in the cache — the SSE stats echo that follows
-      // then matches and skips the otherwise-redundant refetch.
       setCachedModel(s.file, m, thinkLevel);
-      // Refresh the display rows NOW: they render the backend's catalog
-      // `current`, which is stale until refetched — without this, a full
-      // page reload was the only way to see the change.
       void load(true);
     }
   } catch (e) {
-    // Connectivity failures are silent (the dot in the status bar says it
-    // all); real backend rejections (j.ok === false) still show.
     if (!(e instanceof TypeError)) {
       error.value = String((e as Error)?.message ?? e);
     }
@@ -162,8 +137,6 @@ async function commit(m: ModelInfo, thinkLevel: string) {
 
 <template>
   <div class="model-menu">
-    <!-- Current selection: Provider / Model / Thinking (same key-value
-         layout as the stats rows above — the unified KeyValueList). -->
     <KeyValueList :items="modelRows" />
 
     <Menu :items="menuItems" :open="open" title="Change Model" @update:open="(v) => (open = v)" @select="onSelect">

@@ -10,6 +10,7 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"],
     "baseUrl": ".",
     "paths": {
       "@sf/*": ["../StudioFramework/src/*"]

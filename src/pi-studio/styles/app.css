@@ -1,20 +1,9 @@
-/* ═══════════════════════════════════════════════════════════════════════════
-   pi-agent-studio — app-level styles (on top of StudioFramework's theme)
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-/* ── Mount element ────────────────────────────────────────────────────────
-   The framework styles html/body; each host app must give its own mount id
-   full height for .sf-root's height:100% chain to work. */
 #app {
   height: 100%;
   width: 100%;
   overflow: hidden;
 }
 
-/* ── Text selection ──────────────────────────────────────────────────────── */
-
-/* The framework shell is user-select: none (IDE-style); chat content must
-   stay copyable. */
 .chat-window {
   user-select: text;
   -webkit-user-select: text;
@@ -23,8 +12,6 @@
 .chat-window .chat-banner {
   user-select: none;
 }
-
-/* ── Shared: status dot ─────────────────────────────────────────────────── */
 
 .chat-status-dot {
   display: inline-block;
@@ -43,12 +30,6 @@
   animation: chat-pulse 1.4s infinite;
 }
 
-/* Breathing glow for the running indicators (tab dot + session-stats
-   dot). The pulse is a DROP-SHADOW, not a box-shadow: it follows the
-   element's own alpha shape, so it stays perfectly round on every
-   engine (box-shadow + border-radius on tiny elements can render with
-   square-corner artifacts, and the old keyframes also depended on
-   color-mix inside the animation). */
 @keyframes chat-pulse {
   0% {
     filter: drop-shadow(0 0 0 var(--sf-status-ok));
@@ -61,11 +42,6 @@
   }
 }
 
-/* Session status on the workspace tab — the chat-window title bar is
-   gone, so the state dot lives on the tab: the ◉ glyph replaces the chat
-   bubble while the LLM works (green, pulsing ring). Both the desktop tab
-   strip (.sf-tab) and the mobile title-bar label carry the state class
-   (tabClass in the tab def). */
 .sf-tab.chat-tab--running .sf-tab-icon,
 .sf-mobile-tab-label.chat-tab--running .sf-mobile-tab-icon {
   width: 11px;
@@ -74,16 +50,12 @@
   animation: chat-pulse 1.4s infinite;
 }
 
-/* ── Chat window (workspace tab content) ────────────────────────────────── */
-
 .chat-window {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  /* Containing block for the image-review overlay (absolute inset 0). */
   position: relative;
-  /* L3 — chat window background matches the panel body */
   background: var(--sf-panel-bg);
 }
 
@@ -91,42 +63,18 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  /* Native scroll anchoring is OFF everywhere: growth at the origin must
-     follow natively (a viewer pinned to the bottom sees a new message
-     arrive), and a prepend at the far end must NOT adjust the position
-     (which would fight the structural 0px load). */
   overflow-anchor: none;
-  /* No TOP padding: the pinned separator must sit flush with the top of
-     the window (row spacing comes from .chat-msg margins instead). */
   padding: 0 20px 12px;
-  /* PADDING, not margin: the inset belongs to the messages area only
-     (between the title bar and the input panel) and the scrollbar of
-     this scroll container must stay flush at the window edge. Both
-     modes, matching the panel body's gutters. */
-  /* INVERTED flow: the container reverses its children, so ONE block
-     wrapper (.chat-flow) holds the rows in normal order; the wrapper is
-     the single flex item at the bottom — the scroll origin. Prepending
-     older content grows the flow's FAR (oldest) end and can never move
-     an already-loaded row: the 0px-load requirement is structural, not a
-     scroll write (see the INVERTED note in ChatWindow.vue). */
   display: flex;
   flex-direction: column-reverse;
 }
 
-/* The single block child of the inverted box: normal top-down layout,
-   bottom-anchored (newest message at the box's bottom edge). Rows keep
-   their exact distance from the bottom when older content is prepended.
-   NOTE: no min-height:0 here — as a flex item, its default min-height:auto
-   stops it from shrinking below its content, which is what makes the
-   container scrollable. */
 .chat-flow {
   display: block;
 }
 
 .chat-empty {
   width: fit-content;
-  /* Bottom-anchored (the flow sits at the scroll origin): the hint rests
-     quietly above the composer. */
   margin: 0 auto 24vh;
   color: var(--sf-text-muted);
   font-size: 16px;
@@ -134,9 +82,6 @@
 
 .chat-load-older {
   width: fit-content;
-  /* Fixed height (incl. the 1px border) + a fixed-width icon slot: the ↑
-     swaps to a spinner while a page fetches WITHOUT the box changing, so
-     the list's top content never shifts or blinks mid-load. */
   height: 40px;
   display: flex;
   align-items: center;
@@ -186,8 +131,6 @@
   pointer-events: none;
 }
 
-/* The end-of-history marker: same 40px box — only its content/state change
-   so the list geometry is identical at every moment. */
 .chat-load-older--done {
   cursor: default;
   pointer-events: none;
@@ -210,29 +153,17 @@
 }
 
 .chat-msg {
-  /* Messages (user + AI) take the full width of the window. */
   font-size: 16px;
   line-height: 1.5;
-  white-space: pre-wrap; /* plain-text messages keep newlines; .chat-msg-md overrides */
+  white-space: pre-wrap;
   word-break: break-word;
-  /* The gap to the NEXT group lives here (padding), not on the next
-     group as a margin: the group is the separator's containing block
-     and must end exactly at the next group's top — a margin would end
-     it 10px short and push the pinned line early. The 4px under the
-     separator comes from .chat-sep + .chat-msg below (a separator
-     margin counts toward the sticky constraint — it pushed the line
-     4px before the next one touched it). */
   padding: 0 0 10px;
 }
 
-/* 4px gap between a separator and its message (was the separator's
-   margin-bottom, see the sticky-constraint note above). */
 .chat-sep + .chat-msg {
   padding-top: 4px;
 }
 
-/* User input: blue bubble (the separator above is the row's header).
-   Full chat-window width — block flow fills the row. */
 .chat-user-bubble {
   background: var(--sf-accent);
   color: var(--sf-text-on-accent);
@@ -241,16 +172,10 @@
   padding: 8px 12px;
 }
 
-/* User-bubble attachments are rendered OUTSIDE the bubble (MessageImages
-   component: horizontal row when it fits, poker-card fan otherwise). */
 .msg-images + .chat-user-bubble {
   margin-top: 6px;
 }
 
-/* Sticky message separator: ``---- User · 03:37 ----`` / ``---- pi ·
-   provider · model · level ----``. Pins to the top of the chat window
-   while its message is in view (pure-CSS sticky); clicking it jumps to
-   the start of that message. */
 .chat-sep {
   position: sticky;
   top: 0;
@@ -259,7 +184,6 @@
   align-items: center;
   gap: 8px;
   padding: 2px 0;
-  /* L3 — segregation lines sit on the chat window background */
   background: var(--sf-panel-bg);
   font-size: 16px;
   letter-spacing: 0.3px;
@@ -313,8 +237,6 @@
   }
 }
 
-/* ── ActionBubble group box (consecutive thinking + tool calls) ────────── */
-
 .chat-work {
   border: 1px solid var(--sf-border);
   border-radius: 6px;
@@ -344,7 +266,6 @@
   flex-shrink: 0;
 }
 
-/* [action name|ani|content|time elapsed] — header parts */
 .chat-ab-name {
   flex-shrink: 0;
   font-weight: 600;
@@ -357,13 +278,12 @@
 
 .chat-ab-dots {
   flex-shrink: 0;
-  width: 3ch; /* constant space: dot growth never shifts the content */
+  width: 3ch;
   font-family: var(--sf-mono);
-  color: var(--sf-text); /* white-on-dark, matches the action name */
+  color: var(--sf-text);
   text-align: left;
 }
 
-/* Content preview fills all remaining space (truncated to one line). */
 .chat-ab-content {
   flex: 1;
   min-width: 0;
@@ -385,21 +305,14 @@
   color: var(--sf-text);
 }
 
-/* /compact failed state: a transient red box (the flash dismisses it). */
 .chat-compacting--failed .chat-ab-name {
   color: var(--sf-status-err);
 }
 
-/* The /compact bubble is a group part of an agent item with no header —
-   same rendering path as the thinking/tool bubbles. */
-
-/* The compact head's content slot is the live status — grey like the
-   preview text other action bubbles show in this slot. */
 .chat-compacting .chat-ab-content {
   color: var(--sf-text-muted);
 }
 
-/* Action-completion flash: green on success, red on failure, then settle. */
 @keyframes chat-work-flash-ok {
   0% {
     border-color: color-mix(in srgb, var(--sf-status-ok) 95%, transparent);
@@ -438,7 +351,6 @@
   gap: 10px;
 }
 
-/* Stacked sub-bubble (one action) — collapsed until clicked. */
 .chat-ab-sub {
   border: 1px solid var(--sf-border);
   border-radius: 5px;
@@ -446,7 +358,6 @@
   overflow: hidden;
 }
 
-/* Tool-call outcome tint: green on success, red on failure (no status icon). */
 .chat-ab-sub--ok {
   border-color: color-mix(in srgb, var(--sf-status-ok) 50%, transparent);
   background: color-mix(in srgb, var(--sf-status-ok) 6%, transparent);
@@ -538,11 +449,6 @@
   max-height: 300px;
 }
 
-/* Compaction summary: an ActionBubble-style box (same look as the /compact
-   status bubble — the old yellow box is gone). Body is a pre that grows to
-   the full text height: the summary is prose the user wants to read in
-   place, so no inner cap/scrollbar — the chat list scrolls instead (the
-   .chat-ab-code default max-height would otherwise truncate it at 220px). */
 .chat-summary-ab-body {
   max-height: none;
   white-space: pre-wrap;
@@ -584,7 +490,6 @@
   box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
 }
 
-/* biome-ignore lint/style/noDescendingSpecificity: deliberate section ordering — different properties, not overrides */
 .chat-banner {
   padding: 4px 10px;
   background: color-mix(in srgb, var(--sf-status-warn) 10%, transparent);
@@ -611,12 +516,10 @@
   gap: 8px;
   padding: 10px 12px;
   border-top: 1px solid var(--sf-border);
-  /* L2 — input panel sits one step above the chat window background */
   background: var(--sf-control);
   flex-shrink: 0;
 }
 
-/* Drag-to-resize handle on the composer's top edge. */
 .chat-composer-handle {
   position: absolute;
   top: 0;
@@ -645,10 +548,8 @@
 }
 
 .chat-input {
-  width: 100%; /* the input owns the full composer width */
+  width: 100%;
   resize: none;
-  /* Fixed one-line box (line-height + vertical padding + borders); text
-     scrolls inside instead of growing the box. */
   height: calc(1.4em + 2 * 0.44em + 2px);
   overflow-y: auto;
   padding: 0.44em 0.625em;
@@ -657,7 +558,6 @@
   border-radius: 5px;
   color: var(--sf-text);
   font-family: var(--sf-font);
-  /* 16px: below this iOS Safari auto-zooms into the input on focus */
   font-size: 16px;
   line-height: 1.4;
   outline: none;
@@ -667,9 +567,6 @@
   border-color: var(--sf-accent);
 }
 
-/* Mobile: the input auto-grows with its content up to the cap, then
-   scrolls internally (height driven by ChatWindow's autoGrow, which caps
-   at the same 120px). The drag-resize handle is a desktop feature. */
 .sf-root--mobile .chat-input {
   max-height: 120px;
 }
@@ -678,21 +575,12 @@
   display: none;
 }
 
-/* Bottom action row: scroll-to-bottom + Send, right-aligned (never wraps). */
 .chat-composer-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
 }
 
-/* Whole-panel block: when the composer as a whole must be non-interactive
-   (for ANY reason — e.g. its session no longer exists), a blocking banner
-   sits ON TOP of all the controlling elements (textarea, attach chips,
-   buttons, resize handle) and blocks interaction with them. The panel is
-   never restructured — nothing is pushed to the side or squeezed; the
-   banner simply covers the controls and intercepts every interaction.
-   One step above the drag handle (z 2) and the completions popup (z 30),
-   below the picker backdrop (z 40) so dialogs still layer above it. */
 .chat-composer-block {
   position: absolute;
   inset: 0;
@@ -718,7 +606,6 @@
   max-width: 100%;
 }
 
-/* Pending image attachments: thumbnail chips above the input box. */
 .chat-attach-row {
   display: flex;
   flex-wrap: wrap;
@@ -758,17 +645,10 @@
   box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
 }
 
-/* Hidden file picker for image attachments (the 🖼 button triggers it). */
 .chat-image-input {
   display: none;
 }
 
-/* Context gauge ("10.0%/1M"), left side under the input box — pushed to
-   the left edge while the buttons stay right-aligned. The auto margin
-   gives the gauge as much room as the row has, so its full text shows
-   whenever possible; only when the panel is too narrow for the buttons
-   + gauge does the gauge shrink and truncate with '…' (the title
-   tooltip still shows the full context). */
 .chat-context {
   margin-right: auto;
   align-self: center;
@@ -786,9 +666,6 @@
   min-width: 0;
   cursor: pointer;
 }
-/* Grey highlight block on hover, same overlay as the other buttons
-   (warn/error keep their color — their rules below win on equal
-   specificity, the overlay still shows). */
 .chat-context:hover {
   box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
   color: var(--sf-text-bright);
@@ -816,8 +693,6 @@
   flex-shrink: 0;
 }
 
-/* Scroll-to-bottom, left of the Send button (same height: text + padding +
-   border ≈ the Send button's text + padding). */
 .chat-scroll-btn,
 .chat-image-btn {
   background: var(--sf-bg);
@@ -851,8 +726,6 @@
   cursor: default;
 }
 
-/* ── System messages (slash command output) ────────────────────────────── */
-
 .chat-system {
   align-self: center;
   max-width: 96%;
@@ -874,8 +747,6 @@
   background: color-mix(in srgb, var(--sf-danger) 8%, transparent);
   color: var(--sf-danger);
 }
-
-/* ── Slash command autocomplete ────────────────────────────────────────── */
 
 .chat-completions {
   position: absolute;
@@ -924,8 +795,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-/* ── Picker dialog (model / tree / fork / resume) ──────────────────────── */
 
 .chat-picker-backdrop {
   position: absolute;
@@ -1008,13 +877,9 @@
   flex-shrink: 0;
 }
 
-/* ── Chat list (panel: Chat History / Sessions) ─────────────────────────── */
-
 .chat-list {
   padding: 4px 0;
 }
-
-/* ── Directory tree (left panel) ─────────────────────────────────────────── */
 
 .dir-tree {
   padding: 4px 0;
@@ -1043,7 +908,6 @@
   box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
 }
 
-/* Checkbox: on = theme blue with ✓, mid = some descendants selected. */
 .dir-check {
   width: 13px;
   height: 13px;
@@ -1078,7 +942,6 @@
   color: var(--sf-text-on-accent);
 }
 
-/* On a checked (blue) row the box shows as an outline so the ✓ stays legible. */
 .dir-node--checked .dir-check {
   background: transparent;
   border-color: var(--sf-text-on-accent);
@@ -1088,7 +951,6 @@
   background: var(--sf-accent-soft);
 }
 
-/* biome-ignore lint/style/noDescendingSpecificity: deliberate section ordering — different properties, not overrides */
 .dir-node-toggle {
   width: 16px;
   text-align: center;
@@ -1108,7 +970,6 @@
   text-overflow: ellipsis;
 }
 
-/* biome-ignore lint/style/noDescendingSpecificity: deliberate section ordering — different properties, not overrides */
 .dir-node-count {
   font-size: 16px;
   color: var(--sf-text-muted);
@@ -1120,8 +981,6 @@
   color: var(--sf-text-on-accent);
 }
 
-/* Inline themed dialog (rename input / delete confirm) — same visual
-   family as the picker modal; never the browser's native popup. */
 .chat-dialog-backdrop {
   position: fixed;
   inset: 0;
@@ -1166,7 +1025,7 @@
   border-radius: 4px;
   color: var(--sf-text);
   font-family: var(--sf-font);
-  font-size: 16px; /* ≥16px: no iOS focus auto-zoom */
+  font-size: 16px;
   padding: 6px 8px;
   outline: none;
 }
@@ -1196,7 +1055,6 @@
   color: var(--sf-text-bright);
 }
 
-/* Destructive confirm uses the theme's error red. */
 .chat-dialog-btn--danger {
   background: var(--sf-status-err);
   border-color: var(--sf-status-err);
@@ -1219,14 +1077,11 @@
   cursor: pointer;
 }
 
-/* Row action menu (⋮): hidden until the row is hovered (or its menu open).
-   Background/hover come from the framework's .sf-panel-btn. */
 .chat-item-menu {
   visibility: hidden;
   border: none;
   cursor: pointer;
   color: var(--sf-text-muted);
-  /* buttons get 13.33px from the UA stylesheet — force the 16px floor */
   font-size: 16px;
   width: 20px;
   height: 18px;
@@ -1249,10 +1104,6 @@
   box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
 }
 
-/* Selected: a 2px accent line at the left edge, painted with an inset
-   shadow so it is flush with the row (no border gutter) and straight
-   (no radius on the row). On hover the line stays on top of the grey
-   overlay: box-shadow layers front-to-back in listed order. */
 .chat-list-item--active {
   box-shadow: inset 2px 0 0 var(--sf-accent);
 }
@@ -1330,9 +1181,6 @@
   color: var(--sf-accent-dim);
 }
 
-/* ── Backend connectivity (status bar, replaces static "pi agent · live") ──
-   Dot: green = connected & fast, yellow = high ping, red = disconnected. */
-
 .status-backend {
   display: inline-flex;
   align-items: center;
@@ -1360,9 +1208,6 @@
   background: var(--sf-status-err);
 }
 
-/* Latency popup — opens above the indicator on click; closes on outside
-   click or Escape. Anchored to the indicator itself (position: relative
-   above), so it works in any status-bar slot and on mobile. */
 .status-backend-pop {
   position: absolute;
   right: 0;
@@ -1378,9 +1223,6 @@
   cursor: default;
 }
 
-/* Left-side status items: anchor the popup's left edge to the indicator
-   (it extends rightward) instead of right — a right-anchored popup at the
-   screen's left edge would open off-screen. */
 .sf-status-left .status-backend-pop {
   left: 0;
   right: auto;
@@ -1415,15 +1257,10 @@
   color: var(--sf-text-dim);
 }
 
-/* ── Session stats (right panel) ────────────────────────────────────────── */
-
 .session-stats {
   padding: 2px 0;
 }
 
-/* The stats KeyValueList gets the same 8px inset as the model info block
-   below it — both render through the framework's KeyValueList, so the
-   rows must start at the same x (keys/values line up across blocks). */
 .session-stats-rows {
   padding: 0 8px;
 }
@@ -1446,7 +1283,6 @@
   white-space: nowrap;
 }
 
-/* TUI /session section headers (Messages / Tokens / Cost). */
 .session-stats-section {
   font-size: 16px;
   font-weight: 600;
@@ -1461,7 +1297,6 @@
   gap: 12px;
   font-size: 16px;
   padding: 2px 0;
-  /* click-to-copy affordance */
   cursor: pointer;
   border-radius: 3px;
 }
@@ -1471,9 +1306,7 @@
 .session-stats-key {
   color: var(--sf-text-muted);
   flex-shrink: 0;
-  white-space: pre; /* sub-level rows indent via leading spaces in the key */
-  /* long keys (model names) cap at 65% and ellipsize instead of shoving
-     the value out of the row */
+  white-space: pre;
   max-width: 65%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1482,11 +1315,10 @@
   color: var(--sf-text);
   flex: 1;
   min-width: 0;
-  /* values never take more than 2/3 of the row (File etc.) */
   max-width: 66.67%;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap; /* numbers truncate with '…' when the row is tight */
+  white-space: nowrap;
   text-align: right;
 }
 .session-stats-value--copied {
@@ -1513,7 +1345,6 @@
   flex-shrink: 0;
 }
 
-/* Right-aligned cluster: hint + switch pinned to the row's right edge. */
 .prefs-right {
   display: flex;
   align-items: center;
@@ -1533,8 +1364,6 @@
   line-height: 1.6;
   padding: 8px;
 }
-
-/* ── Welcome tab ────────────────────────────────────────────────────────── */
 
 .welcome-btn {
   display: inline-block;
@@ -1558,16 +1387,12 @@
   cursor: default;
 }
 
-/* ── Per-window markdown toggle (right panel) ───────────────────────────── */
-
 .md-switch {
   width: 30px;
   height: 16px;
   padding: 0;
   border: 1px solid var(--sf-border);
   border-radius: 8px;
-  /* Off-state background comes from the framework's .sf-panel-btn; the
-     ON state keeps the accent as the selection color. */
   position: relative;
   cursor: pointer;
   flex-shrink: 0;
@@ -1603,8 +1428,6 @@
   box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
   border-color: var(--sf-text-muted);
 }
-
-/* ── Markdown rendering in chat messages (per-window) ──────────────────── */
 
 .chat-msg-md {
   white-space: normal;
@@ -1700,7 +1523,6 @@
   max-width: 100%;
   border-radius: 4px;
 }
-/* ── Model menu (Stats sub-section — unified Menu flyout) ───────────────── */
 
 .model-menu {
   padding: 0 8px 6px;
@@ -1710,8 +1532,6 @@
   font-size: 16px;
 }
 
-/* [Change Model] — opens the unified Menu flyout. Background/hover come
-   from the framework's .sf-panel-btn (chrome L1 color); shape only here. */
 .model-menu-btn {
   display: flex;
   align-items: center;
@@ -1744,7 +1564,6 @@
   color: var(--sf-status-err);
 }
 
-/* App-specific kv-pill tones (base + generic tones live in the framework). */
 .kv-pill--running {
   background: color-mix(in srgb, var(--sf-status-ok) 18%, transparent);
   color: var(--sf-status-ok);
@@ -1762,10 +1581,6 @@
   color: var(--sf-status-warn);
 }
 
-/* The model block sits inside the stats sub-section: same side padding. */
-
-/* Review-mode chat tab (opened from a history list click): dimmed until
-   the window is interacted with (tab click / typing / send). */
 .sf-tab--review {
   opacity: 0.55;
 }

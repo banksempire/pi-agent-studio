@@ -8,7 +8,7 @@ import { createClient, waitForNest } from '../../pi-nest/src/client.mjs';
 
 const PORT = Number(process.env.PI_STUDIO_PORT ?? 7493);
 const NEW_CHAT_CWD = process.env.PI_STUDIO_CWD ?? '/workspace/sf';
-const SESSIONS_ROOT = path.join(os.homedir(), '.pi', 'agent', 'sessions');
+const SESSIONS_ROOT = process.env.PI_STUDIO_SESSIONS ?? path.join(os.homedir(), '.pi', 'agent', 'sessions');
 
 const client = createClient();
 
@@ -691,13 +691,71 @@ async function buildSessionTree() {
 }
 
 const clients = new Set();
+const sseState = new Map();
+const SSE_MAX_QUEUED_BYTES = Number(process.env.PI_STUDIO_SSE_MAX_QUEUED ?? 16 * 1024 * 1024);
+
+function foldKeyOf(event) {
+  if (event.type === 'message' && event.message?.id) return `m\u0000${event.file}\u0000${event.message.id}`;
+  if (event.type === 'refresh') return `r\u0000${event.file}`;
+  if (event.type === 'tree') return 'tree';
+  return null;
+}
+
+function ssePump(res) {
+  const st = sseState.get(res);
+  if (!st?.flowing) return;
+  while (st.queue.length > 0) {
+    const item = st.queue.shift();
+    if (item.key) st.folded.delete(item.key);
+    st.bytes -= item.data.length;
+    let ok = false;
+    try {
+      ok = res.write(item.data);
+    } catch {
+      return;
+    }
+    if (!ok) {
+      st.flowing = false;
+      res.once('drain', () => {
+        st.flowing = true;
+        ssePump(res);
+      });
+      return;
+    }
+  }
+}
+
+function dropSseClient(res, reason) {
+  clients.delete(res);
+  sseState.delete(res);
+  try {
+    res.destroy();
+  } catch {}
+  console.error(`[gateway] SSE client dropped (${reason}) — EventSource reconnects and resyncs`);
+}
 
 function emit(event) {
+  if (clients.size === 0) return;
+  const key = foldKeyOf(event);
   const data = `data: ${JSON.stringify(event)}\n\n`;
   for (const res of clients) {
-    try {
-      res.write(data);
-    } catch {}
+    const st = sseState.get(res);
+    if (!st) continue;
+    const queued = key ? st.folded.get(key) : undefined;
+    if (queued) {
+      st.bytes += data.length - queued.data.length;
+      queued.data = data;
+    } else {
+      const item = { key, data };
+      st.queue.push(item);
+      if (key) st.folded.set(key, item);
+      st.bytes += data.length;
+    }
+    if (st.bytes > SSE_MAX_QUEUED_BYTES) {
+      dropSseClient(res, `${Math.round(st.bytes / 1048576)}MB queued and not draining`);
+      continue;
+    }
+    ssePump(res);
   }
 }
 
@@ -729,8 +787,12 @@ function scheduleTreePush() {
 async function relayNestEvents() {
   for (;;) {
     try {
-      await waitForNest(client, { timeoutMs: 5000, log: () => {} });
+      if (!(await waitForNest(client, { timeoutMs: 5000, log: () => {} }))) {
+        await new Promise((r) => setTimeout(r, 1000));
+        continue;
+      }
       const stream = client.subscribe('');
+      console.log('[gateway] relay stream connected');
       await new Promise((resolve) => {
         stream.on('data', (ev) => {
           let payload = {};
@@ -749,6 +811,13 @@ async function relayNestEvents() {
           console.log('[gateway] relay stream ended — reconnecting');
           resolve();
         });
+        void (async () => {
+          try {
+            const { states } = await client.listStates();
+            for (const s of states) emitRefresh(s.agentId);
+            scheduleTreePush();
+          } catch {}
+        })();
       });
     } catch {}
     await new Promise((r) => setTimeout(r, 1000));
@@ -796,7 +865,11 @@ const server = createServer(async (req, res) => {
       });
       res.write(`event: ready\ndata: {}\n\n`);
       clients.add(res);
-      req.on('close', () => clients.delete(res));
+      sseState.set(res, { queue: [], folded: new Map(), bytes: 0, flowing: true });
+      req.on('close', () => {
+        clients.delete(res);
+        sseState.delete(res);
+      });
       return;
     }
 
@@ -978,6 +1051,7 @@ const server = createServer(async (req, res) => {
           heaviest: s.heaviestFiles,
         },
         sseClients: s.sseClients,
+        sseQueued: s.sseQueued,
         refreshTimers: s.refreshTimers,
       });
       return;
@@ -1014,6 +1088,8 @@ function memorySnapshot() {
     files.push({ file, bytes: c.bytes ?? 0, entries: c.entries.length });
   }
   files.sort((a, b) => b.bytes - a.bytes);
+  let sseQueued = 0;
+  for (const st of sseState.values()) sseQueued += st.bytes;
   return {
     rss: mu.rss,
     heapUsed: mu.heapUsed,
@@ -1024,6 +1100,7 @@ function memorySnapshot() {
     cacheEntryCount,
     cacheBytes,
     sseClients: clients.size,
+    sseQueued,
     refreshTimers: refreshTimers.size,
     modelWindows: modelWindows.size,
     heaviestFiles: files.slice(0, 5).map((f) => ({
@@ -1043,7 +1120,7 @@ function logMemoryState(label) {
     `heap=${fmtBytes(s.heapUsed)}/${fmtBytes(s.heapLimit)} (${heapPct}%) ` +
     `ext=${fmtBytes(s.external)} arrBuf=${fmtBytes(s.arrayBuffers)} ` +
     `cacheFiles=${s.cacheFileCount} cacheEntries=${s.cacheEntryCount} ` +
-    `cacheBytes=${fmtBytes(s.cacheBytes)} sse=${s.sseClients} ` +
+    `cacheBytes=${fmtBytes(s.cacheBytes)} sse=${s.sseClients} sseQ=${fmtBytes(s.sseQueued)} ` +
     `refreshTimers=${s.refreshTimers} catalog=${s.modelWindows}`;
   if (heapPct >= 85 || rssPct >= 80) {
     console.error(

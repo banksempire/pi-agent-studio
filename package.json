@@ -13,7 +13,8 @@
     "nest": "node src/pi-nest/src/index.mjs",
     "lint": "biome check .",
     "format": "biome format --write .",
-    "check:crosswin": "node scripts/check-cross-window.cjs"
+    "check:crosswin": "node scripts/check-cross-window.cjs",
+    "check:sse": "node scripts/check-sse-flood.cjs"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.10.0",

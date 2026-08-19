@@ -693,8 +693,8 @@ async function buildSessionTree() {
 const conns = new Map();
 const sessionQueues = new Map();
 const SSE_MAX_QUEUED_BYTES = Number(process.env.PI_STUDIO_SSE_MAX_QUEUED ?? 16 * 1024 * 1024);
-const HEARTBEAT_TIMEOUT_MS = Number(process.env.PI_STUDIO_HEARTBEAT_TIMEOUT_MS ?? 20_000);
-const HEARTBEAT_SWEEP_MS = 2000;
+const HEARTBEAT_INTERVAL_MS = Number(process.env.PI_STUDIO_HEARTBEAT_INTERVAL_MS ?? 5000);
+const HEARTBEAT_MISSED_LIMIT = Number(process.env.PI_STUDIO_HEARTBEAT_MISSED_LIMIT ?? 12);
 let connSeq = 0;
 let nestOnline = false;
 
@@ -762,46 +762,67 @@ function dropConn(id, reason, quiet = false) {
   }
 }
 
-function connPump(conn) {
-  if (!conns.has(conn.id) || !conn.flowing) return;
-  const resume = () => {
-    conn.flowing = true;
-    connPump(conn);
+function makeConn(id, res) {
+  const conn = {
+    id,
+    res,
+    views: new Set(),
+    missed: 0,
+    flowing: true,
+    queue: { items: [], folded: new Map(), bytes: 0 },
   };
-  const send = (data) => {
-    let ok = true;
+  conn.send = (data) => {
     try {
-      ok = conn.res.write(data);
+      conn.flowing = res.write(data);
     } catch {
-      dropConn(conn.id, 'socket write failed');
+      dropConn(id, 'socket write failed');
       return false;
     }
-    if (!ok) {
-      conn.flowing = false;
-      conn.res.once('drain', resume);
-    }
-    return true;
+    return conn.flowing;
   };
-  while (conn.flowing && conn.queue.items.length > 0) {
-    const item = conn.queue.items.shift();
-    conn.queue.bytes -= item.data.length;
-    if (item.key) conn.queue.folded.delete(item.key);
-    if (!send(item.data)) return;
-  }
-  for (const file of conn.views) {
-    const q = sessionQueues.get(file);
-    if (!q) continue;
-    for (let i = 0; i < q.items.length && conn.flowing; i++) {
-      const item = q.items[i];
-      if (!item.pending.has(conn.id)) continue;
-      if (!send(item.data)) return;
-      item.pending.delete(conn.id);
-      if (item.pending.size === 0) {
-        unlinkSessionItem(q, i);
-        i--;
-      }
+  conn.pump = () => {
+    if (!conns.has(id) || !conn.flowing) return;
+    while (conn.queue.items.length > 0) {
+      const item = conn.queue.items.shift();
+      conn.queue.bytes -= item.data.length;
+      if (item.key) conn.queue.folded.delete(item.key);
+      if (!conn.send(item.data)) return;
     }
-    maybeFreeSessionQueue(file);
+    for (const file of conn.views) {
+      const q = sessionQueues.get(file);
+      if (!q) continue;
+      for (let i = 0; i < q.items.length; i++) {
+        const item = q.items[i];
+        if (!item.pending.has(id)) continue;
+        const ok = conn.send(item.data);
+        item.pending.delete(id);
+        if (item.pending.size === 0) {
+          unlinkSessionItem(q, i);
+          i--;
+        }
+        if (!ok) return;
+      }
+      maybeFreeSessionQueue(file);
+    }
+  };
+  res.on('drain', () => {
+    conn.flowing = true;
+    conn.pump();
+  });
+  return conn;
+}
+
+function enqueue(q, key, data, pending) {
+  const queued = key ? q.folded.get(key) : undefined;
+  if (queued) {
+    q.bytes += data.length - queued.data.length;
+    queued.data = data;
+    if (pending) queued.pending = pending;
+  } else {
+    const item = { key, data, pending };
+    q.items.push(item);
+    if (key) q.folded.set(key, item);
+    q.bytes += data.length;
   }
 }
 
@@ -829,51 +850,30 @@ function emit(event) {
     const viewers = viewersOf(event.file);
     if (viewers.length === 0) return;
     const q = sessionQueueOf(event.file);
-    const key = sessionKeyOf(event);
-    const queued = key ? q.folded.get(key) : undefined;
-    if (queued) {
-      q.bytes += data.length - queued.data.length;
-      queued.data = data;
-      queued.pending = new Set(viewers.map((c) => c.id));
-    } else {
-      const item = { key, data, pending: new Set(viewers.map((c) => c.id)) };
-      q.items.push(item);
-      if (key) q.folded.set(key, item);
-      q.bytes += data.length;
-    }
+    enqueue(q, sessionKeyOf(event), data, new Set(viewers.map((c) => c.id)));
     if (q.bytes > SSE_MAX_QUEUED_BYTES) trimLaggards(q, event.file);
-    for (const c of viewers) connPump(c);
+    for (const c of viewers) c.pump();
     return;
   }
   const key = globalKeyOf(event);
   for (const conn of conns.values()) {
-    const q = conn.queue;
-    const queued = key ? q.folded.get(key) : undefined;
-    if (queued) {
-      q.bytes += data.length - queued.data.length;
-      queued.data = data;
-    } else {
-      const item = { key, data };
-      q.items.push(item);
-      if (key) q.folded.set(key, item);
-      q.bytes += data.length;
-    }
-    if (q.bytes > SSE_MAX_QUEUED_BYTES) {
-      dropConn(conn.id, `${Math.round(q.bytes / 1048576)}MB global queue not draining`);
+    enqueue(conn.queue, key, data);
+    if (conn.queue.bytes > SSE_MAX_QUEUED_BYTES) {
+      dropConn(conn.id, `${Math.round(conn.queue.bytes / 1048576)}MB global queue not draining`);
       continue;
     }
-    connPump(conn);
+    conn.pump();
   }
 }
 
 setInterval(() => {
-  const now = Date.now();
   for (const conn of [...conns.values()]) {
-    if (now - conn.lastBeat > HEARTBEAT_TIMEOUT_MS) {
-      dropConn(conn.id, 'heartbeat stale — frontend gone');
+    conn.missed += 1;
+    if (conn.missed >= HEARTBEAT_MISSED_LIMIT) {
+      dropConn(conn.id, `heartbeat stale — ${HEARTBEAT_MISSED_LIMIT} consecutive missed`);
     }
   }
-}, HEARTBEAT_SWEEP_MS);
+}, HEARTBEAT_INTERVAL_MS);
 
 const refreshTimers = new Map();
 function emitRefresh(file) {
@@ -983,63 +983,44 @@ const server = createServer(async (req, res) => {
         'Access-Control-Allow-Origin': '*',
       });
       const id = `sse-${++connSeq}`;
-      const conn = {
-        id,
-        res,
-        views: new Set(),
-        lastBeat: Date.now(),
-        flowing: true,
-        queue: { items: [], folded: new Map(), bytes: 0 },
-      };
+      const conn = makeConn(id, res);
       conns.set(id, conn);
       res.write(`event: ready\ndata: ${JSON.stringify({ clientId: id })}\n\n`);
       req.on('close', () => dropConn(id, 'connection closed', true));
       return;
     }
 
-    if (p === '/api/events/heartbeat' && req.method === 'POST') {
-      const body = await readBody(req);
-      const conn = conns.get(String(body.clientId ?? ''));
-      if (!conn) return sendJson(res, 404, { ok: false, error: 'unknown clientId' });
-      conn.lastBeat = Date.now();
-      const files = Array.isArray(body.files)
-        ? body.files.filter((f) => typeof f === 'string').slice(0, 64)
-        : [];
-      const next = new Set(files);
-      for (const prev of conn.views) {
-        if (!next.has(prev)) {
-          conn.views.delete(prev);
-          detachView(conn, prev);
-        }
+    if (p.startsWith('/api/events/') && req.method === 'POST') {
+      const action = p.slice('/api/events/'.length);
+      if (action !== 'heartbeat' && action !== 'open' && action !== 'close') {
+        return sendJson(res, 404, { ok: false, error: 'not found' });
       }
-      for (const file of next) conn.views.add(file);
-      connPump(conn);
-      sendJson(res, 200, { ok: true, nest: nestOnline });
-      return;
-    }
-
-    if (p === '/api/events/open' && req.method === 'POST') {
       const body = await readBody(req);
       const conn = conns.get(String(body.clientId ?? ''));
       if (!conn) return sendJson(res, 404, { ok: false, error: 'unknown clientId' });
-      conn.lastBeat = Date.now();
+      conn.missed = 0;
       const files = Array.isArray(body.files)
         ? body.files.filter((f) => typeof f === 'string').slice(0, 64)
         : [];
-      for (const file of files) conn.views.add(file);
-      connPump(conn);
-      sendJson(res, 200, { ok: true, nest: nestOnline });
-      return;
-    }
-
-    if (p === '/api/events/close' && req.method === 'POST') {
-      const body = await readBody(req);
-      const conn = conns.get(String(body.clientId ?? ''));
-      if (!conn) return sendJson(res, 404, { ok: false, error: 'unknown clientId' });
-      conn.lastBeat = Date.now();
-      const files = Array.isArray(body.files)
-        ? body.files.filter((f) => typeof f === 'string').slice(0, 64)
-        : [];
+      if (action === 'heartbeat') {
+        const next = new Set(files);
+        for (const prev of conn.views) {
+          if (!next.has(prev)) {
+            conn.views.delete(prev);
+            detachView(conn, prev);
+          }
+        }
+        for (const file of next) conn.views.add(file);
+        conn.pump();
+        sendJson(res, 200, { ok: true, nest: nestOnline });
+        return;
+      }
+      if (action === 'open') {
+        for (const file of files) conn.views.add(file);
+        conn.pump();
+        sendJson(res, 200, { ok: true });
+        return;
+      }
       for (const file of files) {
         conn.views.delete(file);
         detachView(conn, file);

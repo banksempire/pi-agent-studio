@@ -153,7 +153,11 @@ function sseClient(port, { beat = true, files = [], label = 'sse' } = {}) {
   return new Promise((resolve, reject) => {
     c.req = http.get({ host: '127.0.0.1', port, path: '/api/events' }, (res) => {
       c.res = res;
-      res.on('data', (chunk) => (c.buf += chunk));
+      res.on('data', (chunk) => {
+        c.bytes = (c.bytes ?? 0) + chunk.length;
+        c.buf += chunk;
+        if (c.buf.length > 2_000_000) c.buf = c.buf.slice(-1_000_000);
+      });
       res.on('end', () => (c.closed = true));
       res.on('error', () => (c.closed = true));
       res.on('close', () => (c.closed = true));
@@ -211,7 +215,8 @@ async function runBackend(nestPort, opts) {
         PI_STUDIO_SESSIONS: opts.sessionsDir,
         PI_STUDIO_CWD: opts.cwdDir,
         PI_STUDIO_SSE_MAX_QUEUED: String(QUEUE_CAP_MB * 1024 * 1024),
-        PI_STUDIO_HEARTBEAT_TIMEOUT_MS: String(opts.heartbeatTimeoutMs),
+        PI_STUDIO_HEARTBEAT_INTERVAL_MS: String(opts.hbIntervalMs),
+        PI_STUDIO_HEARTBEAT_MISSED_LIMIT: String(opts.hbMissedLimit),
       },
       stdio: ['ignore', fs.openSync(BACKEND_LOG, 'a'), fs.openSync(BACKEND_LOG, 'a')],
     },
@@ -255,7 +260,12 @@ async function runBackend(nestPort, opts) {
 
   try {
     console.log('phase 1 — fold + valve (beating views)');
-    const b1 = await runBackend(nestPort, { sessionsDir, cwdDir, heartbeatTimeoutMs: 120_000 });
+    const b1 = await runBackend(nestPort, {
+      sessionsDir,
+      cwdDir,
+      hbIntervalMs: 500,
+      hbMissedLimit: 40,
+    });
     backends.push(b1);
     const fast = await sseClient(b1.port, { files: [FLOOD_FILE], label: 'fast' });
     clients.push(fast);
@@ -309,6 +319,12 @@ async function runBackend(nestPort, opts) {
       m1Frames.length < PHASE1_FRAMES / 10,
       `${m1Frames.length} frames delivered of ${PHASE1_FRAMES}`,
     );
+    const sentVolume = PHASE1_FRAMES * (PHASE1_PAYLOAD + 200);
+    report(
+      'T3b no duplication: delivered volume stays within 1.3x of sent volume',
+      fast.bytes <= sentVolume * 1.3,
+      `fast received ${fast.bytes} bytes vs ~${sentVolume} sent`,
+    );
 
     stalled.res.pause();
     stalled.res.removeAllListeners('data');
@@ -351,7 +367,7 @@ async function runBackend(nestPort, opts) {
     await delay(1000);
 
     console.log('phase 2 — dead-frontend (missed heartbeats) + one queue per session');
-    const b2 = await runBackend(nestPort, { sessionsDir, cwdDir, heartbeatTimeoutMs: 6000 });
+    const b2 = await runBackend(nestPort, { sessionsDir, cwdDir, hbIntervalMs: 500, hbMissedLimit: 8 });
     backends.push(b2);
 
     const dead = await sseClient(b2.port, { files: [FLOOD_FILE], label: 'dead' });
@@ -371,14 +387,14 @@ async function runBackend(nestPort, opts) {
     const alive = await health(b2.port);
     const aliveViews = alive.json ? alive.json.sseViews : -1;
     let deadReleased = false;
-    for (let i = 0; i < 40 && !deadReleased; i++) {
+    for (let i = 0; i < 20 && !deadReleased; i++) {
       await delay(500);
       const h = await health(b2.port);
       deadReleased = h.json && h.json.sseClients === 0 && h.json.sseViews === 0 && h.json.sseQueued === 0;
     }
     const h3 = await health(b2.port);
     report(
-      'T7 frontend that stops beating (socket still open) is dropped by missed-heartbeat sweep — connection, views and queued data all released',
+      'T7 frontend that stops beating (socket still open) is dropped after the consecutive-missed limit — connection, views and queued data all released',
       deadReleased && aliveViews === 1 && h3.status === 200 && !b2.died(),
       `viewsWhileAlive=${aliveViews} → sse=${h3.json ? h3.json.sseClients : '?'} views=${h3.json ? h3.json.sseViews : '?'} sseQ=${h3.json ? Math.round((h3.json.sseQueued ?? -1) / 1024) : '?'}KB ${b2.died()}`,
     );

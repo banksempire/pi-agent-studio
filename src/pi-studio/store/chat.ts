@@ -897,7 +897,6 @@ function connectEvents() {
     }
     lastViewFiles = new Set();
     syncViewSubscriptions();
-    heartbeatTick();
   });
   es.onopen = () => {
     state.backend = 'online';

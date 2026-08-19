@@ -693,6 +693,8 @@ async function buildSessionTree() {
 const conns = new Map();
 const sessionQueues = new Map();
 const SSE_MAX_QUEUED_BYTES = Number(process.env.PI_STUDIO_SSE_MAX_QUEUED ?? 16 * 1024 * 1024);
+const HEARTBEAT_TIMEOUT_MS = Number(process.env.PI_STUDIO_HEARTBEAT_TIMEOUT_MS ?? 20_000);
+const HEARTBEAT_SWEEP_MS = 2000;
 let connSeq = 0;
 let nestOnline = false;
 
@@ -864,6 +866,15 @@ function emit(event) {
   }
 }
 
+setInterval(() => {
+  const now = Date.now();
+  for (const conn of [...conns.values()]) {
+    if (now - conn.lastBeat > HEARTBEAT_TIMEOUT_MS) {
+      dropConn(conn.id, 'heartbeat stale — frontend gone');
+    }
+  }
+}, HEARTBEAT_SWEEP_MS);
+
 const refreshTimers = new Map();
 function emitRefresh(file) {
   const existing = refreshTimers.get(file);
@@ -976,6 +987,7 @@ const server = createServer(async (req, res) => {
         id,
         res,
         views: new Set(),
+        lastBeat: Date.now(),
         flowing: true,
         queue: { items: [], folded: new Map(), bytes: 0 },
       };
@@ -985,10 +997,32 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (p === '/api/events/heartbeat' && req.method === 'POST') {
+      const body = await readBody(req);
+      const conn = conns.get(String(body.clientId ?? ''));
+      if (!conn) return sendJson(res, 404, { ok: false, error: 'unknown clientId' });
+      conn.lastBeat = Date.now();
+      const files = Array.isArray(body.files)
+        ? body.files.filter((f) => typeof f === 'string').slice(0, 64)
+        : [];
+      const next = new Set(files);
+      for (const prev of conn.views) {
+        if (!next.has(prev)) {
+          conn.views.delete(prev);
+          detachView(conn, prev);
+        }
+      }
+      for (const file of next) conn.views.add(file);
+      connPump(conn);
+      sendJson(res, 200, { ok: true, nest: nestOnline });
+      return;
+    }
+
     if (p === '/api/events/open' && req.method === 'POST') {
       const body = await readBody(req);
       const conn = conns.get(String(body.clientId ?? ''));
       if (!conn) return sendJson(res, 404, { ok: false, error: 'unknown clientId' });
+      conn.lastBeat = Date.now();
       const files = Array.isArray(body.files)
         ? body.files.filter((f) => typeof f === 'string').slice(0, 64)
         : [];
@@ -1002,6 +1036,7 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const conn = conns.get(String(body.clientId ?? ''));
       if (!conn) return sendJson(res, 404, { ok: false, error: 'unknown clientId' });
+      conn.lastBeat = Date.now();
       const files = Array.isArray(body.files)
         ? body.files.filter((f) => typeof f === 'string').slice(0, 64)
         : [];

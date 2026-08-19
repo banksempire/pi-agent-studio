@@ -796,8 +796,8 @@ let es: EventSource | null = null;
 let esClientId: string | null = null;
 let lastViewFiles = new Set<string>();
 let pingLostStreak = 0;
-const PING_INTERVAL_MS = 5000;
-const PING_TIMEOUT_MS = 3000;
+const HEARTBEAT_INTERVAL_MS = 5000;
+const HEARTBEAT_TIMEOUT_MS = 3000;
 const PING_WINDOW_MS = 5 * 60_000;
 
 function openViewFiles(): string[] {
@@ -840,15 +840,26 @@ function syncViewSubscriptions() {
   if (removed.length > 0) postStreamSignal('/api/events/close', removed);
 }
 
-function pingBackend() {
+function heartbeatTick() {
+  if (!esClientId) {
+    state.backendPing = null;
+    pushPingSample(null);
+    return;
+  }
   const t0 = performance.now();
+  const files = openViewFiles();
   const ctrl = new AbortController();
   let timedOut = false;
   const timer = window.setTimeout(() => {
     timedOut = true;
     ctrl.abort();
-  }, PING_TIMEOUT_MS);
-  fetch('/api/health', { signal: ctrl.signal })
+  }, HEARTBEAT_TIMEOUT_MS);
+  fetch('/api/events/heartbeat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clientId: esClientId, files }),
+    signal: ctrl.signal,
+  })
     .then((r) => r.json())
     .then((j) => {
       window.clearTimeout(timer);
@@ -886,6 +897,7 @@ function connectEvents() {
     }
     lastViewFiles = new Set();
     syncViewSubscriptions();
+    heartbeatTick();
   });
   es.onopen = () => {
     state.backend = 'online';
@@ -901,9 +913,9 @@ function connectEvents() {
     } catch {}
   };
 
-  pingBackend();
-  const pingTimer = window.setInterval(pingBackend, PING_INTERVAL_MS);
-  window.addEventListener('beforeunload', () => window.clearInterval(pingTimer));
+  heartbeatTick();
+  const hbTimer = window.setInterval(heartbeatTick, HEARTBEAT_INTERVAL_MS);
+  window.addEventListener('beforeunload', () => window.clearInterval(hbTimer));
 }
 
 function syncAllTails() {

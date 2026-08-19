@@ -21,6 +21,7 @@ const PHASE1_PAYLOAD = 300_000;
 const PHASE2_IDS = 220;
 const PHASE2_PAYLOAD = 200_000;
 const SHARED_FRAMES = 200;
+const BEAT_MS = 2000;
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -81,9 +82,9 @@ function startStubNest(port) {
     if (!okToWrite) await once(stream, 'drain').catch(() => {});
   };
   return new Promise((resolve, reject) => {
-    server.bindAsync(`127.0.0.1:${port}`, grpc.ServerCredentials.createInsecure(), (err, bound) => {
+    server.bindAsync(`127.0.0.1:${port}`, grpc.ServerCredentials.createInsecure(), (err) => {
       if (err) return reject(err);
-      resolve({ server, writeEvent, bound });
+      resolve({ server, writeEvent });
     });
   });
 }
@@ -118,43 +119,6 @@ async function waitHealthy(port, tries = 40) {
   throw new Error('backend did not come up');
 }
 
-function sseClient(port, { files = [], label = 'sse' } = {}) {
-  const c = {
-    label,
-    buf: '',
-    closed: false,
-    clientId: null,
-    req: null,
-    res: null,
-  };
-  return new Promise((resolve, reject) => {
-    c.req = http.get({ host: '127.0.0.1', port, path: '/api/events' }, (res) => {
-      c.res = res;
-      res.on('data', (chunk) => (c.buf += chunk));
-      res.on('end', () => (c.closed = true));
-      res.on('error', () => (c.closed = true));
-      res.on('close', () => (c.closed = true));
-      c.files = files;
-      const ready = async () => {
-        for (let i = 0; i < 50; i++) {
-          const m = c.buf.match(/event: ready\ndata: (\{[^\n]*\})/);
-          if (m) {
-            c.clientId = JSON.parse(m[1]).clientId ?? null;
-            break;
-          }
-          await delay(200);
-        }
-        if (c.clientId === undefined) return reject(new Error(`${label}: never got ready`));
-        c.files = files;
-        if (files.length > 0) postStreamSignal(port, 'open', c.clientId, files);
-        resolve(c);
-      };
-      ready();
-    });
-    c.req.on('error', reject);
-  });
-}
-
 function postStreamSignal(port, action, clientId, files) {
   return new Promise((resolve) => {
     const body = JSON.stringify({ clientId, files });
@@ -176,8 +140,58 @@ function postStreamSignal(port, action, clientId, files) {
   });
 }
 
+function sseClient(port, { beat = true, files = [], label = 'sse' } = {}) {
+  const c = {
+    label,
+    buf: '',
+    closed: false,
+    clientId: null,
+    req: null,
+    res: null,
+    beatTimer: null,
+  };
+  return new Promise((resolve, reject) => {
+    c.req = http.get({ host: '127.0.0.1', port, path: '/api/events' }, (res) => {
+      c.res = res;
+      res.on('data', (chunk) => (c.buf += chunk));
+      res.on('end', () => (c.closed = true));
+      res.on('error', () => (c.closed = true));
+      res.on('close', () => (c.closed = true));
+      const ready = async () => {
+        for (let i = 0; i < 50; i++) {
+          const m = c.buf.match(/event: ready\ndata: (\{[^\n]*\})/);
+          if (m) {
+            c.clientId = JSON.parse(m[1]).clientId ?? null;
+            break;
+          }
+          await delay(200);
+        }
+        if (c.clientId === undefined) return reject(new Error(`${label}: never got ready`));
+        c.files = files;
+        if (files.length > 0) await postStreamSignal(port, 'open', c.clientId, files);
+        const beatOnce = () => {
+          if (!c.clientId || c.closed) return;
+          postStreamSignal(port, 'heartbeat', c.clientId, c.files);
+        };
+        c.stopBeating = () => {
+          if (c.beatTimer) clearInterval(c.beatTimer);
+          c.beatTimer = null;
+        };
+        if (beat) {
+          beatOnce();
+          c.beatTimer = setInterval(beatOnce, BEAT_MS);
+        }
+        resolve(c);
+      };
+      ready();
+    });
+    c.req.on('error', reject);
+  });
+}
+
 function killClient(c) {
   if (!c) return;
+  c.stopBeating?.();
   try {
     c.req.destroy();
   } catch {}
@@ -197,6 +211,7 @@ async function runBackend(nestPort, opts) {
         PI_STUDIO_SESSIONS: opts.sessionsDir,
         PI_STUDIO_CWD: opts.cwdDir,
         PI_STUDIO_SSE_MAX_QUEUED: String(QUEUE_CAP_MB * 1024 * 1024),
+        PI_STUDIO_HEARTBEAT_TIMEOUT_MS: String(opts.heartbeatTimeoutMs),
       },
       stdio: ['ignore', fs.openSync(BACKEND_LOG, 'a'), fs.openSync(BACKEND_LOG, 'a')],
     },
@@ -239,18 +254,15 @@ async function runBackend(nestPort, opts) {
   };
 
   try {
-    console.log('phase 1 — fold + valve with heartbeating views');
-    const b1 = await runBackend(nestPort, {
-      sessionsDir,
-      cwdDir,
-      heartbeatTimeoutMs: 120_000,
-    });
+    console.log('phase 1 — fold + valve (beating views)');
+    const b1 = await runBackend(nestPort, { sessionsDir, cwdDir, heartbeatTimeoutMs: 120_000 });
     backends.push(b1);
     const fast = await sseClient(b1.port, { files: [FLOOD_FILE], label: 'fast' });
     clients.push(fast);
     const stalled = await sseClient(b1.port, { files: [FLOOD_FILE], label: 'stalled' });
     clients.push(stalled);
     stalled.res.pause();
+    stalled.res.removeAllListeners('data');
     await delay(800);
 
     for (let i = 1; i <= PHASE1_FRAMES; i++) {
@@ -268,7 +280,7 @@ async function runBackend(nestPort, opts) {
 
     const h1 = await health(b1.port);
     report(
-      `T1 backend survives ${PHASE1_FRAMES}x300KB same-message flood with a stalled (but beating) view (heap cap ${BACKEND_HEAP_MB}MB)`,
+      `T1 backend survives ${PHASE1_FRAMES}x300KB same-message flood with a stalled (beating) view (heap cap ${BACKEND_HEAP_MB}MB)`,
       h1.status === 200 && !b1.died(),
       b1.died() ||
         (h1.json
@@ -276,7 +288,6 @@ async function runBackend(nestPort, opts) {
           : `status=${h1.status}`),
     );
 
-    stalled.res.removeAllListeners('data');
     stalled.buf = '';
     stalled.res.on('data', (chunk) => (stalled.buf += chunk));
     stalled.res.resume();
@@ -339,15 +350,16 @@ async function runBackend(nestPort, opts) {
     b1.stop();
     await delay(1000);
 
-    console.log('phase 2 — dead-frontend release + one queue per session');
-    const b2 = await runBackend(nestPort, { sessionsDir, cwdDir });
+    console.log('phase 2 — dead-frontend (missed heartbeats) + one queue per session');
+    const b2 = await runBackend(nestPort, { sessionsDir, cwdDir, heartbeatTimeoutMs: 6000 });
     backends.push(b2);
 
     const dead = await sseClient(b2.port, { files: [FLOOD_FILE], label: 'dead' });
     clients.push(dead);
+    await delay(300);
     dead.res.pause();
     dead.res.removeAllListeners('data');
-    await delay(300);
+    dead.stopBeating();
     for (let i = 0; i < 60; i++) {
       await stub.writeEvent('message', {
         id: MSG_ID,
@@ -356,29 +368,21 @@ async function runBackend(nestPort, opts) {
         ts: Date.now(),
       });
     }
-    await delay(600);
-    const aliveBefore = await health(b2.port);
-    const viewsBefore = aliveBefore.json ? aliveBefore.json.sseViews : -1;
-    killClient(dead);
-    let deadDropped = false;
-    for (let i = 0; i < 40 && !deadDropped; i++) {
+    const alive = await health(b2.port);
+    const aliveViews = alive.json ? alive.json.sseViews : -1;
+    let deadReleased = false;
+    for (let i = 0; i < 40 && !deadReleased; i++) {
       await delay(500);
-      deadDropped = dead.closed;
+      const h = await health(b2.port);
+      deadReleased = h.json && h.json.sseClients === 0 && h.json.sseViews === 0 && h.json.sseQueued === 0;
     }
     const h3 = await health(b2.port);
-    const freedKB = h3.json ? Math.round((h3.json.sseQueued ?? -1) / 1024) : -1;
     report(
-      'T7 dead frontend (connection gone) — its connection, views and queued data all released',
-      deadDropped &&
-        h3.status === 200 &&
-        !b2.died() &&
-        freedKB === 0 &&
-        h3.json &&
-        h3.json.sseClients === 0 &&
-        h3.json.sseViews === 0 &&
-        viewsBefore === 1,
-      `viewsBefore=${viewsBefore} → sse=${h3.json ? h3.json.sseClients : '?'} views=${h3.json ? h3.json.sseViews : '?'} sseQ=${freedKB}KB ${b2.died()}`,
+      'T7 frontend that stops beating (socket still open) is dropped by missed-heartbeat sweep — connection, views and queued data all released',
+      deadReleased && aliveViews === 1 && h3.status === 200 && !b2.died(),
+      `viewsWhileAlive=${aliveViews} → sse=${h3.json ? h3.json.sseClients : '?'} views=${h3.json ? h3.json.sseViews : '?'} sseQ=${h3.json ? Math.round((h3.json.sseQueued ?? -1) / 1024) : '?'}KB ${b2.died()}`,
     );
+    killClient(dead);
 
     const viewA = await sseClient(b2.port, { files: [FLOOD_FILE], label: 'viewA' });
     clients.push(viewA);
@@ -425,13 +429,14 @@ async function runBackend(nestPort, opts) {
       finals.A && finals.B,
       `A=${finals.A} B=${finals.B}`,
     );
-
     const h5 = await health(b2.port);
     report('T10 backend healthy at the end of phase 2', h5.status === 200 && !b2.died(), b2.died());
 
-    console.log('phase 3 — refcount-0 close signal');
-    viewA.files = [];
+    console.log('phase 3 — refcount-0 close signal + heartbeat reconcile');
+    viewA.buf = '';
+    viewB.buf = '';
     const closeA = await postStreamSignal(b2.port, 'close', viewA.clientId, [FLOOD_FILE]);
+    viewA.files = [];
     await delay(600);
     const afterClose = await health(b2.port);
     report(
@@ -458,8 +463,14 @@ async function runBackend(nestPort, opts) {
     );
 
     viewB.files = [];
-    await postStreamSignal(b2.port, 'close', viewB.clientId, [FLOOD_FILE]);
-    await delay(600);
+    await delay(BEAT_MS + 2500);
+    const afterReconcile = await health(b2.port);
+    report(
+      'T13 heartbeat reconcile drops views no longer reported (heals a lost close signal)',
+      afterReconcile.json && afterReconcile.json.sseClients === 2 && afterReconcile.json.sseViews === 0,
+      `sse=${afterReconcile.json ? afterReconcile.json.sseClients : '?'} views=${afterReconcile.json ? afterReconcile.json.sseViews : '?'}`,
+    );
+
     await stub.writeEvent('message', {
       id: 'noviewer',
       role: 'assistant',
@@ -470,11 +481,11 @@ async function runBackend(nestPort, opts) {
     const h6 = await health(b2.port);
     const qKB = h6.json ? Math.round((h6.json.sseQueued ?? -1) / 1024) : -1;
     report(
-      'T13 zero views left → session queue stays empty, nothing retained',
+      'T14 zero views left → session queue stays empty, nothing retained',
       h6.json && h6.json.sseClients === 2 && h6.json.sseViews === 0 && qKB === 0 && !b2.died(),
       `sse=${h6.json ? h6.json.sseClients : '?'} views=${h6.json ? h6.json.sseViews : '?'} sseQ=${qKB}KB ${b2.died()}`,
     );
-    report('T14 backend healthy at the end of phase 3', h6.status === 200 && !b2.died(), b2.died());
+    report('T15 backend healthy at the end of phase 3', h6.status === 200 && !b2.died(), b2.died());
 
     console.log(isFailed() ? '\nSSE FLOOD CHECKS FAILED' : '\nALL SSE FLOOD CHECKS PASSED');
     process.exitCode = isFailed() ? 1 : 0;

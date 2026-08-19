@@ -881,6 +881,52 @@
   padding: 4px 0;
 }
 
+.chat-state-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 2px 8px 6px;
+}
+
+.chat-state-chip {
+  font-size: 16px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 1px 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  color: var(--sf-text-muted);
+}
+
+.chat-state-chip--working {
+  background: color-mix(in srgb, var(--sf-status-ok) 18%, transparent);
+  color: var(--sf-status-ok);
+}
+
+.chat-state-chip--unread {
+  background: var(--sf-accent-soft);
+  color: var(--sf-accent);
+}
+
+.chat-state-chip--error {
+  background: color-mix(in srgb, var(--sf-status-error, #e5484d) 20%, transparent);
+  color: var(--sf-status-error, #e5484d);
+}
+
+.chat-state-chip--open {
+  background: var(--sf-accent-soft);
+  color: var(--sf-accent-dim);
+}
+
+.chat-state-chip--off {
+  opacity: 0.35;
+  background: transparent;
+  border-color: var(--sf-border);
+  color: var(--sf-text-muted);
+}
+
 .dir-tree {
   padding: 4px 0;
 }
@@ -1151,6 +1197,24 @@
 .chat-list-badge--running {
   background: color-mix(in srgb, var(--sf-status-ok) 18%, transparent);
   color: var(--sf-status-ok);
+}
+
+.chat-list-badge--working {
+  background: color-mix(in srgb, var(--sf-status-ok) 18%, transparent);
+  color: var(--sf-status-ok);
+  animation: chat-blink 1.2s steps(1) infinite;
+}
+
+.chat-list-badge--unread {
+  background: var(--sf-accent-soft);
+  color: var(--sf-accent);
+  font-weight: 600;
+}
+
+.chat-list-badge--error {
+  background: color-mix(in srgb, var(--sf-status-error, #e5484d) 20%, transparent);
+  color: var(--sf-status-error, #e5484d);
+  font-weight: 600;
 }
 
 .chat-list-badge--open {

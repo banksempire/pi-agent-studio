@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { getHeapStatistics } from 'node:v8';
 import { createClient, waitForNest } from '../../pi-nest/src/client.mjs';
+import { createSessionStates } from './session-states.mjs';
 
 const PORT = Number(process.env.PI_STUDIO_PORT ?? 7493);
 const NEW_CHAT_CWD = process.env.PI_STUDIO_CWD ?? '/workspace/sf';
@@ -690,6 +691,36 @@ async function buildSessionTree() {
   return buildTree(NEW_CHAT_CWD, 0, await sessionCwdCounts());
 }
 
+const sessionStates = createSessionStates({
+  persistPath:
+    process.env.PI_STUDIO_STATES_PATH ??
+    path.join(os.homedir(), '.pi', 'agent', 'studio-session-states.json'),
+  fileExists: existsSync,
+  onSync: (ev) => emit(ev),
+});
+sessionStates.load();
+
+async function resolveFileOutcome(file) {
+  if (!existsSync(file)) return 'gone';
+  try {
+    const content = await readFile(file, 'utf8');
+    const chain = leafChain(parseEntries(content));
+    for (let i = chain.length - 1; i >= 0; i--) {
+      const en = chain[i];
+      if (en.type === 'message' && en.message?.role === 'assistant') {
+        return en.message.stopReason === 'error' ? 'error' : 'ok';
+      }
+    }
+    return 'ok';
+  } catch {
+    return 'gone';
+  }
+}
+
+function syncViewState(file) {
+  sessionStates.noteViews(file, viewersOf(file).length);
+}
+
 const conns = new Map();
 const sessionQueues = new Map();
 const SSE_MAX_QUEUED_BYTES = Number(process.env.PI_STUDIO_SSE_MAX_QUEUED ?? 16 * 1024 * 1024);
@@ -715,6 +746,7 @@ function globalKeyOf(event) {
   if (event.type === 'refresh') return `r\u0000${event.file}`;
   if (event.type === 'tree') return 'tree';
   if (event.type === 'session_status') return `s\u0000${event.file}`;
+  if (event.type === 'session_state') return `st\u0000${event.file}`;
   return null;
 }
 
@@ -753,7 +785,9 @@ function dropConn(id, reason, quiet = false) {
   const conn = conns.get(id);
   if (!conn) return;
   conns.delete(id);
-  for (const file of [...conn.views]) detachView(conn, file);
+  const views = [...conn.views];
+  for (const file of views) detachView(conn, file);
+  for (const file of views) syncViewState(file);
   try {
     conn.res.destroy();
   } catch {}
@@ -916,6 +950,13 @@ async function relayNestEvents() {
           try {
             payload = ev.json ? JSON.parse(ev.json) : {};
           } catch {}
+          if (ev.type === 'session_status') {
+            if (payload.status === 'running') sessionStates.noteAgentRunning(ev.file);
+            else if (payload.status === 'idle')
+              sessionStates.noteAgentSettled(ev.file, { stale: !!payload.stale });
+          } else if (ev.type === 'message' && payload?.role === 'assistant' && payload.stopReason) {
+            sessionStates.noteAssistantOutcome(ev.file, payload.stopReason, payload.error ?? '');
+          }
           if (ev.type === 'message') emit({ type: 'message', file: ev.file, message: payload });
           else if (ev.type === 'refresh') emitRefresh(ev.file);
           else emit({ type: ev.type, file: ev.file, ...payload });
@@ -932,10 +973,11 @@ async function relayNestEvents() {
         });
         void (async () => {
           try {
-            const { states } = await client.listStates();
-            for (const s of states) emitRefresh(s.agentId);
+            const { states: nestStates } = await client.listStates();
+            for (const s of nestStates) emitRefresh(s.agentId);
             scheduleTreePush();
           } catch {}
+          await sessionStates.probeNest(() => client.listStates(), resolveFileOutcome);
         })();
       });
     } catch {}
@@ -986,13 +1028,14 @@ const server = createServer(async (req, res) => {
       const conn = makeConn(id, res);
       conns.set(id, conn);
       res.write(`event: ready\ndata: ${JSON.stringify({ clientId: id })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: 'session_states', states: sessionStates.snapshot() })}\n\n`);
       req.on('close', () => dropConn(id, 'connection closed', true));
       return;
     }
 
     if (p.startsWith('/api/events/') && req.method === 'POST') {
       const action = p.slice('/api/events/'.length);
-      if (action !== 'heartbeat' && action !== 'open' && action !== 'close') {
+      if (action !== 'heartbeat' && action !== 'open' && action !== 'close' && action !== 'visit') {
         return sendJson(res, 404, { ok: false, error: 'not found' });
       }
       const body = await readBody(req);
@@ -1004,19 +1047,34 @@ const server = createServer(async (req, res) => {
         : [];
       if (action === 'heartbeat') {
         const next = new Set(files);
+        const changed = [];
         for (const prev of conn.views) {
           if (!next.has(prev)) {
             conn.views.delete(prev);
             detachView(conn, prev);
+            changed.push(prev);
           }
         }
-        for (const file of next) conn.views.add(file);
+        for (const file of next) {
+          if (!conn.views.has(file)) changed.push(file);
+          conn.views.add(file);
+        }
+        for (const file of changed) syncViewState(file);
         conn.pump();
         sendJson(res, 200, { ok: true, nest: nestOnline });
         return;
       }
+      if (action === 'visit') {
+        const file = typeof body.file === 'string' ? body.file : '';
+        if (file) sessionStates.noteVisit(file);
+        sendJson(res, 200, { ok: true });
+        return;
+      }
       if (action === 'open') {
-        for (const file of files) conn.views.add(file);
+        for (const file of files) {
+          conn.views.add(file);
+          syncViewState(file);
+        }
         conn.pump();
         sendJson(res, 200, { ok: true });
         return;
@@ -1024,6 +1082,7 @@ const server = createServer(async (req, res) => {
       for (const file of files) {
         conn.views.delete(file);
         detachView(conn, file);
+        syncViewState(file);
       }
       sendJson(res, 200, { ok: true });
       return;
@@ -1044,6 +1103,10 @@ const server = createServer(async (req, res) => {
       await ensureModelCatalog();
       const sessions = (await Promise.all(files.map((f) => analyzeSession(f, { states })))).filter(Boolean);
       sessions.sort((a, b) => b.modified - a.modified);
+      for (const s of sessions) {
+        s.state = sessionStates.stateOf(s.file);
+        s.stateError = sessionStates.errorOf(s.file);
+      }
       sendJson(res, 200, { sessions: await Promise.all(sessions.map(withContext)) });
       return;
     }
@@ -1076,6 +1139,8 @@ const server = createServer(async (req, res) => {
             costBreakdown: [],
             cacheWaste: { missedTokens: 0, missedCost: 0, missCount: 0 },
             running: st.state.status === 'running',
+            state: sessionStates.stateOf(file),
+            stateError: sessionStates.errorOf(file),
             context: { tokens: null, window: 0, percent: null },
             messages: [],
             oldestId: null,
@@ -1087,6 +1152,8 @@ const server = createServer(async (req, res) => {
       }
       const info = await analyzeSession(file, { withMessages: true, limit, before, after });
       if (!info) return sendJson(res, 404, { error: 'session file not found' });
+      info.state = sessionStates.stateOf(file);
+      info.stateError = sessionStates.errorOf(file);
       sendJson(res, 200, await withContext(info));
       return;
     }
@@ -1131,6 +1198,7 @@ const server = createServer(async (req, res) => {
         text = (waitMatch[1] ?? '').trim();
         if (!text) return sendJson(res, 400, { error: '/wait needs a message: /wait <message>' });
       }
+      sessionStates.notePrompt(file);
       await client.prompt({
         agentId: file,
         message: text,
@@ -1152,6 +1220,12 @@ const server = createServer(async (req, res) => {
 
     if (p === '/api/slash' && req.method === 'POST') {
       const body = await readBody(req);
+      if (body.command === 'delete' && body.file && !sessionStates.canDelete(body.file)) {
+        return sendJson(res, 400, {
+          ok: false,
+          error: 'Session is open in a window — close its window everywhere before deleting',
+        });
+      }
       try {
         const r = await client.slash({
           agentId: body.file ?? '',
@@ -1160,6 +1234,7 @@ const server = createServer(async (req, res) => {
           extra: body.extra ?? {},
           reqId: body.reqId ?? '',
         });
+        if (body.command === 'delete' && body.file && r.ok) sessionStates.remove(body.file);
         const out = { ok: r.ok, notice: r.notice || undefined, error: r.error || undefined };
         if (r.dataJson) out.data = JSON.parse(r.dataJson);
         sendJson(res, r.ok ? 200 : 400, out);
@@ -1297,6 +1372,13 @@ function logMemoryState(label) {
 
 setInterval(() => logMemoryState('tick'), 60_000);
 
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => {
+    sessionStates.flush();
+    process.exit(0);
+  });
+}
+
 const _ssePing = setInterval(() => {
   for (const conn of conns.values()) {
     try {
@@ -1308,6 +1390,9 @@ const _ssePing = setInterval(() => {
 const fileMtimes = new Map();
 
 async function watchSessionFiles() {
+  for (const file of sessionStates.files()) {
+    if (!existsSync(file)) sessionStates.remove(file);
+  }
   let dirs = [];
   try {
     dirs = await readdir(SESSIONS_ROOT, { withFileTypes: true });

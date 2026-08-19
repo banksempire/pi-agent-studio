@@ -176,7 +176,7 @@ export class AgentRegistry extends EventEmitter {
         );
         live.status = 'idle';
         live.runningSince = null;
-        this.broadcast('session_status', agentId, { status: 'idle' });
+        this.broadcast('session_status', agentId, { status: 'idle', stale: true });
         this.broadcast('refresh', agentId, {});
         continue;
       }

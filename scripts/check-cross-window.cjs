@@ -10,6 +10,7 @@ const PRODUCT_ROOT = path.join(__dirname, '..');
 const SESSIONS_ROOT = path.join(os.homedir(), '.pi', 'agent', 'sessions');
 const TEST_DIR_NAME = '--tmp-xwin-check--';
 const TEST_SESSIONS_DIR = path.join(SESSIONS_ROOT, TEST_DIR_NAME);
+const TEST_STATES_PATH = '/tmp/xwin-check-states.json';
 const TEST_CWD = '/tmp/xwin-check';
 const IMG_DIR = '/tmp/xwin-check-imgs';
 
@@ -183,6 +184,7 @@ function makeReporter() {
     for (const p of procs) killProc(p);
     fs.rmSync(TEST_SESSIONS_DIR, { recursive: true, force: true });
     fs.rmSync(IMG_DIR, { recursive: true, force: true });
+    fs.rmSync(TEST_STATES_PATH, { force: true });
   };
 
   let browser;
@@ -191,6 +193,7 @@ function makeReporter() {
     console.log(`stack: nest :${ports.nest} backend :${ports.backend} vite :${ports.vite}`);
     writeSessions();
     writeTestImages();
+    fs.rmSync(TEST_STATES_PATH, { force: true });
 
     procs.push(
       spawnBg(
@@ -205,7 +208,11 @@ function makeReporter() {
       spawnBg(
         'node',
         ['src/pi-studio/server/index.mjs'],
-        { PI_STUDIO_PORT: String(ports.backend), PI_NEST_PORT: String(ports.nest) },
+        {
+          PI_STUDIO_PORT: String(ports.backend),
+          PI_NEST_PORT: String(ports.nest),
+          PI_STUDIO_STATES_PATH: TEST_STATES_PATH,
+        },
         '/tmp/xwin-check-backend.log',
       ),
     );
@@ -278,6 +285,41 @@ function makeReporter() {
         overlay: !!document.querySelector('.img-review'),
         messages: document.querySelectorAll('.chat-messages').length,
       }));
+
+    const t16 = await (async () => {
+      const sessionsList = () => page.locator('[data-sub-body="sessions"]');
+      const bootCount = await sessionsList().locator('.chat-list-item').count();
+      await openSession('XWin-C:');
+      const cItem = sessionsList().locator('.chat-list-item:has-text("XWin-C:")');
+      const shown = (await cItem.count()) === 1;
+      const badge = (await cItem.locator('.chat-list-badge').textContent())?.trim();
+      const chip = sessionsList().locator('.chat-state-chip--open');
+      await chip.click({ force: true });
+      await delay(400);
+      const hiddenCount = await sessionsList().locator('.chat-list-item').count();
+      await chip.click({ force: true });
+      await delay(400);
+      const backCount = await sessionsList().locator('.chat-list-item').count();
+      const cIdx = await tabIndex('XWin-C:');
+      await page.locator('.sf-tab-label').nth(cIdx).click({ button: 'middle' });
+      let gone = false;
+      for (let i = 0; i < 20; i++) {
+        await delay(300);
+        if ((await cItem.count()) === 0) {
+          gone = true;
+          break;
+        }
+      }
+      return {
+        ok: bootCount >= 1 && shown && badge === 'open' && hiddenCount === 0 && backCount >= 1 && gone,
+        why: `boot:${bootCount} shown:${shown} badge:${badge} filtered:${hiddenCount} restored:${backCount} gone-after-close:${gone}`,
+      };
+    })();
+    report(
+      'T16 sessions sub-section shows synced open state + filter chips + refcount close',
+      t16.ok,
+      t16.why,
+    );
 
     await openSession('XWin-A:');
     await openSession('XWin-B:');

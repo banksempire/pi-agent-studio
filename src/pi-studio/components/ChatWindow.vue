@@ -39,6 +39,10 @@ const store = useChatStore();
 const session = computed<ChatSession | undefined>(() => store.findSession(props.sessionId));
 const renderMd = computed(() => store.prefs.renderMarkdown);
 
+function noteVisit() {
+  store.noteVisit(props.sessionId);
+}
+
 const open = computed(() => openGroupsOf(props.sessionId));
 function toggle(id: string) {
   setOpenGroup(props.sessionId, id, !open.value[id]);
@@ -1000,7 +1004,12 @@ watch(
 </script>
 
 <template>
-  <div class="chat-window">
+  <div
+    class="chat-window"
+    @pointerdown="noteVisit"
+    @wheel.passive="noteVisit"
+    @keydown="noteVisit"
+  >
     <div ref="listEl" class="chat-messages" @scroll="onScroll">
       <div class="chat-flow">
         <div v-if="!session" class="chat-empty">Session not found.</div>

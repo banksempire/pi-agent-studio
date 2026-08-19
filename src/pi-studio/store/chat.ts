@@ -86,6 +86,17 @@ export interface ChatSession {
 
 export type BackendStatus = 'connecting' | 'online' | 'offline';
 
+export type SessionSyncState = 'working' | 'unread' | 'error' | 'open';
+
+export interface SessionStateInfo {
+  state: SessionSyncState;
+  error: string;
+}
+
+export type StateFilter = Record<SessionSyncState, boolean>;
+
+const SYNC_STATES: SessionSyncState[] = ['working', 'unread', 'error', 'open'];
+
 export type PingSample = { t: number; ms: number | null };
 
 export type SendKeyMode = 'enter' | 'shiftEnter';
@@ -105,6 +116,8 @@ interface ChatState {
   lastError: string;
   sessionErrors: Record<string, string>;
   drafts: Record<string, string>;
+  sessionStates: Record<string, SessionStateInfo>;
+  stateFilter: StateFilter;
   prefs: {
     sendKey: SendKeyMode;
     renderMarkdown: boolean;
@@ -112,6 +125,32 @@ interface ChatState {
 }
 
 const PREFS_KEY = 'sf-chat:prefs';
+const STATE_FILTER_KEY = 'sf-chat:stateFilter';
+
+function loadStateFilter(): StateFilter {
+  const base: StateFilter = { working: true, unread: true, error: true, open: true };
+  try {
+    const raw = localStorage.getItem(STATE_FILTER_KEY);
+    if (raw) {
+      const j = JSON.parse(raw);
+      for (const k of SYNC_STATES) {
+        if (typeof j?.[k] === 'boolean') base[k] = j[k];
+      }
+    }
+  } catch {}
+  return base;
+}
+
+function saveStateFilter() {
+  try {
+    localStorage.setItem(STATE_FILTER_KEY, JSON.stringify(state.stateFilter));
+  } catch {}
+}
+
+function toggleStateFilter(s: SessionSyncState) {
+  state.stateFilter = { ...state.stateFilter, [s]: !state.stateFilter[s] };
+  saveStateFilter();
+}
 function loadPrefs(): ChatState['prefs'] {
   try {
     const raw = localStorage.getItem(PREFS_KEY);
@@ -267,6 +306,8 @@ const state = reactive<ChatState>({
   lastError: '',
   sessionErrors: {},
   drafts: loadDrafts(),
+  sessionStates: {},
+  stateFilter: loadStateFilter(),
   prefs: loadPrefs(),
 });
 
@@ -441,6 +482,8 @@ interface SessionInfo {
   costBreakdown: { key: string; cost: number; tokens: number }[];
   cacheWaste: { missedCost: number; missedTokens: number; missCount: number };
   running: boolean;
+  state?: SessionSyncState | 'close';
+  stateError?: string;
   context?: { tokens: number | null; window: number; percent: number | null } | null;
 }
 
@@ -543,6 +586,13 @@ async function fetchList() {
     const { sessions } = await api<{ sessions: SessionInfo[] }>('/api/sessions');
     const prev = new Map(state.sessions.map((s) => [s.file, s]));
     const onDisk = new Set(sessions.map((s) => s.file));
+    const synced: Record<string, SessionStateInfo> = {};
+    for (const raw of sessions) {
+      if (raw.state && raw.state !== 'close') {
+        synced[raw.file] = { state: raw.state, error: raw.stateError ?? '' };
+      }
+    }
+    state.sessionStates = synced;
     const pending = loadPendingChats();
     if (pending.some((p) => onDisk.has(p.file))) {
       persistPendingChats(pending.filter((p) => !onDisk.has(p.file)));
@@ -681,6 +731,21 @@ function mergeToolResult(s: ChatSession, toolCallId: string, text: string, isErr
 
 function handleEvent(ev: any) {
   switch (ev.type) {
+    case 'session_state': {
+      if (ev.state === 'close') delete state.sessionStates[ev.file];
+      else state.sessionStates[ev.file] = { state: ev.state, error: ev.error ?? '' };
+      break;
+    }
+    case 'session_states': {
+      const synced: Record<string, SessionStateInfo> = {};
+      for (const s of ev.states ?? []) {
+        if (s?.file && s.state && s.state !== 'close') {
+          synced[s.file] = { state: s.state, error: s.error ?? '' };
+        }
+      }
+      state.sessionStates = synced;
+      break;
+    }
     case 'session_status': {
       const s = byFile(ev.file);
       if (s) {
@@ -822,6 +887,27 @@ function postStreamSignal(endpoint: string, files: string[]) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ clientId: esClientId, files }),
+  }).catch(() => {});
+}
+
+const visitSentAt: Record<string, number> = {};
+
+export function noteVisit(sessionId: string) {
+  const s = findSession(sessionId);
+  if (!s) return;
+  const st = state.sessionStates[s.file];
+  if (!st || (st.state !== 'unread' && st.state !== 'error' && st.state !== 'working')) return;
+  const last = visitSentAt[s.file] ?? 0;
+  if (Date.now() - last < 1000) return;
+  visitSentAt[s.file] = Date.now();
+  if (st.state === 'unread' || st.state === 'error') {
+    state.sessionStates[s.file] = { state: 'open', error: '' };
+  }
+  if (!esClientId) return;
+  fetch('/api/events/visit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clientId: esClientId, file: s.file }),
   }).catch(() => {});
 }
 
@@ -998,6 +1084,7 @@ export function bindWorkspace(api: WorkspaceApi) {
 
   api.setTabClickHandler((tabId) => {
     if (tabId === state.reviewTabId) exitReview();
+    if (tabId.startsWith(TAB_PREFIX)) noteVisit(tabId.slice(TAB_PREFIX.length));
   });
 
   api.setExternalDropHandler(
@@ -1048,7 +1135,7 @@ export function bindWorkspace(api: WorkspaceApi) {
     if (firstBind) {
       firstBind = false;
       if (!hasPersistedLayout() && state.sessions.length > 0) {
-        openChat(state.sessions[0].id);
+        openChat(state.sessions[0].id, { visit: false });
         exitReview();
       }
     }
@@ -1100,10 +1187,14 @@ function cwdMatches(s: ChatSession, dirs: Set<string>): boolean {
   return false;
 }
 
-export function activeSessions(): ChatSession[] {
+export function syncedSessions(): ChatSession[] {
   return state.sessions
-    .filter((s) => (s.status === 'running' || isViewOpen(s.id)) && cwdMatches(s, state.selectedDirs))
+    .filter((s) => state.sessionStates[s.file] && cwdMatches(s, state.selectedDirs))
     .sort((a, b) => b.lastActivity - a.lastActivity);
+}
+
+export function syncStateOf(s: ChatSession): SessionStateInfo | undefined {
+  return state.sessionStates[s.file];
 }
 
 export async function newChat(): Promise<void> {
@@ -1170,7 +1261,7 @@ export function startSessionDrag(e: DragEvent, s: ChatSession) {
   dt.effectAllowed = 'copy';
 }
 
-export function openChat(sessionId: string) {
+export function openChat(sessionId: string, opts: { visit?: boolean } = {}) {
   const s = findSession(sessionId);
   if (!s || !ws) return;
   const tabId = chatTabId(sessionId);
@@ -1179,6 +1270,7 @@ export function openChat(sessionId: string) {
   if (existing) {
     ws.ops.activateTab(existing.id, tabId);
     syncSessionView(s);
+    if (opts.visit !== false) noteVisit(sessionId);
     return;
   }
 
@@ -1193,6 +1285,7 @@ export function openChat(sessionId: string) {
   ws.ops.openTab(tileId, chatTabDef(s));
   enterReview(tabId);
   syncSessionView(s);
+  if (opts.visit !== false) noteVisit(sessionId);
 }
 
 export function endExternalDrag() {
@@ -1324,6 +1417,8 @@ export async function renameSession(sessionId: string, name: string): Promise<bo
 export async function deleteSession(sessionId: string): Promise<boolean> {
   const s = findSession(sessionId);
   if (!s) return false;
+  closeChatView(sessionId);
+  postStreamSignal('/api/events/close', [s.file]);
   try {
     const j = await api<any>('/api/slash', {
       method: 'POST',
@@ -1334,7 +1429,6 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
       state.lastError = j.error || 'Delete failed';
       return false;
     }
-    closeChatView(sessionId);
     delete state.drafts[sessionId];
     delete windowUi[sessionId];
     delete state.sessionErrors[sessionId];
@@ -1550,7 +1644,9 @@ export const store = {
   unsetOpenGroup,
   findSession,
   isViewOpen,
-  activeSessions,
+  syncedSessions,
+  syncStateOf,
+  noteVisit,
   newChat,
   openChat,
   noteChatInteraction,
@@ -1563,6 +1659,13 @@ export const store = {
   deleteSession,
   get prefs() {
     return state.prefs;
+  },
+  get stateFilter() {
+    return state.stateFilter;
+  },
+  toggleStateFilter,
+  get sessionStates() {
+    return state.sessionStates;
   },
   setSendKey,
   setRenderMarkdown,

@@ -690,74 +690,182 @@ async function buildSessionTree() {
   return buildTree(NEW_CHAT_CWD, 0, await sessionCwdCounts());
 }
 
-const clients = new Set();
-const sseState = new Map();
+const conns = new Map();
+const sessionQueues = new Map();
 const SSE_MAX_QUEUED_BYTES = Number(process.env.PI_STUDIO_SSE_MAX_QUEUED ?? 16 * 1024 * 1024);
+const HEARTBEAT_TIMEOUT_MS = Number(process.env.PI_STUDIO_HEARTBEAT_TIMEOUT_MS ?? 20_000);
+const HEARTBEAT_SWEEP_MS = 5000;
+let connSeq = 0;
 
-function foldKeyOf(event) {
-  if (event.type === 'message' && event.message?.id) return `m\u0000${event.file}\u0000${event.message.id}`;
-  if (event.type === 'refresh') return `r\u0000${event.file}`;
-  if (event.type === 'tree') return 'tree';
+function viewersOf(file) {
+  const out = [];
+  for (const conn of conns.values()) if (conn.views.has(file)) out.push(conn);
+  return out;
+}
+
+function sessionKeyOf(event) {
+  if (event.type === 'message') return event.message?.id ? `m\u0000${event.message.id}` : null;
+  if (event.type === 'tool_partial' || event.type === 'tool_result')
+    return event.toolCallId ? `tr\u0000${event.toolCallId}` : null;
   return null;
 }
 
-function ssePump(res) {
-  const st = sseState.get(res);
-  if (!st?.flowing) return;
-  while (st.queue.length > 0) {
-    const item = st.queue.shift();
-    if (item.key) st.folded.delete(item.key);
-    st.bytes -= item.data.length;
-    let ok = false;
+function globalKeyOf(event) {
+  if (event.type === 'refresh') return `r\u0000${event.file}`;
+  if (event.type === 'tree') return 'tree';
+  if (event.type === 'session_status') return `s\u0000${event.file}`;
+  return null;
+}
+
+function sessionQueueOf(file) {
+  let q = sessionQueues.get(file);
+  if (!q) {
+    q = { items: [], folded: new Map(), bytes: 0 };
+    sessionQueues.set(file, q);
+  }
+  return q;
+}
+
+function unlinkSessionItem(q, i) {
+  const item = q.items[i];
+  q.items.splice(i, 1);
+  if (item.key) q.folded.delete(item.key);
+  q.bytes -= item.data.length;
+}
+
+function detachView(conn, file) {
+  const q = sessionQueues.get(file);
+  if (!q) return;
+  for (let i = q.items.length - 1; i >= 0; i--) {
+    q.items[i].pending.delete(conn.id);
+    if (q.items[i].pending.size === 0) unlinkSessionItem(q, i);
+  }
+}
+
+function dropConn(id, reason, quiet = false) {
+  const conn = conns.get(id);
+  if (!conn) return;
+  conns.delete(id);
+  for (const file of [...conn.views]) detachView(conn, file);
+  try {
+    conn.res.destroy();
+  } catch {}
+  if (!quiet) {
+    console.error(`[gateway] SSE client ${id} dropped (${reason}) — EventSource reconnects and resyncs`);
+  }
+}
+
+function connPump(conn) {
+  if (!conns.has(conn.id) || !conn.flowing) return;
+  const resume = () => {
+    conn.flowing = true;
+    connPump(conn);
+  };
+  const send = (data) => {
+    let ok = true;
     try {
-      ok = res.write(item.data);
+      ok = conn.res.write(data);
     } catch {
-      return;
+      dropConn(conn.id, 'socket write failed');
+      return false;
     }
     if (!ok) {
-      st.flowing = false;
-      res.once('drain', () => {
-        st.flowing = true;
-        ssePump(res);
-      });
-      return;
+      conn.flowing = false;
+      conn.res.once('drain', resume);
+    }
+    return true;
+  };
+  while (conn.flowing && conn.queue.items.length > 0) {
+    const item = conn.queue.items.shift();
+    conn.queue.bytes -= item.data.length;
+    if (item.key) conn.queue.folded.delete(item.key);
+    if (!send(item.data)) return;
+  }
+  for (const file of conn.views) {
+    const q = sessionQueues.get(file);
+    if (!q) continue;
+    for (let i = 0; i < q.items.length && conn.flowing; i++) {
+      const item = q.items[i];
+      if (!item.pending.has(conn.id)) continue;
+      if (!send(item.data)) return;
+      item.pending.delete(conn.id);
+      if (item.pending.size === 0) {
+        unlinkSessionItem(q, i);
+        i--;
+      }
     }
   }
 }
 
-function dropSseClient(res, reason) {
-  clients.delete(res);
-  sseState.delete(res);
-  try {
-    res.destroy();
-  } catch {}
-  console.error(`[gateway] SSE client dropped (${reason}) — EventSource reconnects and resyncs`);
+function trimLaggards(q, file) {
+  let guard = 0;
+  while (q.bytes > SSE_MAX_QUEUED_BYTES && q.items.length > 0 && guard++ < 1000) {
+    const item = q.items.find((it) => it.pending.size > 0);
+    if (!item) return;
+    const label = path.basename(file);
+    for (const id of [...item.pending]) {
+      dropConn(id, `lagging on ${label} — session queue at ${Math.round(q.bytes / 1048576)}MB`);
+    }
+  }
 }
 
 function emit(event) {
-  if (clients.size === 0) return;
-  const key = foldKeyOf(event);
+  if (conns.size === 0) return;
   const data = `data: ${JSON.stringify(event)}\n\n`;
-  for (const res of clients) {
-    const st = sseState.get(res);
-    if (!st) continue;
-    const queued = key ? st.folded.get(key) : undefined;
+  if (
+    event.type === 'message' ||
+    event.type === 'tool_start' ||
+    event.type === 'tool_partial' ||
+    event.type === 'tool_result'
+  ) {
+    const viewers = viewersOf(event.file);
+    if (viewers.length === 0) return;
+    const q = sessionQueueOf(event.file);
+    const key = sessionKeyOf(event);
+    const queued = key ? q.folded.get(key) : undefined;
     if (queued) {
-      st.bytes += data.length - queued.data.length;
+      q.bytes += data.length - queued.data.length;
+      queued.data = data;
+      queued.pending = new Set(viewers.map((c) => c.id));
+    } else {
+      const item = { key, data, pending: new Set(viewers.map((c) => c.id)) };
+      q.items.push(item);
+      if (key) q.folded.set(key, item);
+      q.bytes += data.length;
+    }
+    if (q.bytes > SSE_MAX_QUEUED_BYTES) trimLaggards(q, event.file);
+    for (const c of viewers) connPump(c);
+    return;
+  }
+  const key = globalKeyOf(event);
+  for (const conn of conns.values()) {
+    const q = conn.queue;
+    const queued = key ? q.folded.get(key) : undefined;
+    if (queued) {
+      q.bytes += data.length - queued.data.length;
       queued.data = data;
     } else {
       const item = { key, data };
-      st.queue.push(item);
-      if (key) st.folded.set(key, item);
-      st.bytes += data.length;
+      q.items.push(item);
+      if (key) q.folded.set(key, item);
+      q.bytes += data.length;
     }
-    if (st.bytes > SSE_MAX_QUEUED_BYTES) {
-      dropSseClient(res, `${Math.round(st.bytes / 1048576)}MB queued and not draining`);
+    if (q.bytes > SSE_MAX_QUEUED_BYTES) {
+      dropConn(conn.id, `${Math.round(q.bytes / 1048576)}MB global queue not draining`);
       continue;
     }
-    ssePump(res);
+    connPump(conn);
   }
 }
+
+setInterval(() => {
+  const now = Date.now();
+  for (const conn of [...conns.values()]) {
+    if (now - conn.lastBeat > HEARTBEAT_TIMEOUT_MS) {
+      dropConn(conn.id, 'heartbeat stale — frontend gone');
+    }
+  }
+}, HEARTBEAT_SWEEP_MS);
 
 const refreshTimers = new Map();
 function emitRefresh(file) {
@@ -863,13 +971,34 @@ const server = createServer(async (req, res) => {
         Connection: 'keep-alive',
         'Access-Control-Allow-Origin': '*',
       });
-      res.write(`event: ready\ndata: {}\n\n`);
-      clients.add(res);
-      sseState.set(res, { queue: [], folded: new Map(), bytes: 0, flowing: true });
-      req.on('close', () => {
-        clients.delete(res);
-        sseState.delete(res);
-      });
+      const id = `sse-${++connSeq}`;
+      const conn = {
+        id,
+        res,
+        views: new Set(),
+        lastBeat: Date.now(),
+        flowing: true,
+        queue: { items: [], folded: new Map(), bytes: 0 },
+      };
+      conns.set(id, conn);
+      res.write(`event: ready\ndata: ${JSON.stringify({ clientId: id })}\n\n`);
+      req.on('close', () => dropConn(id, 'connection closed', true));
+      return;
+    }
+
+    if (p === '/api/events/heartbeat' && req.method === 'POST') {
+      const body = await readBody(req);
+      const conn = conns.get(String(body.clientId ?? ''));
+      if (!conn) return sendJson(res, 404, { ok: false, error: 'unknown clientId' });
+      conn.lastBeat = Date.now();
+      const files = Array.isArray(body.files)
+        ? body.files.filter((f) => typeof f === 'string').slice(0, 64)
+        : [];
+      const next = new Set(files);
+      for (const prev of conn.views) if (!next.has(prev)) detachView(conn, prev);
+      conn.views = next;
+      connPump(conn);
+      sendJson(res, 200, { ok: true });
       return;
     }
 
@@ -1052,6 +1181,7 @@ const server = createServer(async (req, res) => {
         },
         sseClients: s.sseClients,
         sseQueued: s.sseQueued,
+        sseViews: s.sseViews,
         refreshTimers: s.refreshTimers,
       });
       return;
@@ -1089,7 +1219,12 @@ function memorySnapshot() {
   }
   files.sort((a, b) => b.bytes - a.bytes);
   let sseQueued = 0;
-  for (const st of sseState.values()) sseQueued += st.bytes;
+  let sseViews = 0;
+  for (const conn of conns.values()) {
+    sseQueued += conn.queue.bytes;
+    sseViews += conn.views.size;
+  }
+  for (const q of sessionQueues.values()) sseQueued += q.bytes;
   return {
     rss: mu.rss,
     heapUsed: mu.heapUsed,
@@ -1099,8 +1234,9 @@ function memorySnapshot() {
     cacheFileCount,
     cacheEntryCount,
     cacheBytes,
-    sseClients: clients.size,
+    sseClients: conns.size,
     sseQueued,
+    sseViews,
     refreshTimers: refreshTimers.size,
     modelWindows: modelWindows.size,
     heaviestFiles: files.slice(0, 5).map((f) => ({
@@ -1120,7 +1256,7 @@ function logMemoryState(label) {
     `heap=${fmtBytes(s.heapUsed)}/${fmtBytes(s.heapLimit)} (${heapPct}%) ` +
     `ext=${fmtBytes(s.external)} arrBuf=${fmtBytes(s.arrayBuffers)} ` +
     `cacheFiles=${s.cacheFileCount} cacheEntries=${s.cacheEntryCount} ` +
-    `cacheBytes=${fmtBytes(s.cacheBytes)} sse=${s.sseClients} sseQ=${fmtBytes(s.sseQueued)} ` +
+    `cacheBytes=${fmtBytes(s.cacheBytes)} sse=${s.sseClients}/${s.sseViews}v sseQ=${fmtBytes(s.sseQueued)} ` +
     `refreshTimers=${s.refreshTimers} catalog=${s.modelWindows}`;
   if (heapPct >= 85 || rssPct >= 80) {
     console.error(
@@ -1134,10 +1270,10 @@ function logMemoryState(label) {
 
 setInterval(() => logMemoryState('tick'), 60_000);
 
-const _heartbeat = setInterval(() => {
-  for (const res of clients) {
+const _ssePing = setInterval(() => {
+  for (const conn of conns.values()) {
     try {
-      res.write(': ping\n\n');
+      conn.res.write(': ping\n\n');
     } catch {}
   }
 }, 15000);

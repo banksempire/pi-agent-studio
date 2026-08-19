@@ -793,16 +793,39 @@ function handleEvent(ev: any) {
 }
 
 let es: EventSource | null = null;
+let esClientId: string | null = null;
+
+function beatEvents() {
+  if (!esClientId) return;
+  const files = state.sessions
+    .filter((s) => isViewOpen(s.id))
+    .map((s) => s.file)
+    .slice(0, 64);
+  fetch('/api/events/heartbeat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clientId: esClientId, files }),
+  }).catch(() => {});
+}
 
 function connectEvents() {
   if (es) return;
   es = new EventSource('/api/events');
+  es.addEventListener('ready', (e) => {
+    try {
+      esClientId = (JSON.parse((e as MessageEvent).data) as { clientId?: string }).clientId ?? null;
+    } catch {
+      esClientId = null;
+    }
+    beatEvents();
+  });
   es.onopen = () => {
     state.backend = 'online';
     syncAllTails();
   };
   es.onerror = () => {
     state.backend = 'offline';
+    esClientId = null;
   };
   es.onmessage = (e) => {
     try {
@@ -858,7 +881,11 @@ function connectEvents() {
   }
   pingBackend();
   const pingTimer = window.setInterval(pingBackend, PING_INTERVAL_MS);
-  window.addEventListener('beforeunload', () => window.clearInterval(pingTimer));
+  const beatTimer = window.setInterval(beatEvents, PING_INTERVAL_MS);
+  window.addEventListener('beforeunload', () => {
+    window.clearInterval(pingTimer);
+    window.clearInterval(beatTimer);
+  });
 }
 
 function syncAllTails() {
@@ -931,6 +958,7 @@ export function bindWorkspace(api: WorkspaceApi) {
       if (state.reviewTabId && !ids.includes(state.reviewTabId)) {
         state.reviewTabId = null;
       }
+      beatEvents();
     },
     { immediate: true },
   );

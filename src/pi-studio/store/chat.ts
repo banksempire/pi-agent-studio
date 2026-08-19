@@ -796,8 +796,8 @@ let es: EventSource | null = null;
 let esClientId: string | null = null;
 let lastViewFiles = new Set<string>();
 let pingLostStreak = 0;
-const HEARTBEAT_INTERVAL_MS = 5000;
-const HEARTBEAT_TIMEOUT_MS = 3000;
+const PING_INTERVAL_MS = 5000;
+const PING_TIMEOUT_MS = 3000;
 const PING_WINDOW_MS = 5 * 60_000;
 
 function openViewFiles(): string[] {
@@ -816,9 +816,9 @@ function pushPingSample(ms: number | null) {
   state.pingSamples.push({ t: now, ms });
 }
 
-function closeSessionStreams(files: string[]) {
+function postStreamSignal(endpoint: string, files: string[]) {
   if (!esClientId || files.length === 0) return;
-  fetch('/api/events/close', {
+  fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ clientId: esClientId, files }),
@@ -827,35 +827,28 @@ function closeSessionStreams(files: string[]) {
 
 function syncViewSubscriptions() {
   const next = new Set(openViewFiles());
+  const added: string[] = [];
   const removed: string[] = [];
+  for (const f of next) {
+    if (!lastViewFiles.has(f)) added.push(f);
+  }
   for (const f of lastViewFiles) {
     if (!next.has(f)) removed.push(f);
   }
   lastViewFiles = next;
-  if (removed.length > 0) closeSessionStreams(removed);
-  if (esClientId) heartbeatTick();
+  if (added.length > 0) postStreamSignal('/api/events/open', added);
+  if (removed.length > 0) postStreamSignal('/api/events/close', removed);
 }
 
-function heartbeatTick() {
-  if (!esClientId) {
-    state.backendPing = null;
-    pushPingSample(null);
-    return;
-  }
+function pingBackend() {
   const t0 = performance.now();
-  const files = openViewFiles();
   const ctrl = new AbortController();
   let timedOut = false;
   const timer = window.setTimeout(() => {
     timedOut = true;
     ctrl.abort();
-  }, HEARTBEAT_TIMEOUT_MS);
-  fetch('/api/events/heartbeat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ clientId: esClientId, files }),
-    signal: ctrl.signal,
-  })
+  }, PING_TIMEOUT_MS);
+  fetch('/api/health', { signal: ctrl.signal })
     .then((r) => r.json())
     .then((j) => {
       window.clearTimeout(timer);
@@ -891,6 +884,7 @@ function connectEvents() {
     } catch {
       esClientId = null;
     }
+    lastViewFiles = new Set();
     syncViewSubscriptions();
   });
   es.onopen = () => {
@@ -907,9 +901,9 @@ function connectEvents() {
     } catch {}
   };
 
-  heartbeatTick();
-  const hbTimer = window.setInterval(heartbeatTick, HEARTBEAT_INTERVAL_MS);
-  window.addEventListener('beforeunload', () => window.clearInterval(hbTimer));
+  pingBackend();
+  const pingTimer = window.setInterval(pingBackend, PING_INTERVAL_MS);
+  window.addEventListener('beforeunload', () => window.clearInterval(pingTimer));
 }
 
 function syncAllTails() {

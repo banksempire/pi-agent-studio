@@ -832,6 +832,18 @@ function makeReporter() {
         el.scrollTop = -Math.round((el.scrollHeight - el.clientHeight) * 0.5);
       });
       await delay(600);
+      await inB((el) => {
+        const lr = el.getBoundingClientRect();
+        const tops = Array.from(el.querySelectorAll('.chat-sep')).map((s) => ({
+          s,
+          t: s.getBoundingClientRect().top - lr.top,
+        }));
+        if (!tops.some((x) => Math.abs(x.t) < 2)) {
+          const next = tops.find((x) => x.t >= 2);
+          if (next) el.scrollTop += Math.round(next.t);
+        }
+      });
+      await delay(600);
       const pin = await inB((el) => {
         const lr = el.getBoundingClientRect();
         const sep = Array.from(el.querySelectorAll('.chat-sep')).find(
@@ -1096,7 +1108,8 @@ function makeReporter() {
       await page.getByText('Rename', { exact: true }).click();
       await page.locator('.chat-dialog-input').fill(newTitle);
       await page.getByRole('button', { name: 'Save' }).click();
-      const rowShows = async () => (await page.locator(`.chat-list-item:has-text("${newTitle}")`).count()) > 0;
+      const rowShows = async () =>
+        (await page.locator(`.chat-list-item:has-text("${newTitle}")`).count()) > 0;
       const tabShows = async () => (await tabText()).some((t) => t.includes(newTitle));
       const updated = await until(async () => (await rowShows()) && (await tabShows()));
       return {

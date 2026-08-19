@@ -1103,9 +1103,8 @@ function makeReporter() {
       const aRow = page.locator('.chat-list-item:has-text("XWin-A:")').first();
       if ((await aRow.count()) === 0) return { ok: false, why: 'XWin-A row missing in the session list' };
       const newTitle = 'XWin-A renamed without reload';
-      await aRow.hover();
-      await aRow.locator('.chat-item-menu').click();
-      await page.getByText('Rename', { exact: true }).click();
+      await aRow.click({ button: 'right' });
+      await page.locator('.sf-sm-menu .sf-sm-menu-row', { hasText: 'Rename' }).click();
       await page.locator('.chat-dialog-input').fill(newTitle);
       await page.getByRole('button', { name: 'Save' }).click();
       const rowShows = async () =>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import Menu from '@sf/components/Menu.vue';
+import SingleMenu from '@sf/components/SingleMenu.vue';
 import SvgIcon from '@sf/components/SvgIcon.vue';
-import type { MenuNodeDef } from '@sf/types/layout';
+import type { SingleMenuOption } from '@sf/types/singleMenu';
 import { computed, nextTick, ref } from 'vue';
 import { type ChatSession, endExternalDrag, startSessionDrag, timeAgo, useChatStore } from '../store/chat';
 
@@ -14,12 +14,10 @@ function preview(s: ChatSession): string {
   return t.length > 56 ? `${t.slice(0, 56)}…` : t;
 }
 
-const menuOpenFor = ref<string | null>(null);
-
-function menuItems(_s: ChatSession): MenuNodeDef[] {
+function menuItems(_s: ChatSession): SingleMenuOption[] {
   return [
-    { id: 'rename', label: 'Rename' },
-    { id: 'delete', label: 'Delete' },
+    { id: 'rename', label: 'Rename', icon: '✎' },
+    { id: 'delete', label: 'Delete', icon: '🗑', danger: true },
   ];
 }
 
@@ -58,7 +56,7 @@ function onDialogKey(e: KeyboardEvent) {
   if (e.key === 'Escape') closeDialog();
 }
 
-function onMenuSelect(s: ChatSession, item: MenuNodeDef) {
+function onMenuSelect(s: ChatSession, item: SingleMenuOption) {
   if (item.id === 'rename') openRename(s);
   else if (item.id === 'delete') openDelete(s);
 }
@@ -72,43 +70,36 @@ function onMenuSelect(s: ChatSession, item: MenuNodeDef) {
     <div v-else-if="sessions.length === 0" class="chat-list-empty">
       No chats yet — press Ctrl+N or click New Chat above to start one.
     </div>
-    <div
-      v-for="s in sessions"
-      :key="s.id"
-      class="chat-list-item"
-      :class="{ 'chat-list-item--active': s.id === store.activeChatId }"
-      :title="'Open chat window: ' + s.title"
-      draggable="true"
-      @click="store.openChat(s.id)"
-      @dragstart="startSessionDrag($event, s)"
+    <SingleMenu
+      :items="sessions"
+      :options="menuItems"
+      :key-of="(s: ChatSession) => s.id"
+      :title-of="(s: ChatSession) => s.title"
+      draggable
+      @activate="(s: ChatSession) => store.openChat(s.id)"
+      @select="onMenuSelect"
+      @dragstart="(s: ChatSession, e: DragEvent) => startSessionDrag(e, s)"
       @dragend="endExternalDrag"
     >
-      <div class="chat-list-row1">
-        <span class="chat-list-title">{{ s.title }}</span>
-        <span class="chat-list-time">{{ timeAgo(s.lastActivity) }}</span>
-        <Menu
-          :items="menuItems(s)"
-          :open="menuOpenFor === s.id"
-          @update:open="(v: boolean) => { menuOpenFor = v ? s.id : null }"
-          @select="(item: MenuNodeDef) => onMenuSelect(s, item)"
+      <template #item="{ item: s }">
+        <div
+          class="chat-list-item"
+          :class="{ 'chat-list-item--active': s.id === store.activeChatId }"
+          :title="'Open chat window: ' + s.title"
         >
-          <template #trigger="{ toggle }">
-            <button
-              class="chat-item-menu sf-panel-btn"
-              :class="{ 'chat-item-menu--open': menuOpenFor === s.id }"
-              title="Session actions"
-              @click.stop="toggle"
-            ><SvgIcon name="⋯" /></button>
-          </template>
-        </Menu>
-      </div>
-      <div class="chat-list-row2">
-        <span class="chat-list-status" :class="'chat-list-status--' + s.status">
-          <SvgIcon v-if="s.status === 'running'" name="⏳" />
-        </span>
-        <span class="chat-list-preview">{{ preview(s) }}</span>
-      </div>
-    </div>
+          <div class="chat-list-row1">
+            <span class="chat-list-title">{{ s.title }}</span>
+            <span class="chat-list-time">{{ timeAgo(s.lastActivity) }}</span>
+          </div>
+          <div class="chat-list-row2">
+            <span class="chat-list-status" :class="'chat-list-status--' + s.status">
+              <SvgIcon v-if="s.status === 'running'" name="⏳" />
+            </span>
+            <span class="chat-list-preview">{{ preview(s) }}</span>
+          </div>
+        </div>
+      </template>
+    </SingleMenu>
 
     <div v-if="dialog" class="chat-dialog-backdrop" @click.self="closeDialog">
       <div

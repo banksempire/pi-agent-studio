@@ -581,6 +581,19 @@ function oldListSignature(s: ChatSession): string {
 
 let listTimer: number | null = null;
 
+function sameSessionStates(
+  a: Record<string, SessionStateInfo>,
+  b: Record<string, SessionStateInfo>,
+): boolean {
+  const ka = Object.keys(a);
+  if (ka.length !== Object.keys(b).length) return false;
+  for (const k of ka) {
+    const y = b[k];
+    if (!y || a[k].state !== y.state || a[k].error !== y.error) return false;
+  }
+  return true;
+}
+
 async function fetchList() {
   try {
     const { sessions } = await api<{ sessions: SessionInfo[] }>('/api/sessions');
@@ -592,7 +605,8 @@ async function fetchList() {
         synced[raw.file] = { state: raw.state, error: raw.stateError ?? '' };
       }
     }
-    state.sessionStates = synced;
+    if (!sameSessionStates(state.sessionStates, synced)) state.sessionStates = synced;
+    pruneVisits(onDisk);
     const pending = loadPendingChats();
     if (pending.some((p) => onDisk.has(p.file))) {
       persistPendingChats(pending.filter((p) => !onDisk.has(p.file)));
@@ -748,6 +762,7 @@ function handleEvent(ev: any) {
     }
     case 'session_status': {
       const s = byFile(ev.file);
+      if (ev.status === 'running') forgetVisit(ev.file);
       if (s) {
         s.status = ev.status;
         if (ev.status === 'idle') s.streaming = false;
@@ -892,15 +907,29 @@ function postStreamSignal(endpoint: string, files: string[]) {
 
 const visitSentAt: Record<string, number> = {};
 
+function forgetVisit(file: string) {
+  delete visitSentAt[file];
+}
+
+function pruneVisits(known: Set<string>) {
+  for (const f of Object.keys(visitSentAt)) {
+    if (!known.has(f)) delete visitSentAt[f];
+  }
+}
+
 export function noteVisit(sessionId: string) {
   const s = findSession(sessionId);
   if (!s) return;
   const st = state.sessionStates[s.file];
-  if (!st || (st.state !== 'unread' && st.state !== 'error' && st.state !== 'working')) return;
-  const last = visitSentAt[s.file] ?? 0;
-  if (Date.now() - last < 1000) return;
-  visitSentAt[s.file] = Date.now();
-  if (st.state === 'unread' || st.state === 'error') {
+  if (!st) return;
+  if (st.state === 'working') {
+    if (visitSentAt[s.file] !== undefined) return;
+    visitSentAt[s.file] = Date.now();
+  } else {
+    if (st.state !== 'unread' && st.state !== 'error') return;
+    const last = visitSentAt[s.file] ?? 0;
+    if (Date.now() - last < 1000) return;
+    visitSentAt[s.file] = Date.now();
     state.sessionStates[s.file] = { state: 'open', error: '' };
   }
   if (!esClientId) return;
@@ -1429,6 +1458,7 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
       state.lastError = j.error || 'Delete failed';
       return false;
     }
+    forgetVisit(s.file);
     delete state.drafts[sessionId];
     delete windowUi[sessionId];
     delete state.sessionErrors[sessionId];

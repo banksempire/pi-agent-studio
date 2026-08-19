@@ -272,6 +272,30 @@ async function main() {
   })();
   report('T13 visit arriving before the view-open signal still clears to open', t13.ok, t13.why);
 
+  const t14 = await (async () => {
+    const h = freshHarness(mod, { files: [F1] });
+    const s = h.make();
+    s.notePrompt(F1);
+    s.flush();
+    const w1 = s.writeCount();
+    s.notePrompt(F1);
+    s.noteViews(F1, 1);
+    s.noteViews(F1, 0);
+    s.flush();
+    const w2 = s.writeCount();
+    s.noteAgentRunning(F1);
+    s.flush();
+    const w3 = s.writeCount();
+    s.noteAgentSettled(F1);
+    s.flush();
+    const w4 = s.writeCount();
+    return {
+      ok: w1 === 1 && w2 === 1 && w3 === 1 && w4 === 2,
+      why: `writes ${w1}/${w2}/${w3}/${w4} (want 1/1/1/2)`,
+    };
+  })();
+  report('T14 persistence writes only when the persisted shape changes', t14.ok, t14.why);
+
   console.log(isFailed() ? 'session-states checks FAILED' : 'session-states checks passed');
   process.exitCode = isFailed() ? 1 : 0;
 }

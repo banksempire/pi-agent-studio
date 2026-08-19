@@ -13,6 +13,8 @@ export function createSessionStates({
 } = {}) {
   const entries = new Map();
   let persistTimer = null;
+  let lastPersistedJson = null;
+  let persistWrites = 0;
 
   function ensure(file) {
     let e = entries.get(file);
@@ -31,8 +33,13 @@ export function createSessionStates({
     return e;
   }
 
+  function persistedJson() {
+    return JSON.stringify(persistedShape());
+  }
+
   function schedulePersist() {
     if (persistTimer) return;
+    if (persistedJson() === lastPersistedJson) return;
     persistTimer = setTimeout(() => {
       persistTimer = null;
       flush();
@@ -54,9 +61,13 @@ export function createSessionStates({
       clearTimeout(persistTimer);
       persistTimer = null;
     }
+    const json = persistedJson();
+    if (json === lastPersistedJson) return;
     try {
       mkdirSync(path.dirname(persistPath), { recursive: true });
-      writeFileSync(persistPath, JSON.stringify(persistedShape()));
+      writeFileSync(persistPath, json);
+      lastPersistedJson = json;
+      persistWrites += 1;
     } catch {}
   }
 
@@ -82,6 +93,7 @@ export function createSessionStates({
         pendingProbe: item.state === 'working',
       });
     }
+    lastPersistedJson = persistedJson();
   }
 
   function sync(file) {
@@ -215,6 +227,7 @@ export function createSessionStates({
     canDelete: (file) => (entries.get(file)?.views ?? 0) === 0,
     stateOf: (file) => entries.get(file)?.state ?? 'close',
     errorOf: (file) => entries.get(file)?.error ?? '',
+    writeCount: () => persistWrites,
     snapshot: () => [...entries].map(([file, e]) => ({ file, state: e.state, error: e.error })),
     files: () => [...entries.keys()],
   };

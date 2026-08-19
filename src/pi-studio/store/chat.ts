@@ -794,18 +794,92 @@ function handleEvent(ev: any) {
 
 let es: EventSource | null = null;
 let esClientId: string | null = null;
+let lastViewFiles = new Set<string>();
+let pingLostStreak = 0;
+const HEARTBEAT_INTERVAL_MS = 5000;
+const HEARTBEAT_TIMEOUT_MS = 3000;
+const PING_WINDOW_MS = 5 * 60_000;
 
-function beatEvents() {
-  if (!esClientId) return;
-  const files = state.sessions
+function openViewFiles(): string[] {
+  return state.sessions
     .filter((s) => isViewOpen(s.id))
     .map((s) => s.file)
     .slice(0, 64);
-  fetch('/api/events/heartbeat', {
+}
+
+function pushPingSample(ms: number | null) {
+  const now = performance.now();
+  const cutoff = now - PING_WINDOW_MS;
+  while (state.pingSamples.length > 0 && state.pingSamples[0].t < cutoff) {
+    state.pingSamples.shift();
+  }
+  state.pingSamples.push({ t: now, ms });
+}
+
+function closeSessionStreams(files: string[]) {
+  if (!esClientId || files.length === 0) return;
+  fetch('/api/events/close', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ clientId: esClientId, files }),
   }).catch(() => {});
+}
+
+function syncViewSubscriptions() {
+  const next = new Set(openViewFiles());
+  const removed: string[] = [];
+  for (const f of lastViewFiles) {
+    if (!next.has(f)) removed.push(f);
+  }
+  lastViewFiles = next;
+  if (removed.length > 0) closeSessionStreams(removed);
+  if (esClientId) heartbeatTick();
+}
+
+function heartbeatTick() {
+  if (!esClientId) {
+    state.backendPing = null;
+    pushPingSample(null);
+    return;
+  }
+  const t0 = performance.now();
+  const files = openViewFiles();
+  const ctrl = new AbortController();
+  let timedOut = false;
+  const timer = window.setTimeout(() => {
+    timedOut = true;
+    ctrl.abort();
+  }, HEARTBEAT_TIMEOUT_MS);
+  fetch('/api/events/heartbeat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clientId: esClientId, files }),
+    signal: ctrl.signal,
+  })
+    .then((r) => r.json())
+    .then((j) => {
+      window.clearTimeout(timer);
+      if (timedOut) return;
+      pingLostStreak = 0;
+      state.backendLost = false;
+      state.backendPing = Math.round(performance.now() - t0);
+      pushPingSample(state.backendPing);
+      state.backend = j.nest === false ? 'offline' : 'online';
+    })
+    .catch(() => {
+      window.clearTimeout(timer);
+      if (!timedOut) {
+        state.backend = 'offline';
+        state.backendPing = null;
+        state.backendLost = false;
+        pushPingSample(null);
+        return;
+      }
+      pingLostStreak += 1;
+      state.backendLost = true;
+      pushPingSample(null);
+      if (pingLostStreak >= 2) state.backend = 'offline';
+    });
 }
 
 function connectEvents() {
@@ -817,7 +891,7 @@ function connectEvents() {
     } catch {
       esClientId = null;
     }
-    beatEvents();
+    syncViewSubscriptions();
   });
   es.onopen = () => {
     state.backend = 'online';
@@ -833,59 +907,9 @@ function connectEvents() {
     } catch {}
   };
 
-  const PING_INTERVAL_MS = 5000;
-  const PING_TIMEOUT_MS = 3000;
-  const PING_WINDOW_MS = 5 * 60_000;
-  let pingLostStreak = 0;
-  function pushPingSample(ms: number | null) {
-    const now = performance.now();
-    const cutoff = now - PING_WINDOW_MS;
-    while (state.pingSamples.length > 0 && state.pingSamples[0].t < cutoff) {
-      state.pingSamples.shift();
-    }
-    state.pingSamples.push({ t: now, ms });
-  }
-  function pingBackend() {
-    const t0 = performance.now();
-    const ctrl = new AbortController();
-    let timedOut = false;
-    const timer = window.setTimeout(() => {
-      timedOut = true;
-      ctrl.abort();
-    }, PING_TIMEOUT_MS);
-    fetch('/api/health', { signal: ctrl.signal })
-      .then((r) => r.json())
-      .then((j) => {
-        window.clearTimeout(timer);
-        if (timedOut) return;
-        pingLostStreak = 0;
-        state.backendLost = false;
-        state.backendPing = Math.round(performance.now() - t0);
-        pushPingSample(state.backendPing);
-        state.backend = j.nest === false ? 'offline' : 'online';
-      })
-      .catch(() => {
-        window.clearTimeout(timer);
-        if (!timedOut) {
-          state.backend = 'offline';
-          state.backendPing = null;
-          state.backendLost = false;
-          pushPingSample(null);
-          return;
-        }
-        pingLostStreak += 1;
-        state.backendLost = true;
-        pushPingSample(null);
-        if (pingLostStreak >= 2) state.backend = 'offline';
-      });
-  }
-  pingBackend();
-  const pingTimer = window.setInterval(pingBackend, PING_INTERVAL_MS);
-  const beatTimer = window.setInterval(beatEvents, PING_INTERVAL_MS);
-  window.addEventListener('beforeunload', () => {
-    window.clearInterval(pingTimer);
-    window.clearInterval(beatTimer);
-  });
+  heartbeatTick();
+  const hbTimer = window.setInterval(heartbeatTick, HEARTBEAT_INTERVAL_MS);
+  window.addEventListener('beforeunload', () => window.clearInterval(hbTimer));
 }
 
 function syncAllTails() {
@@ -958,7 +982,7 @@ export function bindWorkspace(api: WorkspaceApi) {
       if (state.reviewTabId && !ids.includes(state.reviewTabId)) {
         state.reviewTabId = null;
       }
-      beatEvents();
+      syncViewSubscriptions();
     },
     { immediate: true },
   );

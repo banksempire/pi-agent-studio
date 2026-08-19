@@ -696,6 +696,7 @@ const SSE_MAX_QUEUED_BYTES = Number(process.env.PI_STUDIO_SSE_MAX_QUEUED ?? 16 *
 const HEARTBEAT_TIMEOUT_MS = Number(process.env.PI_STUDIO_HEARTBEAT_TIMEOUT_MS ?? 20_000);
 const HEARTBEAT_SWEEP_MS = 5000;
 let connSeq = 0;
+let nestOnline = false;
 
 function viewersOf(file) {
   const out = [];
@@ -733,6 +734,11 @@ function unlinkSessionItem(q, i) {
   q.bytes -= item.data.length;
 }
 
+function maybeFreeSessionQueue(file) {
+  const q = sessionQueues.get(file);
+  if (q && q.items.length === 0) sessionQueues.delete(file);
+}
+
 function detachView(conn, file) {
   const q = sessionQueues.get(file);
   if (!q) return;
@@ -740,6 +746,7 @@ function detachView(conn, file) {
     q.items[i].pending.delete(conn.id);
     if (q.items[i].pending.size === 0) unlinkSessionItem(q, i);
   }
+  maybeFreeSessionQueue(file);
 }
 
 function dropConn(id, reason, quiet = false) {
@@ -794,6 +801,7 @@ function connPump(conn) {
         i--;
       }
     }
+    maybeFreeSessionQueue(file);
   }
 }
 
@@ -900,6 +908,7 @@ async function relayNestEvents() {
         continue;
       }
       const stream = client.subscribe('');
+      nestOnline = true;
       console.log('[gateway] relay stream connected');
       await new Promise((resolve) => {
         stream.on('data', (ev) => {
@@ -912,10 +921,12 @@ async function relayNestEvents() {
           else emit({ type: ev.type, file: ev.file, ...payload });
         });
         stream.once('error', () => {
+          nestOnline = false;
           console.log('[gateway] relay stream dropped — reconnecting');
           resolve();
         });
         stream.once('end', () => {
+          nestOnline = false;
           console.log('[gateway] relay stream ended — reconnecting');
           resolve();
         });
@@ -998,6 +1009,21 @@ const server = createServer(async (req, res) => {
       for (const prev of conn.views) if (!next.has(prev)) detachView(conn, prev);
       conn.views = next;
       connPump(conn);
+      sendJson(res, 200, { ok: true, nest: nestOnline });
+      return;
+    }
+
+    if (p === '/api/events/close' && req.method === 'POST') {
+      const body = await readBody(req);
+      const conn = conns.get(String(body.clientId ?? ''));
+      if (!conn) return sendJson(res, 404, { ok: false, error: 'unknown clientId' });
+      const files = Array.isArray(body.files)
+        ? body.files.filter((f) => typeof f === 'string').slice(0, 64)
+        : [];
+      for (const file of files) {
+        conn.views.delete(file);
+        detachView(conn, file);
+      }
       sendJson(res, 200, { ok: true });
       return;
     }

@@ -3,13 +3,12 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
 const net = require('node:net');
-const os = require('node:os');
 const path = require('node:path');
 
 const PRODUCT_ROOT = path.join(__dirname, '..');
-const SESSIONS_ROOT = path.join(os.homedir(), '.pi', 'agent', 'sessions');
+const ISOLATED_ROOT = '/tmp/xwin-check-sessions';
 const TEST_DIR_NAME = '--tmp-xwin-check--';
-const TEST_SESSIONS_DIR = path.join(SESSIONS_ROOT, TEST_DIR_NAME);
+const TEST_SESSIONS_DIR = path.join(ISOLATED_ROOT, TEST_DIR_NAME);
 const TEST_STATES_PATH = '/tmp/xwin-check-states.json';
 const TEST_CWD = '/tmp/xwin-check';
 const IMG_DIR = '/tmp/xwin-check-imgs';
@@ -107,7 +106,12 @@ function writeSessions() {
           id: amid,
           parentId: umid,
           timestamp: new Date(base + n * 60000 + 1000).toISOString(),
-          message: { role: 'assistant', content, timestamp: base + n * 60000 + 1000 },
+          message: {
+            role: 'assistant',
+            content,
+            timestamp: base + n * 60000 + 1000,
+            ...(t === turns - 1 ? { stopReason: 'stop' } : {}),
+          },
         }),
       );
       prev = amid;
@@ -117,6 +121,8 @@ function writeSessions() {
       `2026-08-10T00-00-00-${String(turns).padStart(3, '0')}Z_${name.toLowerCase().replaceAll(' ', '-')}-${uid()}.jsonl`,
     );
     fs.writeFileSync(fn, `${lines.join('\n')}\n`);
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(fn, old, old);
   };
   sessionFile('XWin-A', 55);
   sessionFile('XWin-B', 30);
@@ -182,7 +188,7 @@ function makeReporter() {
   const procs = [];
   const cleanup = () => {
     for (const p of procs) killProc(p);
-    fs.rmSync(TEST_SESSIONS_DIR, { recursive: true, force: true });
+    fs.rmSync(ISOLATED_ROOT, { recursive: true, force: true });
     fs.rmSync(IMG_DIR, { recursive: true, force: true });
     fs.rmSync(TEST_STATES_PATH, { force: true });
   };
@@ -211,6 +217,7 @@ function makeReporter() {
         {
           PI_STUDIO_PORT: String(ports.backend),
           PI_NEST_PORT: String(ports.nest),
+          PI_STUDIO_SESSIONS: ISOLATED_ROOT,
           PI_STUDIO_STATES_PATH: TEST_STATES_PATH,
         },
         '/tmp/xwin-check-backend.log',

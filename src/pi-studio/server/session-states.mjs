@@ -25,6 +25,7 @@ export function createSessionStates({
         views: 0,
         runStartedAt: 0,
         lastVisitAt: 0,
+        lastGrowAt: 0,
         pendingStop: '',
         pendingProbe: false,
       };
@@ -89,6 +90,7 @@ export function createSessionStates({
         views: 0,
         runStartedAt: 0,
         lastVisitAt: 0,
+        lastGrowAt: 0,
         pendingStop: '',
         pendingProbe: item.state === 'working',
       });
@@ -139,23 +141,60 @@ export function createSessionStates({
     e.pendingStop = stopReason === 'error' ? errorMessage || 'agent error' : '';
   }
 
-  function noteAgentSettled(file, { stale = false } = {}) {
+  function noteAgentSettled(file, { stale = false, error = '' } = {}) {
     const e = entries.get(file);
     if (e?.state !== 'working') return;
     const visited = e.lastVisitAt > 0 && e.runStartedAt > 0 && e.lastVisitAt >= e.runStartedAt;
     if (visited) {
-      setState(file, e, e.views > 0 ? 'open' : 'close');
+      setState(file, e, 'open');
       return;
     }
     if (stale) {
       setState(file, e, 'error', 'run stalled — force-settled by watchdog');
       return;
     }
-    if (e.pendingStop) {
-      setState(file, e, 'error', e.pendingStop);
+    if (error || e.pendingStop) {
+      setState(file, e, 'error', error || e.pendingStop);
       return;
     }
     setState(file, e, 'unread');
+  }
+
+  function noteFileRunStart(file, at) {
+    const e = ensure(file);
+    if (e.state !== 'working') {
+      e.runStartedAt = at ?? now();
+      e.lastVisitAt = 0;
+      e.pendingStop = '';
+      e.error = '';
+      e.pendingProbe = false;
+      setState(file, e, 'working');
+    }
+    e.lastGrowAt = now();
+  }
+
+  function noteFileActivity(file) {
+    const e = entries.get(file);
+    if (e?.state === 'working') e.lastGrowAt = now();
+  }
+
+  function noteFileTerminal(file, isError, errorMessage) {
+    noteAgentSettled(file, isError ? { error: errorMessage || 'agent error' } : {});
+    noteFileActivity(file);
+  }
+
+  function sweepStaleFileRuns(staleMs) {
+    const t = now();
+    for (const [file, e] of [...entries]) {
+      if (e.state !== 'working' || e.lastGrowAt === 0) continue;
+      if (t - e.lastGrowAt <= staleMs) continue;
+      setState(
+        file,
+        e,
+        'error',
+        `run stalled — no session updates for ${Math.round((t - e.lastGrowAt) / 60000)}m`,
+      );
+    }
   }
 
   function noteVisit(file) {
@@ -222,6 +261,10 @@ export function createSessionStates({
     noteAgentSettled,
     noteVisit,
     noteViews,
+    noteFileRunStart,
+    noteFileActivity,
+    noteFileTerminal,
+    sweepStaleFileRuns,
     probeNest,
     remove,
     canDelete: (file) => (entries.get(file)?.views ?? 0) === 0,

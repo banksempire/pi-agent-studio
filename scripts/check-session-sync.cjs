@@ -74,7 +74,8 @@ function writeSessionFile(name, { error = false, turns = 2 } = {}) {
           role: 'assistant',
           content: [{ type: 'text', text: `${name} a${t}` }],
           timestamp: Date.now(),
-          ...(isLast && error ? { stopReason: 'error', errorMessage: 'API quota reached' } : {}),
+          ...(isLast ? { stopReason: error ? 'error' : 'stop' } : {}),
+          ...(isLast && error ? { errorMessage: 'API quota reached' } : {}),
         },
       }),
     );
@@ -82,6 +83,8 @@ function writeSessionFile(name, { error = false, turns = 2 } = {}) {
   }
   const file = path.join(dir, `${name}.jsonl`);
   fs.writeFileSync(file, `${lines.join('\n')}\n`);
+  const old = new Date(Date.now() - 60_000);
+  fs.utimesSync(file, old, old);
   return file;
 }
 
@@ -486,6 +489,53 @@ async function stateOfSession(port, file) {
     return { ok, why: `snapshot[${files}]` };
   })();
   report('S9 reconnecting frontend gets a session_states snapshot', t.ok, t.why);
+
+  t = await (async () => {
+    const F_TUI = writeSessionFile('sync-tui', { turns: 1 });
+    const D = sseClient(gatewayPort);
+    await waitReady(D);
+    const appendEntry = (file, entry) => fs.appendFileSync(file, `${JSON.stringify(entry)}\n`);
+    const waitForState = (file, state) =>
+      waitFor(
+        D,
+        (e) => e.type === 'session_state' && e.file === file && e.state === state,
+        `tui ${state}`,
+        12000,
+      );
+    appendEntry(F_TUI, {
+      type: 'message',
+      id: 'tui-u1',
+      parentId: null,
+      timestamp: new Date().toISOString(),
+      message: { role: 'user', content: [{ type: 'text', text: 'tui prompt' }], timestamp: Date.now() },
+    });
+    const workEv = await waitForState(F_TUI, 'working');
+    const viaList = await stateOfSession(gatewayPort, F_TUI);
+    appendEntry(F_TUI, {
+      type: 'message',
+      id: 'tui-a1',
+      parentId: 'tui-u1',
+      timestamp: new Date().toISOString(),
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'tui answer' }],
+        timestamp: Date.now(),
+        stopReason: 'stop',
+      },
+    });
+    const unreadEv = await waitForState(F_TUI, 'unread');
+    const afterList = await stateOfSession(gatewayPort, F_TUI);
+    D.destroy();
+    return {
+      ok:
+        workEv.state === 'working' &&
+        viaList === 'working' &&
+        unreadEv.state === 'unread' &&
+        afterList === 'unread',
+      why: `file-only run: working(list:${viaList}) → unread(list:${afterList})`,
+    };
+  })();
+  report('S10 runs owned outside pi-nest (TUI-style file writes) are tracked working → unread', t.ok, t.why);
 
   A.destroy();
   gateway.kill('SIGTERM');

@@ -21,11 +21,12 @@ function freshHarness(mod, { files = [] } = {}) {
   const existing = new Set(files);
   const events = [];
   const { createSessionStates } = mod;
-  const make = () =>
+  const make = (nowFn) =>
     createSessionStates({
       persistPath,
       fileExists: (f) => existing.has(f),
       onSync: (ev) => events.push(ev),
+      ...(nowFn ? { now: nowFn } : {}),
     });
   return { dir, persistPath, existing, events, make, createSessionStates };
 }
@@ -295,6 +296,54 @@ async function main() {
     };
   })();
   report('T14 persistence writes only when the persisted shape changes', t14.ok, t14.why);
+
+  const t15 = await (async () => {
+    const h = freshHarness(mod, { files: [F1] });
+    const s = h.make();
+    s.noteFileRunStart(F1);
+    const working = s.stateOf(F1);
+    s.noteFileTerminal(F1, false, '');
+    const unread = s.stateOf(F1);
+    s.noteFileRunStart(F1);
+    s.noteVisit(F1);
+    s.noteFileTerminal(F1, false, '');
+    const visitedSettle = s.stateOf(F1);
+    s.noteFileRunStart(F1);
+    s.noteFileTerminal(F1, true, 'API quota reached');
+    const errorSettle = s.stateOf(F1);
+    return {
+      ok: working === 'working' && unread === 'unread' && visitedSettle === 'open' && errorSettle === 'error',
+      why: `${working}/${unread}/${visitedSettle}/${errorSettle}`,
+    };
+  })();
+  report(
+    'T15 file-driven runs: growth→working, terminal→unread, visited→open, error terminal→error',
+    t15.ok,
+    t15.why,
+  );
+
+  const t16 = await (async () => {
+    const h = freshHarness(mod, { files: [F1] });
+    const s = h.make();
+    s.noteFileRunStart(F1);
+    s.sweepStaleFileRuns(30 * 60_000);
+    const stillWorking = s.stateOf(F1);
+    return { ok: stillWorking === 'working', why: `active run not swept: ${stillWorking}` };
+  })();
+  report('T16 sweep leaves active file-runs alone', t16.ok, t16.why);
+
+  const t17 = await (async () => {
+    const h = freshHarness(mod, { files: [F1] });
+    let t = 1_000_000;
+    const s = h.make(() => t);
+    s.noteFileRunStart(F1);
+    t += 31 * 60_000;
+    s.sweepStaleFileRuns(30 * 60_000);
+    const swept = s.stateOf(F1);
+    const err = s.errorOf(F1);
+    return { ok: swept === 'error' && /stalled/.test(err), why: `${swept}/${err}` };
+  })();
+  report('T17 sweep settles a run with no file updates for the stall window', t17.ok, t17.why);
 
   console.log(isFailed() ? 'session-states checks FAILED' : 'session-states checks passed');
   process.exitCode = isFailed() ? 1 : 0;

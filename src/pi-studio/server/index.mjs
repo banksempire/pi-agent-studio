@@ -1388,11 +1388,67 @@ const _ssePing = setInterval(() => {
 }, 15000);
 
 const fileMtimes = new Map();
+const fileParsedBytes = new Map();
+const FILE_FRESH_MS = 15_000;
+const FILE_STALE_RUN_MS = 30 * 60_000;
+const TERMINAL_STOP_REASONS = new Set(['stop', 'length', 'error', 'aborted']);
+
+function applyFileEntries(file, newEntries) {
+  let lastMessage = null;
+  for (const en of newEntries) {
+    if (en.type !== 'message' || !en.message) continue;
+    const role = en.message.role;
+    const at = Date.parse(en.timestamp);
+    if (role === 'assistant') {
+      if (TERMINAL_STOP_REASONS.has(en.message.stopReason)) {
+        lastMessage = { terminal: true, isError: en.message.stopReason === 'error', message: en.message };
+      } else {
+        lastMessage = { terminal: false };
+        sessionStates.noteFileRunStart(file, Number.isNaN(at) ? undefined : at);
+      }
+    } else if (role === 'user' || role === 'toolResult') {
+      lastMessage = { terminal: false };
+      sessionStates.noteFileRunStart(file, Number.isNaN(at) ? undefined : at);
+    }
+  }
+  if (lastMessage?.terminal) {
+    sessionStates.noteFileTerminal(file, lastMessage.isError, lastMessage.message.errorMessage ?? '');
+  } else if (lastMessage) {
+    sessionStates.noteFileActivity(file);
+  }
+}
+
+async function trackFileGrowth(file, st, known) {
+  if (!known) {
+    if (st.mtimeMs > Date.now() - FILE_FRESH_MS) fileParsedBytes.set(file, 0);
+    else {
+      fileParsedBytes.set(file, st.size);
+      return;
+    }
+  }
+  const prev = fileParsedBytes.get(file) ?? 0;
+  if (st.size <= prev) {
+    fileParsedBytes.set(file, st.size);
+    return;
+  }
+  const appended = await readTail(file, prev).catch(() => null);
+  if (appended === null) {
+    fileParsedBytes.set(file, st.size);
+    return;
+  }
+  const nl = appended.lastIndexOf('\n');
+  if (nl < 0) return;
+  const complete = appended.slice(0, nl + 1);
+  fileParsedBytes.set(file, prev + Buffer.byteLength(complete));
+  const newEntries = parseEntries(complete);
+  if (newEntries.length > 0) applyFileEntries(file, newEntries);
+}
 
 async function watchSessionFiles() {
   for (const file of sessionStates.files()) {
     if (!existsSync(file)) sessionStates.remove(file);
   }
+  sessionStates.sweepStaleFileRuns(FILE_STALE_RUN_MS);
   let dirs = [];
   try {
     dirs = await readdir(SESSIONS_ROOT, { withFileTypes: true });
@@ -1415,9 +1471,12 @@ async function watchSessionFiles() {
       if (!st) continue;
       const m = st.mtimeMs;
       if (fileMtimes.get(file) !== m) {
-        const _known = fileMtimes.has(file);
+        const known = fileMtimes.has(file);
         fileMtimes.set(file, m);
         emitRefresh(file);
+        await trackFileGrowth(file, st, known);
+      } else if (!fileParsedBytes.has(file)) {
+        fileParsedBytes.set(file, st.size);
       }
     }
   }

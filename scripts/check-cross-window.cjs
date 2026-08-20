@@ -1167,6 +1167,38 @@ function makeReporter() {
     })();
     report('T15 rename updates the open tab label and history row (no reload)', t15.ok, t15.why);
 
+    const t17 = await (async () => {
+      const marker = 'XWin-B:';
+      const i = await tabIndex(marker);
+      if (i >= 0) {
+        await page.locator('.sf-tab-label').nth(i).click({ button: 'middle' });
+        for (let k = 0; k < 20 && (await tabIndex(marker)) >= 0; k++) await delay(300);
+        if ((await tabIndex(marker)) >= 0) return { ok: false, why: 'could not close XWin-B tab' };
+      }
+      await delay(600);
+      await page.locator(`.chat-list-item:has-text("${marker}")`).first().click({ force: true });
+      await page.waitForSelector('.chat-messages', { timeout: 20000 });
+      const reviewTab = page.locator(`.sf-tab:has-text("${marker}")`).first();
+      await reviewTab.waitFor({ state: 'visible', timeout: 10000 });
+      const reviewOn = async () => ((await reviewTab.getAttribute('class')) ?? '').includes('sf-tab--review');
+      await delay(3000);
+      const dimEarly = await reviewOn();
+      await delay(16000);
+      const dimAfterPoll = await reviewOn();
+      await page.locator('.sf-tab-label', { hasText: marker }).first().click({ force: true });
+      await delay(1200);
+      const dimAfterPin = await reviewOn();
+      return {
+        ok: dimEarly && dimAfterPoll && !dimAfterPin,
+        why: `dim@3s:${dimEarly} dim@19s:${dimAfterPoll} dimAfterTabClick:${dimAfterPin}`,
+      };
+    })();
+    report(
+      'T17 review tab stays dimmed through message loads, list polls and pins on tab click',
+      t17.ok,
+      t17.why,
+    );
+
     if (errors.length) console.log(`page errors: ${errors.join(' | ')}`);
     const failed = isFailed() || errors.length > 0;
     console.log(failed ? '\nCROSS-WINDOW CHECKS FAILED' : '\nALL CROSS-WINDOW CHECKS PASSED');

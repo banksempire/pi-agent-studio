@@ -420,7 +420,7 @@ function syncTabStatuses() {
     if (!s) continue;
     const st = tabStatusOf(s);
     tab.icon = st.icon;
-    tab.tabClass = st.tabClass;
+    tab.tabClass = statusTabClass(tabId, s);
     tab.label = s.title;
   }
   syncDocumentTitle();
@@ -1151,8 +1151,12 @@ export function bindWorkspace(api: WorkspaceApi) {
     () => {
       state.reviewTabId = null;
       for (const def of Object.values(api.tabDefs)) {
-        if (def.tabClass === REVIEW_TAB_CLASS) {
-          def.tabClass = '';
+        const next = (def.tabClass ?? '')
+          .split(/\s+/)
+          .filter((c) => c && c !== REVIEW_TAB_CLASS)
+          .join(' ');
+        if (next !== (def.tabClass ?? '')) {
+          def.tabClass = next;
           def.transient = false;
         }
       }
@@ -1254,22 +1258,28 @@ export async function newChat(): Promise<void> {
 
 const REVIEW_TAB_CLASS = 'sf-tab--review';
 
+function statusTabClass(tabId: string, s: ChatSession | undefined): string {
+  const base = s ? tabStatusOf(s).tabClass : '';
+  return tabId === state.reviewTabId ? (base ? `${base} ${REVIEW_TAB_CLASS}` : REVIEW_TAB_CLASS) : base;
+}
+
 function enterReview(tabId: string) {
   state.reviewTabId = tabId;
   if (ws) {
-    ws.tabDefs[tabId].tabClass = REVIEW_TAB_CLASS;
+    ws.tabDefs[tabId].tabClass = statusTabClass(tabId, findSession(tabId.slice(TAB_PREFIX.length)));
     ws.tabDefs[tabId].transient = true;
   }
 }
 
 function exitReview() {
   if (!state.reviewTabId || !ws) return;
-  const def = ws.tabDefs[state.reviewTabId];
+  const tabId = state.reviewTabId;
+  const def = ws.tabDefs[tabId];
+  state.reviewTabId = null;
   if (def) {
-    def.tabClass = '';
+    def.tabClass = statusTabClass(tabId, findSession(tabId.slice(TAB_PREFIX.length)));
     def.transient = false;
   }
-  state.reviewTabId = null;
   scheduleWindowPersist();
 }
 

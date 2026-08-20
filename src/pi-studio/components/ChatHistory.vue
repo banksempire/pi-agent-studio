@@ -21,9 +21,8 @@ function menuItems(_s: ChatSession): SingleMenuOption[] {
   ];
 }
 
-type RowDialog = { kind: 'rename'; session: ChatSession } | { kind: 'delete'; session: ChatSession };
+type RowDialog = { kind: 'rename'; session: ChatSession };
 const dialog = ref<RowDialog | null>(null);
-const dialogEl = ref<HTMLElement | null>(null);
 const renameEl = ref<HTMLInputElement | null>(null);
 const renameInput = ref('');
 
@@ -31,10 +30,6 @@ function openRename(s: ChatSession) {
   renameInput.value = s.title;
   dialog.value = { kind: 'rename', session: s };
   nextTick(() => renameEl.value?.focus());
-}
-function openDelete(s: ChatSession) {
-  dialog.value = { kind: 'delete', session: s };
-  nextTick(() => dialogEl.value?.focus());
 }
 function closeDialog() {
   dialog.value = null;
@@ -44,12 +39,8 @@ async function confirmDialog() {
   const d = dialog.value;
   if (!d) return;
   closeDialog();
-  if (d.kind === 'rename') {
-    const name = renameInput.value.trim();
-    if (name && name !== d.session.title) await store.renameSession(d.session.id, name);
-  } else {
-    await store.deleteSession(d.session.id);
-  }
+  const name = renameInput.value.trim();
+  if (name && name !== d.session.title) await store.renameSession(d.session.id, name);
 }
 
 function onDialogKey(e: KeyboardEvent) {
@@ -58,7 +49,7 @@ function onDialogKey(e: KeyboardEvent) {
 
 function onMenuSelect(s: ChatSession, item: SingleMenuOption) {
   if (item.id === 'rename') openRename(s);
-  else if (item.id === 'delete') openDelete(s);
+  else if (item.id === 'delete') void store.deleteSession(s.id);
 }
 </script>
 
@@ -102,33 +93,20 @@ function onMenuSelect(s: ChatSession, item: SingleMenuOption) {
     </SingleMenu>
 
     <div v-if="dialog" class="chat-dialog-backdrop" @click.self="closeDialog">
-      <div
-        ref="dialogEl"
-        class="chat-dialog"
-        tabindex="-1"
-        role="dialog"
-        @keydown="onDialogKey"
-      >
-        <div class="chat-dialog-title">{{ dialog.kind === 'rename' ? 'Rename' : 'Delete chat' }}</div>
+      <div class="chat-dialog" tabindex="-1" role="dialog" @keydown="onDialogKey">
+        <div class="chat-dialog-title">Rename</div>
 
-        <template v-if="dialog.kind === 'rename'">
-          <input
-            ref="renameEl"
-            v-model="renameInput"
-            class="chat-dialog-input"
-            placeholder="Session name"
-            @keydown.enter.prevent="confirmDialog"
-          />
-        </template>
-        <div v-else class="chat-dialog-body">
-          Delete “{{ dialog.session.title }}”? This permanently removes the session file.
-        </div>
+        <input
+          ref="renameEl"
+          v-model="renameInput"
+          class="chat-dialog-input"
+          placeholder="Session name"
+          @keydown.enter.prevent="confirmDialog"
+        />
 
         <div class="chat-dialog-actions">
           <button class="chat-dialog-btn" @click="closeDialog">Cancel</button>
-          <button class="chat-dialog-btn chat-dialog-btn--danger" @click="confirmDialog">
-            {{ dialog.kind === 'rename' ? 'Save' : 'Delete' }}
-          </button>
+          <button class="chat-dialog-btn chat-dialog-btn--danger" @click="confirmDialog">Save</button>
         </div>
       </div>
     </div>

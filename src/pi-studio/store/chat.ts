@@ -874,6 +874,8 @@ function handleEvent(ev: any) {
 
 let es: EventSource | null = null;
 let esClientId: string | null = null;
+let esReconnectTimer: number | null = null;
+let hbTimer: number | null = null;
 let lastViewFiles = new Set<string>();
 let pingLostStreak = 0;
 const HEARTBEAT_INTERVAL_MS = 5000;
@@ -979,6 +981,23 @@ function heartbeatTick() {
     .then((j) => {
       window.clearTimeout(timer);
       if (timedOut) return;
+      if (!j || j.ok === false) {
+        pingLostStreak += 1;
+        state.backendLost = true;
+        state.backendPing = null;
+        pushPingSample(null);
+        if (j && j.ok === false) {
+          if (es) {
+            try {
+              es.close();
+            } catch {}
+            es = null;
+          }
+          esClientId = null;
+          scheduleEsReconnect();
+        }
+        return;
+      }
       pingLostStreak = 0;
       state.backendLost = false;
       state.backendPing = Math.round(performance.now() - t0);
@@ -1001,6 +1020,14 @@ function heartbeatTick() {
     });
 }
 
+function scheduleEsReconnect() {
+  if (esReconnectTimer !== null || es !== null) return;
+  esReconnectTimer = window.setTimeout(() => {
+    esReconnectTimer = null;
+    if (es === null) connectEvents();
+  }, 2000);
+}
+
 function connectEvents() {
   if (es) return;
   es = new EventSource('/api/events');
@@ -1020,6 +1047,13 @@ function connectEvents() {
   es.onerror = () => {
     state.backend = 'offline';
     esClientId = null;
+    if (es !== null && es.readyState === EventSource.CLOSED) {
+      try {
+        es.close();
+      } catch {}
+      es = null;
+    }
+    scheduleEsReconnect();
   };
   es.onmessage = (e) => {
     try {
@@ -1028,8 +1062,11 @@ function connectEvents() {
   };
 
   heartbeatTick();
-  const hbTimer = window.setInterval(heartbeatTick, HEARTBEAT_INTERVAL_MS);
-  window.addEventListener('beforeunload', () => window.clearInterval(hbTimer));
+  if (hbTimer === null) {
+    const timer = window.setInterval(heartbeatTick, HEARTBEAT_INTERVAL_MS);
+    hbTimer = timer;
+    window.addEventListener('beforeunload', () => window.clearInterval(timer));
+  }
 }
 
 function syncAllTails() {
@@ -1569,11 +1606,12 @@ export async function syncTail(sessionId: string) {
       break;
     }
   }
-  if (!lastEntryId) return;
+  if (!lastEntryId && s.messages.length === 0) return;
+  const query = lastEntryId
+    ? `file=${encodeURIComponent(s.file)}&after=${encodeURIComponent(lastEntryId)}`
+    : `file=${encodeURIComponent(s.file)}&limit=${String(PAGE_SIZE)}`;
   try {
-    const data = await api<any>(
-      `/api/sessions/messages?file=${encodeURIComponent(s.file)}&after=${encodeURIComponent(lastEntryId)}`,
-    );
+    const data = await api<any>(`/api/sessions/messages?${query}`);
     const incoming = (data.messages ?? []) as DisplayMessage[];
     if (incoming.length > 0) {
       const seenId = new Set(s.messages.map((m) => m.id));
@@ -1593,6 +1631,10 @@ export async function syncTail(sessionId: string) {
         fresh.push(m);
       }
       if (fresh.length > 0) s.messages = [...s.messages, ...fresh];
+    }
+    if (!lastEntryId) {
+      s.oldestId = data.oldestId ?? s.oldestId;
+      s.hasMoreOlder = !!data.hasMore;
     }
     applySessionInfo(s, data);
   } catch {}

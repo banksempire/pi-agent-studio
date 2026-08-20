@@ -143,6 +143,35 @@ function clampScroll(max: number, v: number): number {
   return zeroIsBottom ? Math.max(-max, Math.min(0, v)) : Math.max(0, Math.min(max, v));
 }
 
+let scrollAnchor: { sid: string; row: HTMLElement; top: number } | null = null;
+
+function captureAnchor() {
+  scrollAnchor = null;
+  const el = listEl.value;
+  if (!el) return;
+  const elTop = el.getBoundingClientRect().top;
+  const rows = el.querySelectorAll<HTMLElement>('.chat-group, .chat-load-older');
+  for (const row of rows) {
+    const r = row.getBoundingClientRect();
+    if (r.bottom > elTop + 1) {
+      scrollAnchor = { sid: props.sessionId, row, top: r.top - elTop };
+      return;
+    }
+  }
+}
+
+function applyAnchor() {
+  const a = scrollAnchor;
+  scrollAnchor = null;
+  const el = listEl.value;
+  if (!el || !a || a.sid !== props.sessionId || !a.row.isConnected) return;
+  const { max, distFromTop } = posInfo(el);
+  if (distFromTop > max - STICKY_ZONE) return;
+  const delta = a.row.getBoundingClientRect().top - el.getBoundingClientRect().top - a.top;
+  if (!delta) return;
+  el.scrollTop = clampScroll(max, el.scrollTop + delta);
+}
+
 let sepJumpAt = 0;
 
 let touchDownCount = 0;
@@ -187,7 +216,12 @@ async function loadOlder() {
 }
 
 const keepBottom = () => {
-  if (sticky()) nextTick(scrollToBottom);
+  if (sticky()) {
+    nextTick(scrollToBottom);
+    return;
+  }
+  captureAnchor();
+  nextTick(applyAnchor);
 };
 watch(() => {
   const s = session.value;

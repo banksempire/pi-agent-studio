@@ -978,6 +978,10 @@ async function relayNestEvents() {
             scheduleTreePush();
           } catch {}
           await sessionStates.probeNest(() => client.listStates(), resolveFileOutcome);
+          try {
+            const { states: nestStates } = await client.listStates();
+            await sessionStates.reconcileNest(nestStates, resolveFileOutcome, FILE_STALE_RUN_MS);
+          } catch {}
         })();
       });
     } catch {}
@@ -1097,9 +1101,9 @@ const server = createServer(async (req, res) => {
           if (f.endsWith('.jsonl')) files.push(path.join(dir, f));
         }
       }
-      const states = new Map(
-        (await client.listStates().catch(() => ({ states: [] }))).states.map((s) => [s.agentId, s]),
-      );
+      const nestStates = (await client.listStates().catch(() => ({ states: [] }))).states ?? [];
+      await sessionStates.reconcileNest(nestStates, resolveFileOutcome, FILE_STALE_RUN_MS);
+      const states = new Map(nestStates.map((s) => [s.agentId, s]));
       await ensureModelCatalog();
       const sessions = (await Promise.all(files.map((f) => analyzeSession(f, { states })))).filter(Boolean);
       sessions.sort((a, b) => b.modified - a.modified);

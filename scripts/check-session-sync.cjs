@@ -537,6 +537,60 @@ async function stateOfSession(port, file) {
   })();
   report('S10 runs owned outside pi-nest (TUI-style file writes) are tracked working → unread', t.ok, t.why);
 
+  t = await (async () => {
+    const F_MULTI = writeSessionFile('sync-multi', {});
+    const r1 = await postJson(gatewayPort, '/api/chat', { file: F_OK, message: 'run 1' });
+    const r2 = await postJson(gatewayPort, '/api/chat', { file: F_MULTI, message: 'run 2' });
+    stub.setLiveStates([
+      { agentId: F_OK, status: 'running' },
+      { agentId: F_MULTI, status: 'running' },
+    ]);
+    await stub.writeEvent('session_status', F_OK, { status: 'running' });
+    await stub.writeEvent('session_status', F_MULTI, { status: 'running' });
+    const E = sseClient(gatewayPort);
+    await waitReady(E);
+    await delay(500);
+    const s1 = await stateOfSession(gatewayPort, F_OK);
+    const s2 = await stateOfSession(gatewayPort, F_MULTI);
+    const list = await getJson(gatewayPort, '/api/sessions');
+    const runningBoth = (list.json?.sessions ?? []).filter(
+      (x) => (x.file === F_OK || x.file === F_MULTI) && x.running,
+    ).length;
+    E.destroy();
+    stub.setLiveStates([]);
+    return {
+      ok: r1.status === 200 && r2.status === 200 && s1 === 'working' && s2 === 'working' && runningBoth === 2,
+      why: `two concurrent web-UI runs: ${s1}/${s2} running-flag count:${runningBoth}`,
+    };
+  })();
+  report('S11 two concurrent web-UI runs both report working', t.ok, t.why);
+
+  t = await (async () => {
+    const F_R1 = writeSessionFile('sync-recon1', {});
+    const F_R2 = writeSessionFile('sync-recon2', {});
+    stub.setLiveStates([
+      { agentId: F_R1, status: 'running' },
+      { agentId: F_R2, status: 'running' },
+    ]);
+    const E = sseClient(gatewayPort);
+    await waitReady(E);
+    const snap = await waitFor(E, (ev) => ev.type === 'session_states', 'snapshot', 3000);
+    const preListed = (snap.states ?? []).filter((x) => x.file === F_R1 || x.file === F_R2).length;
+    const after1 = await stateOfSession(gatewayPort, F_R1);
+    const after2 = await stateOfSession(gatewayPort, F_R2);
+    await delay(500);
+    const evs = E.events.filter(
+      (e) => e.type === 'session_state' && (e.file === F_R1 || e.file === F_R2) && e.state === 'working',
+    );
+    E.destroy();
+    stub.setLiveStates([]);
+    return {
+      ok: preListed === 0 && after1 === 'working' && after2 === 'working' && evs.length >= 2,
+      why: `nest-running, no registry entry: snapshot pre-listed:${preListed} → poll reconciled to ${after1}/${after2} (events:${evs.length})`,
+    };
+  })();
+  report('S12 /api/sessions poll reconciles nest-running sessions missing from the registry', t.ok, t.why);
+
   A.destroy();
   gateway.kill('SIGTERM');
   await new Promise((resolve) => stub.server.tryShutdown(resolve));

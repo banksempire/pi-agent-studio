@@ -218,6 +218,33 @@ export function createSessionStates({
     if (e.state === 'open') setState(file, e, 'close');
   }
 
+  async function reconcileNest(nestStates, resolveOutcome, quietMs) {
+    const running = new Set((nestStates ?? []).filter((s) => s?.status === 'running').map((s) => s.agentId));
+    for (const agentId of running) noteAgentRunning(agentId);
+    const t = now();
+    const drifted = [];
+    for (const [file, e] of entries) {
+      if (e.state !== 'working' || running.has(file) || e.pendingProbe) continue;
+      if (t - Math.max(e.runStartedAt, e.lastGrowAt) <= quietMs) continue;
+      drifted.push(file);
+    }
+    for (const file of drifted) {
+      const e = entries.get(file);
+      if (!e) continue;
+      const outcome = await resolveOutcome(file);
+      const cur = entries.get(file);
+      if (!cur || cur !== e || cur.state !== 'working') continue;
+      if (outcome === 'gone') {
+        entries.delete(file);
+        sync(file);
+      } else if (outcome === 'error') {
+        setState(file, cur, 'error', cur.error || 'run ended unexpectedly');
+      } else {
+        setState(file, cur, 'unread');
+      }
+    }
+  }
+
   async function probeNest(listStates, resolveOutcome) {
     let res;
     try {
@@ -266,6 +293,7 @@ export function createSessionStates({
     noteFileTerminal,
     sweepStaleFileRuns,
     probeNest,
+    reconcileNest,
     remove,
     canDelete: (file) => (entries.get(file)?.views ?? 0) === 0,
     stateOf: (file) => entries.get(file)?.state ?? 'close',

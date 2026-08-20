@@ -345,6 +345,44 @@ async function main() {
   })();
   report('T17 sweep settles a run with no file updates for the stall window', t17.ok, t17.why);
 
+  const t18 = await (async () => {
+    const h = freshHarness(mod, { files: [F1, F2] });
+    const s = h.make();
+    await s.reconcileNest([{ agentId: F1, status: 'running' }], async () => 'ok', 30 * 60_000);
+    const f1 = s.stateOf(F1);
+    s.notePrompt(F2);
+    await s.reconcileNest([], async () => 'unread', 30 * 60_000);
+    const f2 = s.stateOf(F2);
+    return {
+      ok: f1 === 'working' && f2 === 'working',
+      why: `nest-running unknown entry:${f1} fresh unlisted run untouched:${f2}`,
+    };
+  })();
+  report('T18 reconcile: nest-running agents become working; fresh unlisted runs untouched', t18.ok, t18.why);
+
+  const t19 = await (async () => {
+    const h = freshHarness(mod, { files: [F1] });
+    let t = 1_000_000;
+    const s = h.make(() => t);
+    s.notePrompt(F1);
+    t += 31 * 60_000;
+    let resolvedWith = null;
+    await s.reconcileNest(
+      [],
+      async (f) => {
+        resolvedWith = f;
+        return 'ok';
+      },
+      30 * 60_000,
+    );
+    const settled = s.stateOf(F1);
+    return {
+      ok: settled === 'unread' && resolvedWith === F1,
+      why: `quiet drifted run resolved:${settled} via ${resolvedWith}`,
+    };
+  })();
+  report('T19 reconcile settles quiet working runs missing from nest', t19.ok, t19.why);
+
   console.log(isFailed() ? 'session-states checks FAILED' : 'session-states checks passed');
   process.exitCode = isFailed() ? 1 : 0;
 }

@@ -10,8 +10,6 @@ import {
 
 const store = useChatStore();
 
-const FILTERS: SessionSyncState[] = ['working', 'unread', 'error', 'open'];
-
 const list = computed(() =>
   store.syncedSessions().filter((s) => store.stateFilter[store.syncStateOf(s)?.state ?? 'open']),
 );
@@ -44,21 +42,9 @@ function errorOf(s: ChatSession): string {
 
 <template>
   <div class="chat-list">
-    <div class="chat-state-filter">
-      <button
-        v-for="f in FILTERS"
-        :key="f"
-        class="chat-state-chip"
-        :class="['chat-state-chip--' + f, { 'chat-state-chip--off': !store.stateFilter[f] }]"
-        :title="(store.stateFilter[f] ? 'Show ' : 'Hide ') + f + ' sessions'"
-        @click="store.toggleStateFilter(f)"
-      >
-        {{ f }}
-      </button>
-    </div>
     <div v-if="list.length === 0" class="chat-list-empty">
-      No sessions in this view. Sessions that are working, unread, in error, or open
-      elsewhere appear here — toggle the filters above.
+      No sessions in this view. Sessions that are working, unread, in error, or open elsewhere
+      appear here — adjust the status filter (▾ on the title bar).
     </div>
     <div
       v-for="s in list"

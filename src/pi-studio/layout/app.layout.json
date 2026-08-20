@@ -94,6 +94,13 @@
                 "label": "Sessions",
                 "height": "variable",
                 "minHeight": 80,
+                "utilities": [
+                  {
+                    "id": "session-filter",
+                    "icon": "▾",
+                    "tooltip": "Filter sessions by status"
+                  }
+                ],
                 "components": [
                   {
                     "type": "component",

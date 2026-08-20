@@ -95,7 +95,7 @@ export interface SessionStateInfo {
 
 export type StateFilter = Record<SessionSyncState, boolean>;
 
-const SYNC_STATES: SessionSyncState[] = ['working', 'unread', 'error', 'open'];
+export const SYNC_STATES: SessionSyncState[] = ['working', 'unread', 'error', 'open'];
 
 export type PingSample = { t: number; ms: number | null };
 

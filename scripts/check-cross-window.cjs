@@ -293,13 +293,20 @@ function makeReporter() {
       const cItem = sessionsList().locator('.chat-list-item:has-text("XWin-C:")');
       const shown = (await cItem.count()) === 1;
       const badge = (await cItem.locator('.chat-list-badge').textContent())?.trim();
-      const chip = sessionsList().locator('.chat-state-chip--open');
-      await chip.click({ force: true });
+      const sessionsSub = page.locator('.sf-subsection:has([data-sub-body="sessions"])');
+      await sessionsSub.locator('.sf-subsection-header').hover();
+      await delay(100);
+      await sessionsSub.locator('.sf-subsection-util[title="Filter sessions by status"]').click();
+      await delay(300);
+      const openRow = page.locator('.sf-menu-pop .sf-menu-row:has-text("open")');
+      await openRow.click();
       await delay(400);
       const hiddenCount = await sessionsList().locator('.chat-list-item').count();
-      await chip.click({ force: true });
+      await openRow.click();
       await delay(400);
       const backCount = await sessionsList().locator('.chat-list-item').count();
+      await page.keyboard.press('Escape');
+      await delay(200);
       const cIdx = await tabIndex('XWin-C:');
       await page.locator('.sf-tab-label').nth(cIdx).click({ button: 'middle' });
       let gone = false;
@@ -316,7 +323,7 @@ function makeReporter() {
       };
     })();
     report(
-      'T16 sessions sub-section shows synced open state + filter chips + refcount close',
+      'T16 sessions sub-section shows synced open state + status filter menu + refcount close',
       t16.ok,
       t16.why,
     );

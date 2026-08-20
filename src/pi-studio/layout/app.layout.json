@@ -97,7 +97,7 @@
                 "utilities": [
                   {
                     "id": "session-filter",
-                    "icon": "▾",
+                    "icon": "filter",
                     "tooltip": "Filter sessions by status"
                   }
                 ],

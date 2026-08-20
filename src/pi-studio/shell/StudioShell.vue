@@ -2,7 +2,7 @@
 import Framework, { type FrameworkAction } from '@sf/Framework.vue';
 import { registerUtilityMenu } from '@sf/registry';
 import { layout } from '../layout/loadLayout';
-import { SYNC_STATES, type SessionSyncState, useChatStore } from '../store/chat';
+import { type SessionSyncState, SYNC_STATES, useChatStore } from '../store/chat';
 
 const store = useChatStore();
 

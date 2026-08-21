@@ -76,10 +76,22 @@ server-side in vite).
 ## 4. Instance model — one git worktree pair = one instance
 
 ```
-~/wt/test/                          ← pair root (instance home)
-├── pi-agent-studio/     worktree of pi-agent-studio  (branch: test)
-└── StudioFramework/     worktree of StudioFramework  (branch: main|test)
+<workdir>/.branch/<branch>/                ← branch folder (pair root, instance home)
+├── pi-agent-studio/     worktree of pi-agent-studio  (branch: <branch>)
+├── StudioFramework/     worktree of StudioFramework  (branch: <branch>|main)
+└── .studio/             EVERYTHING the branch's agents/services create —
+    ├── sessions/          pi agent session files (isolated per branch)
+    ├── studio-session-states.json
+    └── state/             pidfiles, service logs, lock (instance runtime state)
 ```
+
+- Default `<workdir>` is the main pair root (e.g. `/workspace/sf`), so branches
+  live at `/workspace/sf/.branch/<branch>/` — on the same filesystem as the
+  repos by construction (`node_modules` can be hardlink-copied, never a full
+  install). `PI_STUDIO_WORKTREES` overrides the root if you want it elsewhere.
+- **One branch = one folder = one instance.** Instance id == branch name;
+  `worktree rm <id> --purge` deletes the whole folder — worktrees, sessions
+  and runtime state included — leaving nothing behind on the machine.
 
 - **Tiers live in git**, not the CLI: `main` branch = stable = the product
   checkout at `/workspace/sf` (instance `main`, implicit); `test` branch = a
@@ -101,22 +113,18 @@ Instance record layout:
 // ~/.config/pi-agent-studio/instances/test.json
 {
   "id": "test",
-  "pairRoot": "/home/user/wt/test",
+  "pairRoot": "/workspace/sf/.branch/test",
   "branch": "test",                  // recorded at init; warn on mismatch
   "webPort": 7512,
   "host": "0.0.0.0",                 // web bind host
-  "sessionsDir": "/home/user/wt/test/.studio/sessions"
+  "sessionsDir": "/workspace/sf/.branch/test/.studio/sessions"
 }
 ```
 
-Runtime state (per instance):
-
-```
-~/.local/state/pi-agent-studio/instances/<id>/
-  pids/{nest,gateway,web}.json       → { pid, pgid, port, startedAt, argv }
-  logs/{nest,gateway,web}.log[.1…]
-  lock                                → single-writer lock for mutating commands
-```
+Runtime state: `main` keeps `~/.local/state/pi-agent-studio/instances/main/`
+(pidfiles, logs, lock); every other instance keeps it inside its branch
+folder at `<pairRoot>/.studio/state/` — so a branch folder is fully
+self-contained and purge-safe.
 
 ## 5. Sessions isolation
 
@@ -194,7 +202,7 @@ studio [-i <instance>] <command> …        # auto-detects instance from CWD's p
   init                        inside a pair root / repo worktree: register instance,
                               allocate web port (--port auto|N), create .studio/ + gitignore,
                               verify sibling StudioFramework, npm install if node_modules missing
-  worktree add <id> [--from <branch>]   git worktree add BOTH repos under ~/wt/<id>/, then init
+  worktree add <id> [--from <branch>]   git worktree add BOTH repos under <workdir>/.branch/<id>/, then init
   worktree rm <id> [--purge]            down (nest guard) + git worktree remove + rm instance;
                                         --purge deletes .studio/sessions too
   instance ls | show | set | rm
@@ -277,7 +285,7 @@ there is no auto-relocate.
 | existing `PI_NEST_HOST/PORT` | nest, gateway (client.mjs ctor) | already supported; CLI sets per stack |
 | existing `PI_STUDIO_PORT/SESSIONS/STATES_PATH/CWD` | gateway | already supported |
 | existing `PI_API_PROXY` | vite.config.ts proxy target | CLI sets at web spawn |
-| **new** `PI_STUDIO_WORKTREES` | CLI only | worktree pair root (`~/wt` default; keep it on the same filesystem as the repos so `node_modules` can be hardlink-copied) |
+| **new** `PI_STUDIO_WORKTREES` | CLI only | branch-folder root (default `<main pair root>/.branch`; keep it on the same filesystem as the repos so `node_modules` can be hardlink-copied) |
 | **new** `PI_STUDIO_WEB_HOST` / `PI_STUDIO_WEB_PORT` | CLI only | web bind host / port fallbacks below args and above instance config |
 
 Container usage: each service reads `ENV ?? default` directly — the CLI is not

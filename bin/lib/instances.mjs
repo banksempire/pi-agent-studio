@@ -17,7 +17,10 @@ export function stateRoot() {
 }
 
 export function worktreesRoot() {
-  return process.env.PI_STUDIO_WORKTREES ?? path.join(os.homedir(), 'wt');
+  if (process.env.PI_STUDIO_WORKTREES) return process.env.PI_STUDIO_WORKTREES;
+  const main = loadInstance('main');
+  const pairRoot = main?.pairRoot ?? path.dirname(PRODUCT_ROOT);
+  return path.join(pairRoot, '.branch');
 }
 
 export function instancesDir() {
@@ -25,6 +28,9 @@ export function instancesDir() {
 }
 
 export function instanceStateDir(id) {
+  if (id === 'main') return path.join(stateRoot(), 'instances', 'main');
+  const inst = loadInstance(id);
+  if (inst?.pairRoot) return path.join(inst.pairRoot, '.studio', 'state');
   return path.join(stateRoot(), 'instances', id);
 }
 

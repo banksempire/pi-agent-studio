@@ -72,7 +72,7 @@ function sh(cmd, args, opts = {}) {
 }
 
 function pidfile(service) {
-  const file = path.join(STATE, 'instances', ID, 'pids', `${service}.json`);
+  const file = path.join(PAIR, '.studio', 'state', 'pids', `${service}.json`);
   return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
 }
 
@@ -146,6 +146,13 @@ async function main() {
 
     const health = await getJson(gwPort, '/api/health');
     report('gateway healthy and wired to its nest', !!health?.ok && health?.nest === true);
+    report(
+      'all branch state lives in the branch folder',
+      fs.existsSync(path.join(PAIR, '.studio', 'state', 'pids', 'nest.json')) &&
+        fs.existsSync(path.join(PAIR, '.studio', 'state', 'logs', 'nest.log')),
+      '',
+    );
+    report('nothing leaks into the machine state dir', !fs.existsSync(path.join(STATE, 'instances', ID)), '');
 
     const chat = await getJson(gwPort, '/api/new-chat', 'POST', {});
     report(

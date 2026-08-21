@@ -8,12 +8,18 @@ export const SF_ROOT = path.join(path.dirname(PRODUCT_ROOT), 'StudioFramework');
 export const RESERVED_PORTS = [7492, 7493, 7494, 7495];
 export const SERVICE_NAMES = ['nest', 'gateway', 'web'];
 
+export function mainPairRoot() {
+  return path.dirname(PRODUCT_ROOT);
+}
+
 export function configDir() {
-  return process.env.PI_STUDIO_CONFIG_DIR ?? path.join(os.homedir(), '.config', 'pi-agent-studio');
+  if (process.env.PI_STUDIO_CONFIG_DIR) return process.env.PI_STUDIO_CONFIG_DIR;
+  return path.join(mainPairRoot(), '.studio', 'config');
 }
 
 export function stateRoot() {
-  return process.env.PI_STUDIO_STATE_DIR ?? path.join(os.homedir(), '.local', 'state', 'pi-agent-studio');
+  if (process.env.PI_STUDIO_STATE_DIR) return process.env.PI_STUDIO_STATE_DIR;
+  return path.join(mainPairRoot(), '.studio', 'state');
 }
 
 export function worktreesRoot() {
@@ -27,8 +33,41 @@ export function instancesDir() {
   return path.join(configDir(), 'instances');
 }
 
+let configMigrated = false;
+function maybeMigrateConfig() {
+  if (configMigrated) return;
+  configMigrated = true;
+  if (process.env.PI_STUDIO_CONFIG_DIR) return;
+  const legacy = path.join(os.homedir(), '.config', 'pi-agent-studio', 'instances');
+  const target = instancesDir();
+  try {
+    if (!fs.existsSync(legacy) || fs.existsSync(target)) return;
+    fs.mkdirSync(target, { recursive: true });
+    for (const f of fs.readdirSync(legacy)) {
+      if (f.endsWith('.json')) fs.cpSync(path.join(legacy, f), path.join(target, f));
+    }
+  } catch {}
+}
+
+let stateMigrated = false;
+function maybeMigrateState() {
+  if (stateMigrated) return;
+  stateMigrated = true;
+  if (process.env.PI_STUDIO_STATE_DIR) return;
+  const legacy = path.join(os.homedir(), '.local', 'state', 'pi-agent-studio');
+  const target = stateRoot();
+  try {
+    if (!fs.existsSync(legacy) || fs.existsSync(target)) return;
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.cpSync(legacy, target, { recursive: true });
+  } catch {}
+}
+
 export function instanceStateDir(id) {
-  if (id === 'main') return path.join(stateRoot(), 'instances', 'main');
+  if (id === 'main') {
+    maybeMigrateState();
+    return path.join(stateRoot(), 'instances', 'main');
+  }
   const inst = loadInstance(id);
   if (inst?.pairRoot) return path.join(inst.pairRoot, '.studio', 'state');
   return path.join(stateRoot(), 'instances', id);
@@ -69,6 +108,7 @@ export function validId(id) {
 }
 
 export function listInstances() {
+  maybeMigrateConfig();
   const dir = instancesDir();
   if (!fs.existsSync(dir)) return [];
   return fs
@@ -80,6 +120,7 @@ export function listInstances() {
 }
 
 export function loadInstance(id) {
+  maybeMigrateConfig();
   if (!validId(id)) return null;
   const file = path.join(instancesDir(), `${id}.json`);
   if (!fs.existsSync(file)) return null;

@@ -110,7 +110,7 @@ server-side in vite).
 Instance record layout:
 
 ```jsonc
-// ~/.config/pi-agent-studio/instances/test.json
+// <workdir>/.studio/config/instances/test.json   (restart-persistent)
 {
   "id": "test",
   "pairRoot": "/workspace/sf/.branch/test",
@@ -121,10 +121,17 @@ Instance record layout:
 }
 ```
 
-Runtime state: `main` keeps `~/.local/state/pi-agent-studio/instances/main/`
+Runtime state: `main` keeps `<workdir>/.studio/state/instances/main/`
 (pidfiles, logs, lock); every other instance keeps it inside its branch
 folder at `<pairRoot>/.studio/state/` — so a branch folder is fully
-self-contained and purge-safe.
+self-contained and purge-safe. Only `/workspace/sf` and the pi agent state
+folder (`~/.pi`) survive container restarts, so **every persistent store
+lives inside the sf folder**: the instance registry at
+`<workdir>/.studio/config/`, main's runtime state at `<workdir>/.studio/state/`,
+branch folders under `<workdir>/.branch/`. Legacy `~/.config/…` and
+`~/.local/state/…` records are migrated into `.studio/` on first use
+(one-time; `PI_STUDIO_CONFIG_DIR` / `PI_STUDIO_STATE_DIR` still override,
+e.g. for the hermetic check suite).
 
 ## 5. Sessions isolation
 
@@ -157,7 +164,7 @@ Every tunable resolves through four layers, first hit wins:
 |:--|:--|:--|
 | 1. CLI args | `studio up --port web=7601 --sessions /tmp/s` | Ad-hoc override; never persisted |
 | 2. Environment | `PI_STUDIO_PORT`, `PI_NEST_PORT`, `PI_NEST_SESSIONS`, … | Shell / container |
-| 3. Instance config | `~/.config/pi-agent-studio/instances/<id>.json` | `studio init` / `instance set` |
+| 3. Instance config | `<workdir>/.studio/config/instances/<id>.json` | `studio init` / `instance set` |
 | 4. Built-in defaults | see §10 table | The services themselves |
 
 - The **services themselves** implement layers 2→4 (ENV ?? default). This
@@ -318,8 +325,10 @@ required in a container; pinning ENV there yields deterministic ports.
 - Zero new runtime deps: `node:child_process` + `/proc` + the repo's own
   `src/pi-nest/src/client.mjs` (which gained a `close()` so callers can release
   the gRPC handle).
-- State: `~/.config/pi-agent-studio/instances/*.json` (configs) and
-  `~/.local/state/pi-agent-studio/instances/<id>/` (pidfiles, logs, lock) —
+- State: `<workdir>/.studio/config/instances/*.json` (registry) and
+  `<workdir>/.studio/state/instances/main/` for main's pidfiles/logs/lock
+  (branch instances keep state in their branch folder) — all inside the sf
+  folder so they survive container restarts;
   both relocatable via `PI_STUDIO_CONFIG_DIR` / `PI_STUDIO_STATE_DIR` for tests
   and containers.
 - Regression: `npm run check:cli` (`scripts/check-cli.cjs`) — 21 assertions

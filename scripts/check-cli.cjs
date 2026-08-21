@@ -106,6 +106,36 @@ async function main() {
   const env = { PI_NEST_PORT: String(nestPort), PI_STUDIO_PORT: String(gwPort) };
 
   fs.mkdirSync(WT, { recursive: true });
+
+  const mainPair = path.dirname(PRODUCT_ROOT);
+  const envProbe = spawnSync(
+    'node',
+    [
+      '--input-type=module',
+      `-e`,
+      `import { configDir, stateRoot } from ${JSON.stringify(
+        `file://${path.join(PRODUCT_ROOT, 'bin', 'lib', 'instances.mjs')}`,
+      )}; console.log(configDir()); console.log(stateRoot());`,
+    ],
+    {
+      encoding: 'utf8',
+      env: (() => {
+        const e = { ...process.env };
+        delete e.PI_STUDIO_CONFIG_DIR;
+        delete e.PI_STUDIO_STATE_DIR;
+        return e;
+      })(),
+    },
+  );
+  const [defConfig, defState] = (envProbe.stdout ?? '').split('\n');
+  report(
+    'default registry/state live under <workdir>/.studio (restart-persistent)',
+    envProbe.status === 0 &&
+      defConfig === path.join(mainPair, '.studio', 'config') &&
+      defState === path.join(mainPair, '.studio', 'state'),
+    `${defConfig ?? envProbe.stderr?.split('\n')[0] ?? 'no output'}`,
+  );
+
   sh('git', ['worktree', 'add', '--detach', path.join(PAIR, 'pi-agent-studio'), 'HEAD'], {
     cwd: PRODUCT_ROOT,
   });

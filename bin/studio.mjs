@@ -41,7 +41,7 @@ commands:
   agents                    live agents on this instance's nest
   abort <agent-id>          abort one agent
   doctor [--fix]            diagnostics; --fix clears stale pidfiles + orphans
-  clean [--logs] [--snapshots] [--pidfiles] [--instances]
+  clean [--snapshots] [--pidfiles] [--instances]
   open                      open this instance's web URL
   init                      register the pair root in cwd as an instance
   worktree add <id> [--from <ref>] [--new]   git worktree pair + init
@@ -222,7 +222,6 @@ async function main() {
     case 'clean': {
       const { flags } = parseRest(args, []);
       await manage.cmdClean(out, {
-        logs: !!flags.logs,
         snapshots: !!flags.snapshots,
         pidfiles: !!flags.pidfiles,
         instances: !!flags.instances,

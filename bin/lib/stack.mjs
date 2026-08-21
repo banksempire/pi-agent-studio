@@ -32,7 +32,7 @@ import {
   withLock,
   writePidfile,
 } from './proc.mjs';
-import { errSym, formatBytes, formatDuration, okSym, paint, warnSym } from './ui.mjs';
+import { errSym, formatBytes, formatDuration, okSym, paint, printTable, warnSym } from './ui.mjs';
 
 const GRACE = { web: 5000, gateway: 8000, nest: 10000 };
 
@@ -102,10 +102,13 @@ export function httpJson(port, pathname = '/api/health', timeoutMs = 2500) {
   });
 }
 
-async function waitUntil(fn, timeoutMs, label) {
+async function waitUntil(fn, timeoutMs, label, pid = null) {
   const deadline = Date.now() + timeoutMs;
   let lastErr = null;
   while (Date.now() < deadline) {
+    if (pid != null && !alive(pid)) {
+      throw new CliError(`${label} exited during startup`, 3);
+    }
     try {
       const r = await fn();
       if (r) return r;
@@ -347,7 +350,7 @@ async function ensureNest(out, instance, { sessionsDir, used, ports, spawned }) 
     port,
     message: `${paint('cyan', `${instance.id}/nest`)}  starting pid ${pid} :${port}`,
   });
-  await waitUntil(async () => (await pingNest(port, 1500)).ok, 10000, `${instance.id}/nest`);
+  await waitUntil(async () => (await pingNest(port, 1500)).ok, 10000, `${instance.id}/nest`, pid);
   ports.nest = port;
   out.event({
     event: 'up',
@@ -396,25 +399,24 @@ async function ensureGateway(out, instance, { sessionsDir, used, ports, spawned 
     port,
     message: `${paint('cyan', `${instance.id}/gateway`)}  starting pid ${pid} :${port}`,
   });
-  const deadline = Date.now() + 10000;
-  while (Date.now() < deadline) {
-    const r = await httpJson(port, '/api/health', 1500);
-    if (r.status === 200 && r.json?.ok && r.json.nest) {
-      ports.gateway = port;
-      out.event({
-        event: 'up',
-        instance: instance.id,
-        service: 'gateway',
-        pid,
-        port,
-        message: `${paint('cyan', `${instance.id}/gateway`)}  ${okSym} /api/health ok, nest:true :${port}`,
-      });
-      return;
-    }
-    if (!alive(pid)) break;
-    await delay(250);
-  }
-  throw new CliError(`${instance.id}/gateway not healthy after 10000ms`, 3);
+  await waitUntil(
+    async () => {
+      const h = await serviceHealth('gateway', port);
+      return h.ok && h.nest;
+    },
+    10000,
+    `${instance.id}/gateway`,
+    pid,
+  );
+  ports.gateway = port;
+  out.event({
+    event: 'up',
+    instance: instance.id,
+    service: 'gateway',
+    pid,
+    port,
+    message: `${paint('cyan', `${instance.id}/gateway`)}  ${okSym} /api/health ok, nest:true :${port}`,
+  });
 }
 
 async function ensureWeb(out, instance, { used, ports, spawned, opts }) {
@@ -428,6 +430,21 @@ async function ensureWeb(out, instance, { used, ports, spawned, opts }) {
   const holderPid = pidHoldingPort(listenPortsByPid(), port);
   if (holderPid) {
     throw new CliError(`web port ${port} is held by foreign pid ${holderPid}`, 4);
+  }
+  if (!ports.gateway) {
+    const rec = readPidfile(pidfilePath(instance.id, 'gateway'));
+    const gwPort = Number(rec?.port ?? process.env.PI_STUDIO_PORT ?? instance.gatewayPort ?? 0);
+    if (!gwPort) {
+      throw new CliError(
+        `gateway port unknown for ${instance.id} — start the pair first: studio up gateway`,
+        2,
+      );
+    }
+    const gwHealth = await serviceHealth('gateway', gwPort);
+    if (!gwHealth.ok) {
+      throw new CliError(`gateway not healthy on :${gwPort} — start the pair first: studio up gateway`, 3);
+    }
+    ports.gateway = gwPort;
   }
   const host = resolveWebHost(instance, opts);
   const repo = instanceRepoRoot(instance);
@@ -458,7 +475,7 @@ async function ensureWeb(out, instance, { used, ports, spawned, opts }) {
     port,
     message: `${paint('cyan', `${instance.id}/web`)}  starting pid ${pid} :${port}`,
   });
-  await waitUntil(async () => (await serviceHealth('web', port)).ok, 15000, `${instance.id}/web`);
+  await waitUntil(async () => (await serviceHealth('web', port)).ok, 15000, `${instance.id}/web`, pid);
   ports.web = port;
   out.event({
     event: 'up',
@@ -508,22 +525,6 @@ export async function cmdUp(out, instance, opts = {}) {
       throw new CliError(`unknown service '${opts.service}' (nest | gateway | web)`, 2);
     }
     const only = opts.service ?? null;
-    const nestRec = readPidfile(pidfilePath(instance.id, 'nest'));
-    const gwRec = readPidfile(pidfilePath(instance.id, 'gateway'));
-    if (!only || only === 'nest') {
-      if (!ports.nest) ports.nest = nestRec?.port ?? instance.nestPort ?? 7495;
-    } else {
-      ports.nest = Number(
-        opts.port?.nest ?? process.env.PI_NEST_PORT ?? instance.nestPort ?? nestRec?.port ?? 7495,
-      );
-    }
-    if (!only || only === 'gateway') {
-      if (!ports.gateway) ports.gateway = gwRec?.port ?? instance.gatewayPort;
-    } else if (only === 'web') {
-      ports.gateway = Number(
-        opts.port?.gateway ?? process.env.PI_STUDIO_PORT ?? instance.gatewayPort ?? gwRec?.port ?? 0,
-      );
-    }
     const spawned = [];
     out.event({ event: 'begin', instance: instance.id });
     try {
@@ -553,7 +554,7 @@ function clearPidfileIfDead(id, service) {
   if (rec && !alive(rec.pid)) clearPidfile(file);
 }
 
-export async function nestLivePid(instance) {
+export function nestLivePid(instance) {
   const rec = readPidfile(pidfilePath(instance.id, 'nest'));
   if (rec?.pid && alive(rec.pid)) return rec;
   const attributed = attributeProcesses([instance]);
@@ -595,8 +596,7 @@ export async function guardNest(out, instance, { yes = false, action = 'restart'
   }
 }
 
-async function stopService(out, instance, service, { immediate = false } = {}) {
-  const attributed = attributeProcesses([instance]);
+async function stopService(out, instance, service, attributed, { immediate = false } = {}) {
   const status = serviceStatus(instance, service, attributed);
   const targets = status.primary ? [status.primary, ...status.extras] : status.mine;
   if (targets.length === 0) {
@@ -644,8 +644,9 @@ export async function cmdDown(out, instance, opts = {}) {
     if (targets.includes('nest')) {
       await guardNest(out, instance, { yes: opts.yes, action: 'stop' });
     }
+    const attributed = attributeProcesses([instance]);
     for (const service of ['web', 'gateway', 'nest'].filter((s) => targets.includes(s))) {
-      await stopService(out, instance, service, { immediate: opts.force });
+      await stopService(out, instance, service, attributed, { immediate: opts.force });
     }
   });
 }
@@ -670,29 +671,11 @@ export async function cmdKill(out, instance, opts = {}) {
     if (targets.includes('nest')) {
       await guardNest(out, instance, { yes: opts.yes, action: 'stop' });
     }
+    const attributed = attributeProcesses([instance]);
     for (const s of targets) {
-      await stopService(out, instance, s, { immediate: true });
+      await stopService(out, instance, s, attributed, { immediate: true });
     }
   });
-}
-
-export async function stackOverview(instance) {
-  const attributed = attributeProcesses([instance]);
-  const services = {};
-  for (const service of SERVICE_NAMES) {
-    const status = serviceStatus(instance, service, attributed);
-    const health = status.port ? await serviceHealth(service, status.port) : { ok: false };
-    let state = status.state;
-    if (state === 'up' && !health.ok) state = 'degraded';
-    services[service] = {
-      state,
-      pid: status.pid,
-      port: status.port,
-      health,
-      extras: status.extras.map((e) => e.pid),
-    };
-  }
-  return services;
 }
 
 export async function cmdStatus(out, instances) {
@@ -758,14 +741,7 @@ export async function cmdStatus(out, instances) {
     out.line(paint('bold', `instance ${instance.id}`) + paint('gray', `  ${instance.pairRoot}`));
     for (const service of SERVICE_NAMES) {
       const s = services[service];
-      const sym =
-        s.state === 'up'
-          ? okSym
-          : s.state === 'stopped'
-            ? paint('gray', '·')
-            : s.state === 'degraded'
-              ? warnSym
-              : warnSym;
+      const sym = s.state === 'up' ? okSym : s.state === 'stopped' ? paint('gray', '·') : warnSym;
       out.line(
         `  ${sym} ${service.padEnd(8)} ${s.state.padEnd(8)} ${s.pid ? `pid ${String(s.pid).padEnd(7)}` : '        '.padEnd(11)} ${s.port ? `:${s.port}` : ''}  ${s.detail}`,
       );
@@ -801,7 +777,6 @@ export async function cmdAgents(out, instance) {
     s.lastEventAtMs > 0 ? `${formatDuration(Date.now() - s.lastEventAtMs)} ago` : '',
     s.lastError || '',
   ]);
-  const { printTable } = await import('./ui.mjs');
   printTable(['AGENT', 'STATUS', 'QUEUE', 'RUNNING', 'LAST EVENT', 'ERROR'], rows);
 }
 
@@ -820,10 +795,10 @@ export async function cmdAbort(out, instance, agentId) {
 export async function cmdLogs(out, instance, opts = {}) {
   const services = opts.service ? [opts.service] : SERVICE_NAMES;
   const files = services.map((s) => ({ service: s, file: logPath(instance.id, s) }));
+  const n = opts.lines ?? 40;
   for (const f of files) {
     if (!fs.existsSync(f.file)) continue;
     const lines = fs.readFileSync(f.file, 'utf8').split('\n').filter(Boolean);
-    const n = opts.lines ?? 40;
     const tail = lines.slice(-n);
     for (const line of tail) {
       out.raw(`${services.length > 1 ? paint('gray', `[${f.service}] `) : ''}${line}\n`);

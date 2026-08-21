@@ -19,7 +19,15 @@ import {
   worktreesRoot,
 } from './instances.mjs';
 import { alive, clearPidfile, pidHoldingPort, readPidfile, terminate } from './proc.mjs';
-import { attributeProcesses, CliError, cmdDown, httpJson, listStatesSafe, pingNest } from './stack.mjs';
+import {
+  attributeProcesses,
+  CliError,
+  cmdDown,
+  httpJson,
+  listStatesSafe,
+  pingNest,
+  serviceStatus,
+} from './stack.mjs';
 import { errSym, formatBytes, okSym, paint, printTable, warnSym } from './ui.mjs';
 
 function git(args, cwd, { allowFail = false } = {}) {
@@ -218,9 +226,7 @@ export async function cmdInstanceLs(out) {
     const inst = loadInstance(id);
     let upCount = 0;
     for (const svc of ['nest', 'gateway', 'web']) {
-      const mine = attributed.rows.filter((r) => r.instanceId === id && r.service === svc);
-      const rec = readPidfile(pidfilePath(id, svc));
-      if ((rec?.pid && alive(rec.pid)) || mine.length > 0) upCount += 1;
+      if (serviceStatus(inst, svc, attributed).state !== 'stopped') upCount += 1;
     }
     rows.push([
       id,
@@ -503,11 +509,10 @@ export async function cmdDoctor(out, opts = {}) {
 }
 
 export async function cmdClean(out, opts = {}) {
-  const doLogs = opts.logs;
   const doSnaps = opts.snapshots;
   const doPidfiles = opts.pidfiles;
   const doInstances = opts.instances;
-  const all = !doLogs && !doSnaps && !doPidfiles && !doInstances;
+  const all = !doSnaps && !doPidfiles && !doInstances;
   let count = 0;
   if (doPidfiles || all) {
     for (const id of listInstances()) {
@@ -516,18 +521,6 @@ export async function cmdClean(out, opts = {}) {
         const rec = readPidfile(file);
         if (rec?.pid && !alive(rec.pid)) {
           clearPidfile(file);
-          count += 1;
-        }
-      }
-    }
-  }
-  if (doLogs || all) {
-    for (const id of listInstances()) {
-      const dir = path.join(instanceStateDir(id), 'logs');
-      if (!fs.existsSync(dir)) continue;
-      for (const f of fs.readdirSync(dir)) {
-        if (/\.log\.\d+$/.test(f)) {
-          fs.rmSync(path.join(dir, f));
           count += 1;
         }
       }

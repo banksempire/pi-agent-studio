@@ -243,6 +243,13 @@ async function main() {
       '',
     );
 
+    const webAlone = studio(['-i', ID, 'up', 'web'], { expect: 3, label: 'up web alone' });
+    report(
+      'up web refuses without a live gateway',
+      webAlone.status === 3 && /gateway/.test(webAlone.stderr),
+      `exit=${webAlone.status}`,
+    );
+
     const rmRes = studio(['worktree', 'rm', ID, '--purge', '--yes'], { expect: 0, label: 'worktree rm' });
     report('worktree rm tears down the pair', rmRes.status === 0 && !fs.existsSync(PAIR), rmRes.stderr);
     report('instance record removed', !fs.existsSync(path.join(CFG, 'instances', `${ID}.json`)), '');

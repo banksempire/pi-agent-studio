@@ -12,7 +12,7 @@ const codes = {
 };
 
 export function paint(color, text) {
-  if (!colorEnabled) return `${text}`;
+  if (!colorEnabled) return text;
   return `\u001b[${codes[color] ?? 0}m${text}\u001b[0m`;
 }
 

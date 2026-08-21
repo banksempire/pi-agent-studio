@@ -187,7 +187,7 @@ studio [-i <instance>] <command> …        # auto-detects instance from CWD's p
   agents                      live agents via nest ListStates: id, state, queue, activity
   abort <agent-id>            wraps gRPC Abort
   doctor [--fix]              diagnostics per §11; --fix auto-applies safe fixes
-  clean [--logs] [--snapshots] [--pidfiles] [--instances]
+  clean [--snapshots] [--pidfiles] [--instances]
   open [--path /]             open the instance's web URL (human review step)
   help | --version
 
@@ -329,7 +329,8 @@ required in a container; pinning ENV there yields deterministic ports.
 - Exit codes: `0` ok · `1` failure · `2` usage · `3` health timeout ·
   `4` port conflict · `5` guard refusal · `130` interrupted.
 - Single-writer lock per instance state dir for mutating commands.
-- Logs: per-service file, rotate at 5 MB keep 3; `status` surfaces the
+- Logs: per-service append-only file (no rotation — delete via the state dir
+  if needed); `status` surfaces the
   gateway's latest `[mem:…]` line; `clean --snapshots` removes
   `Heap-*.heapsnapshot` leftovers.
 - Shape: ESM bin `bin/studio.mjs` + modules (`args`, `state`, `procs`,

@@ -5,6 +5,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "studio": "node bin/studio.mjs",
     "dev": "vite --host 0.0.0.0 --port 7492",
     "server": "node --heapsnapshot-near-heap-limit=2 src/pi-studio/server/index.mjs",
     "build": "vue-tsc --noEmit && vite build",
@@ -17,7 +18,8 @@
     "check:sse": "node scripts/check-sse-flood.cjs",
     "check:states": "node scripts/check-session-states.cjs",
     "check:sync": "node scripts/check-session-sync.cjs",
-    "check:restart": "node scripts/check-gateway-restart.cjs"
+    "check:restart": "node scripts/check-gateway-restart.cjs",
+    "check:cli": "node scripts/check-cli.cjs"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.10.0",

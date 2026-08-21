@@ -8,6 +8,7 @@ import { createClient, waitForNest } from '../../pi-nest/src/client.mjs';
 import { createSessionStates } from './session-states.mjs';
 
 const PORT = Number(process.env.PI_STUDIO_PORT ?? 7493);
+const HOST = process.env.PI_STUDIO_HOST ?? '0.0.0.0';
 const NEW_CHAT_CWD = process.env.PI_STUDIO_CWD ?? '/workspace/sf';
 const SESSIONS_ROOT = process.env.PI_STUDIO_SESSIONS ?? path.join(os.homedir(), '.pi', 'agent', 'sessions');
 
@@ -1490,9 +1491,9 @@ void watchSessionFiles().then(() => {
   setInterval(watchSessionFiles, 2000);
 });
 
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, HOST, () => {
   logMemoryState('boot');
-  console.log(`pi-agent-studio backend on 0.0.0.0:${PORT} (gateway → pi-nest)`);
+  console.log(`pi-agent-studio backend on ${HOST}:${PORT} (gateway → pi-nest)`);
   console.log(`sessions: ${SESSIONS_ROOT}`);
   console.log(`new chats cwd: ${NEW_CHAT_CWD}`);
 });

@@ -5,7 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export const SESSIONS_ROOT = path.join(os.homedir(), '.pi', 'agent', 'sessions');
+export const SESSIONS_ROOT =
+  process.env.PI_NEST_SESSIONS ?? path.join(os.homedir(), '.pi', 'agent', 'sessions');
 export const NEW_CHAT_CWD = process.env.PI_NEST_CWD ?? '/workspace/sf';
 
 export function findSdkDir() {

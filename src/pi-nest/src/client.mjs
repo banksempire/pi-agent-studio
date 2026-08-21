@@ -86,6 +86,10 @@ export class PiNestClient {
   subscribe(agentId = '') {
     return this.client.subscribe({ agentId });
   }
+
+  close() {
+    this.client.close();
+  }
 }
 
 export function createClient(options) {

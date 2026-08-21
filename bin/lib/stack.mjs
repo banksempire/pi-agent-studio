@@ -527,7 +527,7 @@ export async function cmdUp(out, instance, opts = {}) {
     const spawned = [];
     out.event({ event: 'begin', instance: instance.id });
     try {
-      if (!only || only === 'nest') {
+      if (!only || only === 'nest' || only === 'gateway') {
         await ensureNest(out, instance, { sessionsDir, used, ports, spawned });
       }
       if (!only || only === 'gateway') {
@@ -586,7 +586,7 @@ export async function guardNest(out, instance, { yes = false, action = 'restart'
   }
   const newest = newestMtime(path.join(repo, 'src', 'pi-nest'));
   const startMs = procStartMs(live.pid);
-  if (newest > 0 && startMs != null && newest <= startMs) {
+  if (action === 'restart' && newest > 0 && startMs != null && newest <= startMs) {
     out.line(
       `  ${warnSym} no changes under src/pi-nest since nest started (started ${new Date(startMs).toLocaleString()}, last edit ${new Date(newest).toLocaleString()})`,
     );
@@ -634,15 +634,17 @@ export async function cmdDown(out, instance, opts = {}) {
     let targets;
     if (explicit === 'nest') {
       targets = ['nest'];
+    } else if (explicit === 'gateway') {
+      targets = opts.cascade === false ? ['gateway'] : ['gateway', 'nest'];
     } else if (explicit) {
       targets = [explicit];
     } else {
-      targets = opts.withNest ? ['web', 'gateway', 'nest'] : ['web', 'gateway'];
+      targets = ['web', 'gateway', 'nest'];
     }
     if (targets.includes('nest')) {
       await guardNest(out, instance, { yes: opts.yes, action: 'stop' });
     }
-    for (const service of ['nest', 'gateway', 'web'].filter((s) => targets.includes(s))) {
+    for (const service of ['web', 'gateway', 'nest'].filter((s) => targets.includes(s))) {
       await stopService(out, instance, service, { immediate: opts.force });
     }
   });
@@ -655,7 +657,7 @@ export async function cmdRestart(out, instance, opts = {}) {
     await guardNest(out, instance, { yes: opts.yes, action: 'restart' });
     await cmdDown(out, instance, { service, force: opts.force, yes: true });
   } else {
-    await cmdDown(out, instance, { service, force: opts.force });
+    await cmdDown(out, instance, { service, force: opts.force, cascade: false });
   }
   await cmdUp(out, instance, opts);
 }
@@ -664,10 +666,13 @@ export async function cmdKill(out, instance, opts = {}) {
   const service = opts.service;
   if (!service) throw new CliError('kill requires a service: nest | gateway | web', 2);
   return withLock(instanceStateDir(instance.id), async () => {
-    if (service === 'nest') {
-      await guardNest(out, instance, { yes: opts.yes, action: 'kill' });
+    const targets = service === 'gateway' ? ['gateway', 'nest'] : [service];
+    if (targets.includes('nest')) {
+      await guardNest(out, instance, { yes: opts.yes, action: 'stop' });
     }
-    await stopService(out, instance, service, { immediate: true });
+    for (const s of targets) {
+      await stopService(out, instance, s, { immediate: true });
+    }
   });
 }
 

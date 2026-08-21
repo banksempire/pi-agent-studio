@@ -195,22 +195,53 @@ async function main() {
       health2?.ok === true && health2?.nest === true,
     );
 
-    const downRes = studio(['-i', ID, 'down'], { expect: 0, label: 'down' });
-    report('down stops gateway + web', downRes.status === 0, '');
-    const nestAfter = pidfile('nest');
-    const gwAfter = pidfile('gateway');
+    const gwPidBefore = pidfile('gateway')?.pid;
+    const gwRestart = studio(['-i', ID, 'restart', 'gateway'], { expect: 0, label: 'restart gateway' });
     report(
-      'down keeps nest alive (covenant)',
-      nestAfter?.pid === rec2?.pid,
-      `${nestAfter?.pid} vs ${rec2?.pid}`,
+      'restart gateway leaves its nest pair running',
+      gwRestart.status === 0 && pidfile('nest')?.pid === rec2?.pid,
+      `${pidfile('nest')?.pid} vs ${rec2?.pid}`,
     );
-    report('gateway stopped', !gwAfter?.pid, '');
+    report(
+      'restart gateway respawns only the gateway',
+      pidfile('gateway')?.pid != null && pidfile('gateway').pid !== gwPidBefore,
+      `${gwPidBefore} → ${pidfile('gateway')?.pid}`,
+    );
+    let health3 = null;
+    for (let i = 0; i < 12 && health3?.nest !== true; i++) {
+      health3 = await getJson(gwPort, '/api/health').catch(() => null);
+      if (health3?.nest !== true) await delay(500);
+    }
+    report('gateway healthy after its own restart', health3?.ok === true && health3?.nest === true);
+
+    const downRes = studio(['-i', ID, 'down'], { expect: 0, label: 'down' });
+    report('down tears down the full stack (no --yes needed, no agents)', downRes.status === 0, '');
+    report('down stops the nest pair', !pidfile('nest')?.pid, '');
+    report('down stops the gateway', !pidfile('gateway')?.pid, '');
 
     const webUp = await getJson(webPort, '/').catch(() => null);
     report('web port released after down', webUp === null || webUp === undefined, '');
 
-    const fullDown = studio(['-i', ID, 'down', '--with-nest', '--yes'], { expect: 0, label: 'full down' });
-    report('down --with-nest stops everything', fullDown.status === 0, '');
+    const pairUp = studio(['-i', ID, 'up', 'gateway'], { env, expect: 0, label: 'up gateway' });
+    report(
+      'up gateway brings up its nest pair',
+      pairUp.status === 0 && pidfile('nest')?.pid != null,
+      pairUp.stderr,
+    );
+    report('up gateway does not start web', !pidfile('web')?.pid, '');
+    let health4 = null;
+    for (let i = 0; i < 12 && health4?.nest !== true; i++) {
+      health4 = await getJson(gwPort, '/api/health').catch(() => null);
+      if (health4?.nest !== true) await delay(500);
+    }
+    report('gateway+nest pair healthy after up gateway', health4?.ok === true && health4?.nest === true);
+
+    const killGw = studio(['-i', ID, 'kill', 'gateway'], { expect: 0, label: 'kill gateway' });
+    report(
+      'kill gateway stops the nest pair too',
+      killGw.status === 0 && !pidfile('gateway')?.pid && !pidfile('nest')?.pid,
+      '',
+    );
 
     const rmRes = studio(['worktree', 'rm', ID, '--purge', '--yes'], { expect: 0, label: 'worktree rm' });
     report('worktree rm tears down the pair', rmRes.status === 0 && !fs.existsSync(PAIR), rmRes.stderr);
@@ -219,7 +250,7 @@ async function main() {
 
     return isFailed() ? 1 : 0;
   } finally {
-    studio(['-i', ID, 'down', '--with-nest', '--yes']);
+    studio(['-i', ID, 'down', '--yes']);
     sh('git', ['worktree', 'remove', '--force', path.join(PAIR, 'pi-agent-studio')], {
       cwd: PRODUCT_ROOT,
       allowFail: true,

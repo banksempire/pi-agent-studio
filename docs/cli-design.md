@@ -168,14 +168,19 @@ Every tunable resolves through four layers, first hit wins:
 ```
 studio [-i <instance>] <command> …        # auto-detects instance from CWD's pair
 
-  up [service]                idempotent start, dependency order, health-gated
+  up [service]                idempotent start, dependency order, health-gated;
+                              `up gateway` ensures its nest pair first
   down [service]              graceful stop, reverse order.
-                              Default (no args): web + gateway only.
-                              `down` / `down nest` pass the covenant guard (§8);
-                              `down --with-nest` does the full stack.
-  restart <service>           stop + up; nest goes through the guard
+                              Default (no args): the full stack — web, gateway
+                              and the nest pair. `down gateway` also stops its
+                              nest pair; any nest-stopping path passes the
+                              covenant guard (§8)
+  restart <service>           stop + up; restart gateway leaves its nest pair
+                              alive (agents keep streaming); restart nest goes
+                              through the guard
   kill <service> [--force]    SIGTERM → grace (web 5s, gateway 8s, nest 10s) → SIGKILL;
-                              nest goes through the guard
+                              killing gateway stops its nest pair too; any
+                              nest-stopping path goes through the guard
   status [service]            per-instance table + all-instances view; --json
   logs [service] [-f] [-n N]        tail managed logs (services log without timestamps,
                                     so no --since filtering; -f follows)
@@ -215,8 +220,15 @@ last edit 13:47) — restart anyway?` and default to **No**. Mechanizes the
 AGENTS.md rule (restart only when its own code changed; cosmetic edits count
 as no-change), including the cosmetic-edit case.
 
-Neither gate applies to `gateway`/`web`. The asymmetry is visible in `down`'s
-default (keeps nest) and in `status` (nest row shows `⚠ N live agents`).
+Gateway ⇄ nest pairing: the two services start and stop as a pair
+(`up gateway` starts its nest first; `down`, `down gateway`, `kill gateway`
+stop the nest too), but `restart gateway` never touches the nest — that is
+the whole point of keeping pi-nest a standalone process. The asymmetry is
+visible in `status` (nest row shows `⚠ N live agents`).
+
+Gate 2 (stale code) applies to `restart nest` only — a deliberate stop
+(`down`/`kill`) reflects intent, not a recycle, so only the live-agent gate
+fires there.
 
 ## 9. Process control
 
@@ -351,7 +363,7 @@ $ studio status
 
 $ studio -i test open          # human verification of the test branch
 $ studio -i test restart gateway   # internal port reused; main untouched
-$ studio -i test down          # web + gateway down; test nest kept (guard)
+$ studio -i test down          # full stack teardown — nest guard applies
 $ studio worktree rm test --purge # full teardown incl. its sessions
 
 $ studio -i main restart nest

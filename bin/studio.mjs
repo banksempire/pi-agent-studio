@@ -26,11 +26,16 @@ usage: studio [-i <instance>] <command> [options]
 
 commands:
   up [service]              start the stack (nest → gateway → web), health-gated;
-                            adopts already-running services
-  down [service]            stop web + gateway (default); --with-nest stops all;
-                            stopping nest asks the covenant guard
-  restart <service>         stop + start one service (nest guarded)
-  kill <service> [--force]  hard stop (SIGTERM → grace → SIGKILL)
+                            adopts already-running services; 'up gateway'
+                            starts its nest pair first
+  down [service]            stop the full stack (web + gateway + nest pair);
+                            'down gateway' also stops its nest pair;
+                            nest-stopping paths ask the covenant guard
+  restart <service>         stop + start one service; restart gateway keeps
+                            its nest pair alive (agents keep streaming);
+                            restart nest is guarded
+  kill <service> [--force]  hard stop (SIGTERM → grace → SIGKILL);
+                            killing gateway stops its nest pair too
   status                    stack overview for all instances (or -i <id>)
   logs [service] [-f] [-n N]  tail managed service logs
   agents                    live agents on this instance's nest

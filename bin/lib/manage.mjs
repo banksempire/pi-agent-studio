@@ -197,7 +197,7 @@ export async function cmdWorktreeRm(out, opts = {}) {
   const inst = loadInstance(id);
   if (!inst) throw new CliError(`instance '${id}' not found`, 2);
   if (id === 'main') throw new CliError('main cannot be removed as a worktree', 2);
-  await cmdDown(out, inst, { withNest: true, yes: opts.yes, force: opts.force });
+  await cmdDown(out, inst, { yes: opts.yes, force: opts.force });
   removeWorktreeDir(PRODUCT_ROOT, path.join(inst.pairRoot, 'pi-agent-studio'));
   removeWorktreeDir(SF_ROOT, path.join(inst.pairRoot, 'StudioFramework'));
   removeInstance(id);

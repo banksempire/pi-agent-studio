@@ -16,6 +16,8 @@ const PAIR = path.join(WT, 'check');
 const ID = 'check';
 const RESERVED = [7492, 7493, 7494, 7495];
 
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
 function makeReporter() {
   let failed = false;
   const report = (name, ok, extra = '') => {
@@ -176,11 +178,32 @@ async function main() {
       `${newRec?.port} vs ${nestPort}`,
     );
 
+    const restart2 = studio(['-i', ID, 'restart', 'nest', '--yes'], { expect: 0, label: 'restart-no-env' });
+    const rec2 = pidfile('nest');
+    report(
+      'internal port survives without ENV (tombstone reuse)',
+      restart2.status === 0 && rec2?.port === nestPort,
+      `${rec2?.port} vs ${nestPort}`,
+    );
+    let health2 = null;
+    for (let i = 0; i < 12 && health2?.nest !== true; i++) {
+      health2 = await getJson(gwPort, '/api/health').catch(() => null);
+      if (health2?.nest !== true) await delay(500);
+    }
+    report(
+      'gateway still wired to its nest after tombstone restart',
+      health2?.ok === true && health2?.nest === true,
+    );
+
     const downRes = studio(['-i', ID, 'down'], { expect: 0, label: 'down' });
     report('down stops gateway + web', downRes.status === 0, '');
     const nestAfter = pidfile('nest');
     const gwAfter = pidfile('gateway');
-    report('down keeps nest alive (covenant)', nestAfter?.pid === newRec?.pid, '');
+    report(
+      'down keeps nest alive (covenant)',
+      nestAfter?.pid === rec2?.pid,
+      `${nestAfter?.pid} vs ${rec2?.pid}`,
+    );
     report('gateway stopped', !gwAfter?.pid, '');
 
     const webUp = await getJson(webPort, '/').catch(() => null);

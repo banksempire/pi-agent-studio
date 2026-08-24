@@ -1,6 +1,6 @@
 # `studio` CLI — Design
 
-A CLI to manage pi-agent-studio service stacks (pi-nest, gateway, web): start,
+A CLI to manage pi-agent-studio service stacks (backend, web): start,
 stop, inspect, and isolate multiple instances on one machine — for production
 (`main`), test, and per-agent dev work driven by git branches/worktrees.
 
@@ -28,11 +28,10 @@ Design doc only; implementation notes in §12.
 
 | Service | Process | Port | Health probe | Restart safety |
 |:--|:--|:--|:--|:--|
-| `nest` | `node src/pi-nest/src/index.mjs` | ephemeral, loopback | gRPC `Ping` (via `src/pi-nest/src/client.mjs`) | **Destructive** — kills live agents |
-| `gateway` | `node --heapsnapshot-near-heap-limit=2 src/pi-studio/server/index.mjs` | ephemeral, loopback | `GET /api/health` → `ok:true` + `nest:true` | Free — agents survive in nest |
+| `backend` | `node --heapsnapshot-near-heap-limit=2 src/pi-studio/server/index.mjs` (HTTP+SSE + agent registry in one process) | ephemeral, loopback | `GET /api/health` → `ok:true` | **Graceful** — drains prompts, spills the queue, restores on boot; in-flight prompts abort at the drain deadline |
 | `web` | vite dev server | **fixed per instance** (user-facing URL) | HTTP 200 on `/` | Free |
 
-Dependency: `nest → gateway → web`. `up` honors it; `down`/`kill` reverse it.
+Dependency: `backend → web`. `up` honors it; `down`/`kill` reverse it.
 
 Service state model reported by `status`:
 
@@ -46,36 +45,55 @@ stopped | starting | up | degraded¹ | orphan² | foreign³
 ## 3. Port model
 
 **Only the web port is stable** — it is the URL a human bookmarks and reviews.
-Internal ports (nest gRPC, gateway HTTP) are uninteresting to users: the CLI
-picks any free port at stack start and wires the services together via ENV.
+The backend port is uninteresting to users: the CLI picks any free port at
+stack start (persisting it as a tombstone) and wires web to it via ENV.
 
 | Port | Persistence | Rules |
 |:--|:--|:--|
-| `web` | Persisted in instance config; stable across restarts | Unique across instances; `main` = 7492; `test` conventionally pins 7493 (the exposed test port); never 7494/7495; no other instance may use 7492 |
-| `gateway` | Ephemeral; recorded in runtime state for the stack's lifetime | Chosen at `up` from free ports, loopback bind |
-| `nest` | Ephemeral; recorded in runtime state for the stack's lifetime | Chosen at `up` from free ports, loopback bind |
+| `web` | Persisted in instance config; stable across restarts | Unique across instances; `main` = 7492; `test` conventionally pins 7493 (the exposed test port); never 7494; no other instance may use 7492 |
+| `backend` | Ephemeral; recorded in runtime state for the stack's lifetime | Chosen at `up` from free ports, loopback bind |
 
 Wiring per launch (CLI composes child ENV):
-- gateway ← `PI_NEST_HOST/PI_NEST_PORT` of this stack's nest
-- web ← `PI_API_PROXY=http://127.0.0.1:<gatewayPort>`
+- backend ← `PI_STUDIO_PORT`, `PI_STUDIO_SESSIONS`, `PI_STUDIO_STATES_PATH`, `PI_STUDIO_SPILL_PATH`
+- web ← `PI_API_PROXY=http://127.0.0.1:<backendPort>`
 
-Partial restarts (`restart gateway`) **reuse the recorded internal port** (the
+Partial restarts (`restart backend`) **reuse the recorded internal port** (the
 stop writes a tombstone pidfile keeping the last port; start prefers it if
-still free) so a still-running dependent (web → gateway proxy) keeps working.
+still free) so a still-running dependent (web → backend proxy) keeps working.
 If that port was taken by a foreign process meanwhile: the port falls back to
 a fresh ephemeral pick, and `restart web` (re-wire) or `down && up` are the
 suggested remedies.
 
-Reserved ports: 7492 (main web — the exposed production port), 7494
-(main gateway), 7495 (main nest) — the ephemeral picker skips them; only
-`main` uses 7494/7495. 7493 is the shared test port — the only other
-externally reachable port — hosting the `test` instance web, the
-StudioFramework check server, or ad-hoc test servers (first come, first
-served).
+Reserved ports: 7492 (main web — the exposed production port) and 7494
+(main backend) — the ephemeral picker skips them. 7493 is the shared test
+port — the only other externally reachable port — hosting the `test`
+instance web, the StudioFramework check server, or ad-hoc test servers
+(first come, first served). 7495 is free since the nest/gateway merge.
 
-Hosts: `web` binds `0.0.0.0` (or instance `host`); `nest` and `gateway` bind
-`127.0.0.1` always (loopback-only by design; gateway proxying happens
-server-side in vite).
+Hosts: `web` binds `0.0.0.0` (or instance `host`); `backend` binds
+`127.0.0.1` always (loopback-only by design; proxying happens server-side in
+vite).
+
+## 3a. Graceful restart (drain → spill → restore)
+
+The backend owns the agents, so its restart is the one destructive path —
+made graceful:
+
+1. **SIGTERM** → the backend stops accepting mutations (`503`), then drains:
+   per agent it waits for the in-flight prompt to settle (up to
+   `PI_STUDIO_DRAIN_MS`, default 45s), aborting still-running prompts at the
+   deadline (their partial transcripts stay in the session file).
+2. **Spill** — prompts queued but not yet started are written to
+   `<state>/backend-spill.json` and survive the restart.
+3. **Exit 0**, CLI restarts the process (grace = drain deadline + 20s).
+4. **Boot** — a leftover spill file is consumed and the queued prompts are
+   re-enqueued on their agents automatically.
+
+CLI semantics: `restart backend` is allowed without `--yes` whenever backend
+code changed since start (it refuses exit 5 otherwise — `--yes` overrides);
+busy agents are drained, never silently discarded. `down`/`kill backend` with
+live agents still ask the guard. Every CLI-initiated `terminate()` appends a
+line to `<state>/audit.log` (ts, reason, service, pid, caller argv).
 
 ## 4. Instance model — one git worktree pair = one instance
 
@@ -146,10 +164,9 @@ e.g. for the hermetic check suite).
 | `main` (product) | `~/.pi/agent/sessions` (default) | **Shared with the pi TUI on purpose** — TUI is the fallback UI if the web stack is down; web UI can prompt TUI sessions as today |
 | `test`, `dev-*` | `<pairRoot>/.studio/sessions` | Isolated from `main` and from each other; gitignored; disposable with the worktree |
 
-- Nest gets `PI_NEST_SESSIONS`, gateway gets `PI_STUDIO_SESSIONS`, both set to
-  the instance's dir by the CLI.
+- The backend gets `PI_STUDIO_SESSIONS`, set to the instance's dir by the CLI.
 - `PI_STUDIO_STATES_PATH` is always set per instance
-  (`<pairRoot>/.studio/states.json`) — two gateways sharing the default
+  (`<pairRoot>/.studio/states.json`) — two backends sharing the default
   `~/.pi/agent/studio-session-states.json` would clobber each other.
 - Guard: starting an instance whose sessions dir equals another live
   instance's → **hard error**. This is what enforces "main / test / dev
@@ -172,7 +189,7 @@ Every tunable resolves through four layers, first hit wins:
 | 4. Built-in defaults | see §10 table | The services themselves |
 
 - The **services themselves** implement layers 2→4 (ENV ?? default). This
-  keeps the container story pure: run nest/gateway/web directly with just ENV
+  keeps the container story pure: run backend/web directly with just ENV
   vars — no CLI — with identical precedence inside each service.
 - The CLI is a layer-3 manager that materializes instance config into
   **child-process ENV** at spawn time. It never configures services any other
@@ -188,23 +205,20 @@ Every tunable resolves through four layers, first hit wins:
 studio [-i <instance>] <command> …        # auto-detects instance from CWD's pair
 
   up [service]                idempotent start, dependency order, health-gated;
-                              `up gateway` ensures its nest pair first
-  down [service]              graceful stop, reverse order.
-                              Default (no args): the full stack — web, gateway
-                              and the nest pair. `down gateway` also stops its
-                              nest pair; any nest-stopping path passes the
-                              covenant guard (§8)
-  restart <service>           stop + up; restart gateway leaves its nest pair
-                              alive (agents keep streaming); restart nest goes
-                              through the guard
-  kill <service> [--force]    SIGTERM → grace (web 5s, gateway 8s, nest 10s) → SIGKILL;
-                              killing gateway stops its nest pair too; any
-                              nest-stopping path goes through the guard
+                              default: backend then web
+  down [service]              graceful stop, reverse order (web then backend);
+                              the backend drains + spills (§3a); deliberate
+                              stops pass the live-agent guard (§8)
+  restart <service>           stop + up; `restart backend` is graceful (§3a)
+                              and refused (exit 5) when no backend code
+                              changed since start — `--yes` overrides
+  kill <service> [--force]    SIGTERM → grace (web 5s, backend drain+20s) → SIGKILL;
+                              guarded while agents are live
   status [service]            per-instance table + all-instances view; --json
   logs [service] [-f] [-n N]        tail managed logs (services log without timestamps,
                                     so no --since filtering; -f follows)
-  agents                      live agents via nest ListStates: id, state, queue, activity
-  abort <agent-id>            wraps gRPC Abort
+  agents                      live agents via /api/agent-states: id, state, queue, activity
+  abort <agent-id>            wraps POST /api/abort
   doctor [--fix]              diagnostics per §11; --fix auto-applies safe fixes
                               (stale pidfiles, orphans, git guard hooks)
   guard [install|status]      install/inspect core.hooksPath on both repos
@@ -218,7 +232,7 @@ studio [-i <instance>] <command> …        # auto-detects instance from CWD's p
                               allocate web port (--port auto|N), create .studio/ + gitignore,
                               verify sibling StudioFramework, npm install if node_modules missing
   worktree add <id> [--from <branch>]   git worktree add BOTH repos under <workdir>/.branch/<id>/, then init
-  worktree rm <id> [--purge]            down (nest guard) + git worktree remove + rm instance;
+  worktree rm <id> [--purge]            down (agent guard) + git worktree remove + rm instance;
                                         --purge deletes .studio/sessions too
   instance ls | show | set | rm
 ```
@@ -227,31 +241,26 @@ studio [-i <instance>] <command> …        # auto-detects instance from CWD's p
   stack state; `-i` filters.
 - `main` is never stopped or started implicitly by instance-scoped commands.
 
-## 8. The pi-nest covenant (safety guards)
+## 8. Backend safety guards
 
-`nest` restart/kill is a two-gate check:
+Backend stop/kill is a two-gate check:
 
-**Gate 1 — live agents.** Query `ListStates`. Any agent running or with queued
-messages → interactive confirm listing them (id, elapsed runtime, queue depth)
-plus the "restart kills these agents" warning. Non-interactive without `--yes`
-→ refuse, exit 5.
+**Gate 1 — live agents.** Query `/api/agent-states`. Any agent running or
+with queued messages → interactive confirm listing them (id, elapsed runtime,
+queue depth) plus the warning. Non-interactive without `--yes` → refuse,
+exit 5. `restart backend` skips this gate: the graceful drain (§3a) protects
+queued prompts, and in-flight prompts are aborted only at the deadline.
 
-**Gate 2 — stale-code check.** Compare the newest mtime under `src/pi-nest/**`
-against the nest process start time. If nothing changed since it started,
-print e.g. `no changes under src/pi-nest since nest started (started 14:02,
-last edit 13:47) — restart anyway?` and default to **No**. Mechanizes the
-AGENTS.md rule (restart only when its own code changed; cosmetic edits count
-as no-change), including the cosmetic-edit case.
+**Gate 2 — stale-code check.** Compare the newest mtime under the backend
+watch paths (`src/pi-nest/**`, `src/pi-studio/server/**`) against the backend
+process start time. If nothing changed since it started, print e.g. `no
+changes under src/pi-nest | src/pi-studio/server since backend started
+(started 14:02, last edit 13:47)` and refuse (exit 5) — `--yes` overrides.
+Mechanizes the AGENTS.md rule (restart only when its own code changed;
+cosmetic edits count as no-change).
 
-Gateway ⇄ nest pairing: the two services start and stop as a pair
-(`up gateway` starts its nest first; `down`, `down gateway`, `kill gateway`
-stop the nest too), but `restart gateway` never touches the nest — that is
-the whole point of keeping pi-nest a standalone process. The asymmetry is
-visible in `status` (nest row shows `⚠ N live agents`).
-
-Gate 2 (stale code) applies to `restart nest` only — a deliberate stop
-(`down`/`kill`) reflects intent, not a recycle, so only the live-agent gate
-fires there.
+Gate 2 applies to `restart backend` only — a deliberate stop (`down`/`kill`)
+reflects intent, not a recycle, so only the live-agent gate fires there.
 
 ## 9. Process control
 
@@ -279,8 +288,7 @@ This replaces every hand-rolled `pgrep`/`pkill` pattern.
 
 **Start gating in `up`:**
 ```
-start nest → poll Ping (10s, 250ms interval)
-start gateway → poll /api/health (10s) — ok:true AND nest:true
+start backend → poll /api/health (15s) — ok:true
 start web → poll HTTP 200 (15s, vite cold start)
 ```
 On failure: dump the service's last 30 log lines; roll back only what this
@@ -295,12 +303,14 @@ there is no auto-relocate.
 
 | Change | File | Behavior |
 |:--|:--|:--|
-| **new** `PI_NEST_SESSIONS` | `src/pi-nest/src/sdk-bridge.mjs` | `SESSIONS_ROOT = env ?? ~/.pi/agent/sessions` (today hardcoded). **pi-nest code change ⇒ covenant restart applies when shipped** |
-| **new** `PI_STUDIO_HOST` | `src/pi-studio/server/index.mjs` | bind host: `env ?? '0.0.0.0'` (today hardcoded `0.0.0.0`) |
-| existing `PI_NEST_HOST/PORT` | nest, gateway (client.mjs ctor) | already supported; CLI sets per stack |
-| existing `PI_STUDIO_PORT/SESSIONS/STATES_PATH/CWD` | gateway | already supported |
+| `PI_STUDIO_SESSIONS` | `src/pi-nest/src/sdk-bridge.mjs` | `SESSIONS_ROOT = env ?? ~/.pi/agent/sessions` |
+| `PI_STUDIO_HOST` | `src/pi-studio/server/index.mjs` | bind host: `env ?? '127.0.0.1'` (loopback-only; the web /api proxy is the only intended entry) |
+| existing `PI_STUDIO_PORT/SESSIONS/STATES_PATH/CWD` | backend | already supported |
 | existing `PI_API_PROXY` | vite.config.ts proxy target | CLI sets at web spawn |
-| **new** `PI_STUDIO_CACHE_MAX_BYTES` | gateway | session-parse cache budget (default 128 MB), LRU whole-file eviction; effective ceiling = max(budget, largest session file) |
+| `PI_STUDIO_CACHE_MAX_BYTES` | backend | session-parse cache budget (default 128 MB), LRU whole-file eviction; effective ceiling = max(budget, largest session file) |
+| **new** `PI_STUDIO_DRAIN_MS` | backend + CLI | SIGTERM drain deadline (default 45s); CLI stop grace = deadline + 20s |
+| **new** `PI_STUDIO_SPILL_PATH` | backend | where queued prompts are spilled across a graceful restart (CLI pins it inside the instance state dir) |
+| **new** `PI_STUDIO_CLIENT_MODULE` | backend | test seam: path to an ESM module exporting `createClient()`; replaces the real agent registry with a stub client (used by the check suites) |
 | **new** `PI_STUDIO_WORKTREES` | CLI only | branch-folder root (default `<main pair root>/.branch`; keep it on the same filesystem as the repos so `node_modules` can be hardlink-copied) |
 | **new** `PI_STUDIO_WEB_HOST` / `PI_STUDIO_WEB_PORT` | CLI only | web bind host / port fallbacks below args and above instance config |
 
@@ -316,9 +326,9 @@ required in a container; pinning ENV there yields deterministic ports.
 | Tracked PIDs alive & cmdline matches pidfile | warn if mismatch |
 | Orphan scan + attribution per instance | warn, list |
 | Stale pidfiles (dead PID) | warn, auto-fixable |
-| Gateway `/api/health` (nest:true, heap %, RSS %) | err unreachable; warn heap ≥85% / RSS ≥80% |
-| Nest gRPC Ping | err unreachable |
-| Live agent count on nest | info (context for restarts) |
+| Backend `/api/health` (heap %, RSS %) | err unreachable; warn heap ≥85% / RSS ≥80% |
+| Live agent count on the backend | info (context for restarts) |
+| Orphan sweep under `--fix` | kills unattributed service processes — but only with the default registry; under `PI_STUDIO_CONFIG_DIR`/`PI_STUDIO_STATE_DIR` (isolated registries, e.g. check runs) it reports them and leaves them alone |
 | Heap snapshot files present | warn, auto-fixable via `clean` |
 | Per-worktree: `../StudioFramework/src` resolvable, `node_modules` present in this worktree | err |
 | Checked-out branch ≠ recorded branch | warn |
@@ -342,13 +352,14 @@ required in a container; pinning ENV there yields deterministic ports.
   and containers.
 - Regression: `npm run check:cli` (`scripts/check-cli.cjs`) — 21 assertions
   covering worktree pair creation, up with ENV-pinned ports, sessions
-  isolation, the covenant guard (exit 5), port reuse on restart, partial down,
-  and full teardown. It hosts nothing on 7492–7495.
-- CLI-spawned gateways bind `127.0.0.1` (override with `PI_STUDIO_HOST`);
+  isolation, the backend guard (exit 5), graceful drain/spill/restore, port
+  reuse on restart, partial down, and full teardown. It hosts nothing on
+  7492/7494.
+- CLI-spawned backends bind `127.0.0.1` (override with `PI_STUDIO_HOST`);
   main's web stays `0.0.0.0:7492`.
 
 - Human tables by default; `--json` everywhere; `up` emits ndjson events
-  `{"event":"starting","instance":"test","service":"nest"}` …
+  `{"event":"starting","instance":"test","service":"backend"}` …
 - `--quiet` for scripts; colors auto-off when not a TTY or `NO_COLOR`.
 - Prompts default to the safe answer; `--yes` bypasses prompts (non-TTY
   guard refusals still require explicit `--yes`).
@@ -357,12 +368,13 @@ required in a container; pinning ENV there yields deterministic ports.
 - Single-writer lock per instance state dir for mutating commands.
 - Logs: per-service append-only file (no rotation — delete via the state dir
   if needed); `status` surfaces the
-  gateway's latest `[mem:…]` line; `clean --snapshots` removes
+  backend's latest `[mem:…]` line; `clean --snapshots` removes
   `Heap-*.heapsnapshot` leftovers.
-- Shape: ESM bin `bin/studio.mjs` + modules (`args`, `state`, `procs`,
-  `health`, `nest-client`, `ui`), npm script `"studio": "node bin/studio.mjs"`.
-  Zero new runtime deps (`node:child_process` + `/proc` + existing
-  `src/pi-nest/src/client.mjs`). No comments in source, per workspace rules.
+- Shape: ESM bin `bin/studio.mjs` + modules in `bin/lib/`
+  (`instances`, `stack`, `manage`, `proc`, `ui`), npm script
+  `"studio": "node bin/studio.mjs"`.
+  Zero runtime deps beyond Node built-ins + the SDK import in the backend.
+  No comments in source, per workspace rules.
 - Regression: committed check script (pattern of `check:*`), testing against
   fake processes / a throwaway pair — never hosting test services on 7492–7495.
 
@@ -374,15 +386,13 @@ $ studio worktree add test --from test
   instance test: web 7512 · sessions ~/wt/test/.studio/sessions
 
 $ studio -i test up
-  test/nest     pid 51017  :34191  ping ok
-  test/gateway  pid 51044  :34195  /api/health ok, nest:true
+  test/backend  pid 51044  :34195  /api/health ok
   test/web      pid 51082  :7512   http://127.0.0.1:7512
 
 $ studio status
   INSTANCE  SERVICE   PID     STATE  PORT    DETAIL
-  main      nest      14353   up     7495    2 agents (1 running) ⚠ destructive
-  main      gateway   27859   up     7494    rss 412 MB · 3 sse
-  main      web       42416   up     7492
+  main      backend  14353   up     7494    2 agents (1 running) · rss 412 MB · 3 sse
+  main      web      42416   up     7492
   test      nest      51017   up     34191   0 agents
   test      gateway   51044   up     34195   rss 88 MB
   test      web       51082   up     7512    branch test · ~/wt/test

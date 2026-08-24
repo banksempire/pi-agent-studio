@@ -2,8 +2,9 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import readline from 'node:readline';
-import { PiNestClient } from '../../src/pi-nest/src/client.mjs';
 import {
+  appendAudit,
+  BACKEND_WATCH_PATHS,
   instanceRepoRoot,
   instanceSessionsDir,
   instanceStateDir,
@@ -34,7 +35,9 @@ import {
 } from './proc.mjs';
 import { errSym, formatBytes, formatDuration, okSym, paint, printTable, warnSym } from './ui.mjs';
 
-const GRACE = { web: 5000, gateway: 8000, nest: 10000 };
+const DRAIN_MS_DEFAULT = 45_000;
+const drainGrace = () => Number(process.env.PI_STUDIO_DRAIN_MS ?? DRAIN_MS_DEFAULT) + 20_000;
+const GRACE = { web: 5000, backend: drainGrace() };
 
 export class CliError extends Error {
   constructor(message, exitCode = 1) {
@@ -43,42 +46,46 @@ export class CliError extends Error {
   }
 }
 
-export function nestClient(port, host = '127.0.0.1') {
-  return new PiNestClient({ host, port: Number(port) });
-}
-
-export async function pingNest(port, timeoutMs = 2000) {
-  const client = nestClient(port);
-  try {
-    const res = await Promise.race([
-      client.ping(),
-      delay(timeoutMs).then(() => {
-        throw new Error('timeout');
-      }),
-    ]);
-    return { ok: !!res?.ok };
-  } catch {
-    return { ok: false };
-  } finally {
-    client.close();
-  }
+export async function pingBackend(port, timeoutMs = 2000) {
+  const r = await httpJson(port, '/api/health', timeoutMs);
+  return { ok: r.status === 200 && r.json?.ok === true };
 }
 
 export async function listStatesSafe(port) {
-  const client = nestClient(port);
-  try {
-    const res = await Promise.race([
-      client.listStates(),
-      delay(2500).then(() => {
-        throw new Error('timeout');
-      }),
-    ]);
-    return res?.states ?? [];
-  } catch {
-    return null;
-  } finally {
-    client.close();
-  }
+  const r = await httpJson(port, '/api/agent-states', 2500);
+  return r.status === 200 && Array.isArray(r.json?.states) ? r.json.states : null;
+}
+
+export function postJson(port, p, body, timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    const payload = JSON.stringify(body ?? {});
+    const req = http.request(
+      {
+        host: '127.0.0.1',
+        port: Number(port),
+        path: p,
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) },
+      },
+      (res) => {
+        let out = '';
+        res.on('data', (c) => (out += c));
+        res.on('end', () => {
+          let json = null;
+          try {
+            json = JSON.parse(out);
+          } catch {}
+          resolve({ status: res.statusCode, json });
+        });
+      },
+    );
+    req.on('error', () => resolve({ status: 0, json: null }));
+    req.setTimeout(timeoutMs, () => {
+      req.destroy();
+      resolve({ status: 0, json: null });
+    });
+    req.end(payload);
+  });
 }
 
 export function httpJson(port, pathname = '/api/health', timeoutMs = 2500) {
@@ -122,8 +129,7 @@ async function waitUntil(fn, timeoutMs, label, pid = null) {
 
 export function resolveSessionsDir(instance, opts = {}) {
   if (opts.sessions) return path.resolve(opts.sessions);
-  const env = process.env.PI_NEST_SESSIONS ?? process.env.PI_STUDIO_SESSIONS;
-  if (env) return path.resolve(env);
+  if (process.env.PI_STUDIO_SESSIONS) return path.resolve(process.env.PI_STUDIO_SESSIONS);
   return instanceSessionsDir(instance);
 }
 
@@ -194,17 +200,14 @@ export function attributeProcesses(instances = null) {
       }
     }
     if (!instanceId) {
-      const nestEnv = Number(proc.environ.PI_NEST_PORT ?? 0);
       const gwEnv = Number(proc.environ.PI_STUDIO_PORT ?? 0);
       const proxyEnv = portFromProxy(proc.environ);
       for (const inst of insts) {
-        const nestRec = readPidfile(pidfilePath(inst.id, 'nest'));
-        const gwRec = readPidfile(pidfilePath(inst.id, 'gateway'));
+        const rec = readPidfile(pidfilePath(inst.id, 'backend'));
         const matches =
-          (proc.service === 'nest' && nestEnv && nestEnv === (inst.nestPort ?? nestRec?.port)) ||
-          (proc.service === 'gateway' &&
-            ((gwEnv && gwEnv === (inst.gatewayPort ?? gwRec?.port)) ||
-              (proxyEnv && proxyEnv === (inst.gatewayPort ?? gwRec?.port))));
+          proc.service === 'backend' &&
+          ((gwEnv && gwEnv === (inst.backendPort ?? rec?.port)) ||
+            (proxyEnv && proxyEnv === (inst.backendPort ?? rec?.port)));
         if (matches) {
           instanceId = inst.id;
           via = 'environ';
@@ -223,8 +226,7 @@ export function serviceStatus(instance, service, attributed) {
   const mine = attributed.rows.filter((r) => r.instanceId === instance.id && r.service === service);
   const primary = pidRec?.pid ? mine.find((r) => r.pid === pidRec.pid) : null;
   const extras = mine.filter((r) => r !== primary);
-  const expected =
-    service === 'nest' ? instance.nestPort : service === 'gateway' ? instance.gatewayPort : instance.webPort;
+  const expected = service === 'backend' ? instance.backendPort : instance.webPort;
   let port = pidRec?.port ?? null;
   if (primary) {
     port = primary.ports[0] ?? port;
@@ -243,10 +245,9 @@ export function serviceStatus(instance, service, attributed) {
 
 async function serviceHealth(service, port) {
   if (!port) return { ok: false };
-  if (service === 'nest') return pingNest(port);
-  if (service === 'gateway') {
+  if (service === 'backend') {
     const r = await httpJson(port, '/api/health');
-    return { ok: r.status === 200 && r.json?.ok === true, nest: r.json?.nest === true, json: r.json };
+    return { ok: r.status === 200 && r.json?.ok === true, json: r.json };
   }
   const r = await httpJson(port, '/', 3000);
   return { ok: r.status === 200 };
@@ -259,13 +260,11 @@ function resolveWebHost(instance, opts = {}) {
 async function resolveServicePort(instance, service, opts, used) {
   const argPort = Number(opts.port?.[service] ?? 0);
   if (argPort) return argPort;
-  if (service === 'nest' && process.env.PI_NEST_PORT) return Number(process.env.PI_NEST_PORT);
-  if (service === 'gateway' && process.env.PI_STUDIO_PORT) return Number(process.env.PI_STUDIO_PORT);
+  if (service === 'backend' && process.env.PI_STUDIO_PORT) return Number(process.env.PI_STUDIO_PORT);
   if (service === 'web' && process.env.PI_STUDIO_WEB_PORT) {
     return Number(process.env.PI_STUDIO_WEB_PORT);
   }
-  const pin =
-    service === 'nest' ? instance.nestPort : service === 'gateway' ? instance.gatewayPort : instance.webPort;
+  const pin = service === 'backend' ? instance.backendPort : instance.webPort;
   if (pin) return Number(pin);
   if (service === 'web') {
     throw new CliError(`instance ${instance.id} has no web port — run studio init`, 2);
@@ -278,7 +277,7 @@ async function resolveServicePort(instance, service, opts, used) {
   return pickFreePort('127.0.0.1', used);
 }
 
-async function tryAdopt(out, instance, service, ports) {
+async function tryAdopt(out, instance, service) {
   const attributed = attributeProcesses([instance]);
   const status = serviceStatus(instance, service, attributed);
   const candidates = status.primary
@@ -289,11 +288,6 @@ async function tryAdopt(out, instance, service, ports) {
     if (!port) continue;
     const health = await serviceHealth(service, port);
     if (!health.ok) continue;
-    if (service === 'gateway') {
-      const gwNest = Number(cand.environ.PI_NEST_PORT ?? 0) || 7495;
-      if (ports.nest && gwNest !== ports.nest) continue;
-      if (!health.nest) continue;
-    }
     if (service === 'web' && port !== instance.webPort) continue;
     writePidfile(pidfilePath(instance.id, service), {
       pid: cand.pid,
@@ -319,56 +313,13 @@ async function tryAdopt(out, instance, service, ports) {
   return null;
 }
 
-async function ensureNest(out, instance, { sessionsDir, used, ports, spawned }) {
-  const adopted = await tryAdopt(out, instance, 'nest', ports);
+async function ensureBackend(out, instance, { sessionsDir, used, ports, spawned }) {
+  const adopted = await tryAdopt(out, instance, 'backend');
   if (adopted) {
-    ports.nest = adopted.port;
+    ports.backend = adopted.port;
     return;
   }
-  const port = await resolveServicePort(instance, 'nest', {}, used);
-  used.add(port);
-  const repo = instanceRepoRoot(instance);
-  const pid = spawnDetached({
-    cmd: 'node',
-    args: ['src/pi-nest/src/index.mjs'],
-    cwd: repo,
-    env: {
-      PI_NEST_HOST: '127.0.0.1',
-      PI_NEST_PORT: String(port),
-      PI_NEST_SESSIONS: sessionsDir,
-    },
-    logFile: logPath(instance.id, 'nest'),
-    pidfile: pidfilePath(instance.id, 'nest'),
-    record: { service: 'nest', instance: instance.id, port, sessionsDir },
-  });
-  spawned.push(pid);
-  out.event({
-    event: 'starting',
-    instance: instance.id,
-    service: 'nest',
-    pid,
-    port,
-    message: `${paint('cyan', `${instance.id}/nest`)}  starting pid ${pid} :${port}`,
-  });
-  await waitUntil(async () => (await pingNest(port, 1500)).ok, 10000, `${instance.id}/nest`, pid);
-  ports.nest = port;
-  out.event({
-    event: 'up',
-    instance: instance.id,
-    service: 'nest',
-    pid,
-    port,
-    message: `${paint('cyan', `${instance.id}/nest`)}  ${okSym} ping ok :${port}`,
-  });
-}
-
-async function ensureGateway(out, instance, { sessionsDir, used, ports, spawned }) {
-  const adopted = await tryAdopt(out, instance, 'gateway', ports);
-  if (adopted) {
-    ports.gateway = adopted.port;
-    return;
-  }
-  const port = await resolveServicePort(instance, 'gateway', {}, used);
+  const port = await resolveServicePort(instance, 'backend', {}, used);
   used.add(port);
   const repo = instanceRepoRoot(instance);
   const statesPath = instanceStatesPath(instance);
@@ -376,9 +327,8 @@ async function ensureGateway(out, instance, { sessionsDir, used, ports, spawned 
     PI_STUDIO_HOST: process.env.PI_STUDIO_HOST ?? '127.0.0.1',
     PI_STUDIO_PORT: String(port),
     PI_STUDIO_SESSIONS: sessionsDir,
-    PI_NEST_HOST: '127.0.0.1',
-    PI_NEST_PORT: String(ports.nest),
     PI_STUDIO_CWD: instance.cwd ?? instance.pairRoot,
+    PI_STUDIO_SPILL_PATH: path.join(instanceStateDir(instance.id), 'backend-spill.json'),
   };
   if (statesPath) env.PI_STUDIO_STATES_PATH = statesPath;
   const pid = spawnDetached({
@@ -386,41 +336,38 @@ async function ensureGateway(out, instance, { sessionsDir, used, ports, spawned 
     args: ['--heapsnapshot-near-heap-limit=2', 'src/pi-studio/server/index.mjs'],
     cwd: repo,
     env,
-    logFile: logPath(instance.id, 'gateway'),
-    pidfile: pidfilePath(instance.id, 'gateway'),
-    record: { service: 'gateway', instance: instance.id, port, sessionsDir },
+    logFile: logPath(instance.id, 'backend'),
+    pidfile: pidfilePath(instance.id, 'backend'),
+    record: { service: 'backend', instance: instance.id, port, sessionsDir },
   });
   spawned.push(pid);
   out.event({
     event: 'starting',
     instance: instance.id,
-    service: 'gateway',
+    service: 'backend',
     pid,
     port,
-    message: `${paint('cyan', `${instance.id}/gateway`)}  starting pid ${pid} :${port}`,
+    message: `${paint('cyan', `${instance.id}/backend`)}  starting pid ${pid} :${port}`,
   });
   await waitUntil(
-    async () => {
-      const h = await serviceHealth('gateway', port);
-      return h.ok && h.nest;
-    },
-    10000,
-    `${instance.id}/gateway`,
+    async () => (await serviceHealth('backend', port)).ok,
+    15000,
+    `${instance.id}/backend`,
     pid,
   );
-  ports.gateway = port;
+  ports.backend = port;
   out.event({
     event: 'up',
     instance: instance.id,
-    service: 'gateway',
+    service: 'backend',
     pid,
     port,
-    message: `${paint('cyan', `${instance.id}/gateway`)}  ${okSym} /api/health ok, nest:true :${port}`,
+    message: `${paint('cyan', `${instance.id}/backend`)}  ${okSym} /api/health ok :${port}`,
   });
 }
 
 async function ensureWeb(out, instance, { used, ports, spawned, opts }) {
-  const adopted = await tryAdopt(out, instance, 'web', ports);
+  const adopted = await tryAdopt(out, instance, 'web');
   if (adopted) {
     ports.web = adopted.port;
     return;
@@ -431,20 +378,23 @@ async function ensureWeb(out, instance, { used, ports, spawned, opts }) {
   if (holderPid) {
     throw new CliError(`web port ${port} is held by foreign pid ${holderPid}`, 4);
   }
-  if (!ports.gateway) {
-    const rec = readPidfile(pidfilePath(instance.id, 'gateway'));
-    const gwPort = Number(rec?.port ?? process.env.PI_STUDIO_PORT ?? instance.gatewayPort ?? 0);
-    if (!gwPort) {
+  if (!ports.backend) {
+    const rec = readPidfile(pidfilePath(instance.id, 'backend'));
+    const backendPort = Number(rec?.port ?? process.env.PI_STUDIO_PORT ?? instance.backendPort ?? 0);
+    if (!backendPort) {
       throw new CliError(
-        `gateway port unknown for ${instance.id} — start the pair first: studio up gateway`,
+        `backend port unknown for ${instance.id} — start the pair first: studio up backend`,
         2,
       );
     }
-    const gwHealth = await serviceHealth('gateway', gwPort);
-    if (!gwHealth.ok) {
-      throw new CliError(`gateway not healthy on :${gwPort} — start the pair first: studio up gateway`, 3);
+    const health = await serviceHealth('backend', backendPort);
+    if (!health.ok) {
+      throw new CliError(
+        `backend not healthy on :${backendPort} — start the pair first: studio up backend`,
+        3,
+      );
     }
-    ports.gateway = gwPort;
+    ports.backend = backendPort;
   }
   const host = resolveWebHost(instance, opts);
   const repo = instanceRepoRoot(instance);
@@ -461,7 +411,7 @@ async function ensureWeb(out, instance, { used, ports, spawned, opts }) {
       '--strictPort',
     ],
     cwd: repo,
-    env: { PI_API_PROXY: `http://127.0.0.1:${ports.gateway}` },
+    env: { PI_API_PROXY: `http://127.0.0.1:${ports.backend}` },
     logFile: logPath(instance.id, 'web'),
     pidfile: pidfilePath(instance.id, 'web'),
     record: { service: 'web', instance: instance.id, port, host },
@@ -492,7 +442,7 @@ async function assertSessionsDirUnique(instance, sessionsDir) {
     if (id === instance.id) continue;
     const other = loadInstance(id);
     if (!other) continue;
-    const rec = readPidfile(pidfilePath(id, 'nest'));
+    const rec = readPidfile(pidfilePath(id, 'backend'));
     const otherSessions = rec?.sessionsDir ?? instanceSessionsDir(other);
     if (rec && alive(rec.pid) && path.resolve(otherSessions) === path.resolve(sessionsDir)) {
       throw new CliError(
@@ -522,23 +472,26 @@ export async function cmdUp(out, instance, opts = {}) {
     for (const p of webPortsInUse(instance.id).keys()) used.add(p);
     const ports = {};
     if (opts.service && !SERVICE_NAMES.includes(opts.service)) {
-      throw new CliError(`unknown service '${opts.service}' (nest | gateway | web)`, 2);
+      throw new CliError(`unknown service '${opts.service}' (backend | web)`, 2);
     }
     const only = opts.service ?? null;
     const spawned = [];
     out.event({ event: 'begin', instance: instance.id });
     try {
-      if (!only || only === 'nest' || only === 'gateway') {
-        await ensureNest(out, instance, { sessionsDir, used, ports, spawned });
-      }
-      if (!only || only === 'gateway') {
-        await ensureGateway(out, instance, { sessionsDir, used, ports, spawned });
+      if (!only || only === 'backend') {
+        await ensureBackend(out, instance, { sessionsDir, used, ports, spawned });
       }
       if (!only || only === 'web') {
         await ensureWeb(out, instance, { used, ports, spawned, opts });
       }
     } catch (e) {
       for (const pid of spawned.reverse()) {
+        appendAudit(instance.id, {
+          action: 'terminate',
+          reason: 'up-failure',
+          pid,
+          caller: process.argv.slice(1).join(' '),
+        });
         await terminate(pid, 1500);
       }
       for (const svc of SERVICE_NAMES) clearPidfileIfDead(instance.id, svc);
@@ -551,27 +504,46 @@ export async function cmdUp(out, instance, opts = {}) {
 function clearPidfileIfDead(id, service) {
   const file = pidfilePath(id, service);
   const rec = readPidfile(file);
-  if (rec && !alive(rec.pid)) clearPidfile(file);
+  if (rec?.pid != null && !alive(rec.pid)) clearPidfile(file);
 }
 
-export function nestLivePid(instance) {
-  const rec = readPidfile(pidfilePath(instance.id, 'nest'));
+export function backendLivePid(instance) {
+  const rec = readPidfile(pidfilePath(instance.id, 'backend'));
   if (rec?.pid && alive(rec.pid)) return rec;
   const attributed = attributeProcesses([instance]);
-  const mine = attributed.rows.find((r) => r.instanceId === instance.id && r.service === 'nest');
+  const mine = attributed.rows.find((r) => r.instanceId === instance.id && r.service === 'backend');
   if (mine) {
     return { pid: mine.pid, port: mine.ports[0] ?? null, adopted: true };
   }
   return null;
 }
 
-export async function guardNest(out, instance, { yes = false, action = 'restart' }) {
-  const live = await nestLivePid(instance);
+export async function guardBackend(out, instance, { yes = false, action = 'restart' }) {
+  const live = await backendLivePid(instance);
   if (!live) return;
-  if (yes) return;
-  const repo = instanceRepoRoot(instance);
   const states = live.port ? await listStatesSafe(live.port) : null;
   const busy = (states ?? []).filter((s) => s.status === 'running' || s.queueDepth > 0);
+  if (action === 'restart') {
+    const repo = instanceRepoRoot(instance);
+    const newest = Math.max(...BACKEND_WATCH_PATHS.map((rel) => newestMtime(path.join(repo, rel))));
+    const startMs = procStartMs(live.pid);
+    if (newest > 0 && startMs != null && newest <= startMs) {
+      if (!yes) {
+        out.line(
+          `  ${warnSym} no changes under ${BACKEND_WATCH_PATHS.join(' | ')} since backend started (started ${new Date(startMs).toLocaleString()}, last edit ${new Date(newest).toLocaleString()})`,
+        );
+        throw new CliError('refused: backend code unchanged since start (--yes overrides)', 5);
+      }
+    }
+    if (busy.length > 0) {
+      const drainMs = Number(process.env.PI_STUDIO_DRAIN_MS ?? 45_000);
+      out.line(
+        `  ${warnSym} draining ${busy.length} busy agent(s) before restart (grace ${Math.round(drainMs / 1000)}s; running prompts abort at the deadline and queued ones are spilled and restored)`,
+      );
+    }
+    return;
+  }
+  if (yes) return;
   if (busy.length > 0) {
     for (const s of busy) {
       const dur = s.runningSinceMs > 0 ? formatDuration(Date.now() - s.runningSinceMs) : '';
@@ -583,16 +555,7 @@ export async function guardNest(out, instance, { yes = false, action = 'restart'
       `${action} kills ${busy.length} live agent(s) in ${instance.id}. Continue?`,
       false,
     );
-    if (!okToKill) throw new CliError('refused: live agents on nest', 5);
-  }
-  const newest = newestMtime(path.join(repo, 'src', 'pi-nest'));
-  const startMs = procStartMs(live.pid);
-  if (action === 'restart' && newest > 0 && startMs != null && newest <= startMs) {
-    out.line(
-      `  ${warnSym} no changes under src/pi-nest since nest started (started ${new Date(startMs).toLocaleString()}, last edit ${new Date(newest).toLocaleString()})`,
-    );
-    const okAnyway = await confirm(`${action} nest anyway?`, false);
-    if (!okAnyway) throw new CliError('refused: nest code unchanged since start', 5);
+    if (!okToKill) throw new CliError('refused: live agents on backend', 5);
   }
 }
 
@@ -600,7 +563,13 @@ async function stopService(out, instance, service, attributed, { immediate = fal
   const status = serviceStatus(instance, service, attributed);
   const targets = status.primary ? [status.primary, ...status.extras] : status.mine;
   if (targets.length === 0) {
-    clearPidfile(pidfilePath(instance.id, service));
+    const skipFile = pidfilePath(instance.id, service);
+    const rec0 = readPidfile(skipFile);
+    if (rec0?.port) {
+      writePidfile(skipFile, { service, instance: instance.id, port: rec0.port, stoppedAt: Date.now() });
+    } else {
+      clearPidfile(skipFile);
+    }
     out.event({
       event: 'skip',
       instance: instance.id,
@@ -610,7 +579,14 @@ async function stopService(out, instance, service, attributed, { immediate = fal
     return;
   }
   for (const t of targets) {
-    const stopped = await terminate(t.pid, GRACE[service], immediate);
+    appendAudit(instance.id, {
+      action: 'terminate',
+      reason: immediate ? 'kill' : 'stop',
+      service,
+      pid: t.pid,
+      caller: process.argv.slice(1).join(' '),
+    });
+    const stopped = await terminate(t.pid, GRACE[service] ?? 8000, immediate);
     out.event({
       event: stopped ? 'stopped' : 'failed',
       instance: instance.id,
@@ -632,20 +608,18 @@ export async function cmdDown(out, instance, opts = {}) {
   return withLock(instanceStateDir(instance.id), async () => {
     const explicit = opts.service ?? null;
     let targets;
-    if (explicit === 'nest') {
-      targets = ['nest'];
-    } else if (explicit === 'gateway') {
-      targets = opts.cascade === false ? ['gateway'] : ['gateway', 'nest'];
+    if (explicit === 'backend') {
+      targets = ['backend'];
     } else if (explicit) {
       targets = [explicit];
     } else {
-      targets = ['web', 'gateway', 'nest'];
+      targets = ['web', 'backend'];
     }
-    if (targets.includes('nest')) {
-      await guardNest(out, instance, { yes: opts.yes, action: 'stop' });
+    if (targets.includes('backend')) {
+      await guardBackend(out, instance, { yes: opts.yes, action: 'stop' });
     }
     const attributed = attributeProcesses([instance]);
-    for (const service of ['web', 'gateway', 'nest'].filter((s) => targets.includes(s))) {
+    for (const service of ['web', 'backend'].filter((s) => targets.includes(s))) {
       await stopService(out, instance, service, attributed, { immediate: opts.force });
     }
   });
@@ -653,23 +627,22 @@ export async function cmdDown(out, instance, opts = {}) {
 
 export async function cmdRestart(out, instance, opts = {}) {
   const service = opts.service;
-  if (!service) throw new CliError('restart requires a service: nest | gateway | web', 2);
-  if (service === 'nest') {
-    await guardNest(out, instance, { yes: opts.yes, action: 'restart' });
-    await cmdDown(out, instance, { service, force: opts.force, yes: true });
-  } else {
-    await cmdDown(out, instance, { service, force: opts.force, cascade: false });
+  if (!service) throw new CliError('restart requires a service: backend | web', 2);
+  if (service === 'backend') {
+    GRACE.backend = drainGrace();
+    await guardBackend(out, instance, { yes: opts.yes, action: 'restart' });
   }
+  await cmdDown(out, instance, { service, force: opts.force, cascade: false, yes: true });
   await cmdUp(out, instance, opts);
 }
 
 export async function cmdKill(out, instance, opts = {}) {
   const service = opts.service;
-  if (!service) throw new CliError('kill requires a service: nest | gateway | web', 2);
+  if (!service) throw new CliError('kill requires a service: backend | web', 2);
   return withLock(instanceStateDir(instance.id), async () => {
-    const targets = service === 'gateway' ? ['gateway', 'nest'] : [service];
-    if (targets.includes('nest')) {
-      await guardNest(out, instance, { yes: opts.yes, action: 'stop' });
+    const targets = [service];
+    if (targets.includes('backend')) {
+      await guardBackend(out, instance, { yes: opts.yes, action: 'kill' });
     }
     const attributed = attributeProcesses([instance]);
     for (const s of targets) {
@@ -689,18 +662,20 @@ export async function cmdStatus(out, instances) {
       let state = status.state;
       if (state === 'up' && !health.ok) state = 'degraded';
       let detail = '';
-      if (service === 'nest' && state === 'up') {
+      if (service === 'backend' && state === 'up') {
+        const parts = [];
         const states = await listStatesSafe(status.port);
         if (states) {
           const running = states.filter((s) => s.status === 'running').length;
-          detail = `${states.length} agent${states.length === 1 ? '' : 's'}${running ? ` (${running} running)` : ''} ${warnSym} restart is destructive`;
+          parts.push(
+            `${states.length} agent${states.length === 1 ? '' : 's'}${running ? ` (${running} running)` : ''}`,
+          );
         }
-      }
-      if (service === 'gateway' && state === 'up' && health.json) {
-        const mem = health.json.mem ?? {};
-        const parts = [];
-        if (mem.rss != null) parts.push(`rss ${formatBytes(mem.rss)}`);
-        if (health.json.sseClients != null) parts.push(`${health.json.sseClients} sse`);
+        if (health.json) {
+          const mem = health.json.mem ?? {};
+          if (mem.rss != null) parts.push(`rss ${formatBytes(mem.rss)}`);
+          if (health.json.sseClients != null) parts.push(`${health.json.sseClients} sse`);
+        }
         detail = parts.join(' · ');
       }
       if (service === 'web' && state === 'up') {
@@ -757,10 +732,10 @@ export async function cmdStatus(out, instances) {
 }
 
 export async function cmdAgents(out, instance) {
-  const live = await nestLivePid(instance);
-  if (!live?.port) throw new CliError(`nest is not running for instance ${instance.id}`, 1);
+  const live = await backendLivePid(instance);
+  if (!live?.port) throw new CliError(`backend is not running for instance ${instance.id}`, 1);
   const states = await listStatesSafe(live.port);
-  if (states == null) throw new CliError(`nest unreachable on :${live.port}`, 1);
+  if (states == null) throw new CliError(`backend unreachable on :${live.port}`, 1);
   if (out.json) {
     out.raw(`${JSON.stringify({ instance: instance.id, states })}\n`);
     return;
@@ -781,15 +756,11 @@ export async function cmdAgents(out, instance) {
 }
 
 export async function cmdAbort(out, instance, agentId) {
-  const live = await nestLivePid(instance);
-  if (!live?.port) throw new CliError(`nest is not running for instance ${instance.id}`, 1);
-  const client = nestClient(live.port);
-  try {
-    await client.abort({ agentId });
-    out.line(`${okSym} abort sent: ${agentId}`);
-  } finally {
-    client.close();
-  }
+  const live = await backendLivePid(instance);
+  if (!live?.port) throw new CliError(`backend is not running for instance ${instance.id}`, 1);
+  const r = await postJson(live.port, '/api/abort', { file: agentId });
+  if (r.status !== 200) throw new CliError(`abort failed (${r.status})`, 1);
+  out.line(`${okSym} abort sent: ${agentId}`);
 }
 
 export async function cmdLogs(out, instance, opts = {}) {

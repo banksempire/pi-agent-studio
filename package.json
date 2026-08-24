@@ -11,7 +11,6 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
-    "nest": "node src/pi-nest/src/index.mjs",
     "lint": "biome check .",
     "format": "biome format --write .",
     "check:crosswin": "node scripts/check-cross-window.cjs",
@@ -19,11 +18,10 @@
     "check:states": "node scripts/check-session-states.cjs",
     "check:sync": "node scripts/check-session-sync.cjs",
     "check:restart": "node scripts/check-gateway-restart.cjs",
-    "check:cli": "node scripts/check-cli.cjs"
+    "check:cli": "node scripts/check-cli.cjs",
+    "check:registry": "node scripts/check-registry-drain.cjs"
   },
   "dependencies": {
-    "@grpc/grpc-js": "^1.10.0",
-    "@grpc/proto-loader": "^0.7.13",
     "dompurify": "^3.4.13",
     "marked": "^18.0.9",
     "vue": "^3.5.40"

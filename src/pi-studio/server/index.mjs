@@ -1,18 +1,31 @@
-import { createReadStream, existsSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { getHeapStatistics } from 'node:v8';
-import { createClient, waitForNest } from '../../pi-nest/src/client.mjs';
+import { createLocalClient } from '../../pi-nest/src/local-client.mjs';
+import { AgentRegistry, WATCHDOG_INTERVAL_MS } from '../../pi-nest/src/registry.mjs';
 import { createSessionStates } from './session-states.mjs';
 
 const PORT = Number(process.env.PI_STUDIO_PORT ?? 7494);
 const HOST = process.env.PI_STUDIO_HOST ?? '127.0.0.1';
 const NEW_CHAT_CWD = process.env.PI_STUDIO_CWD ?? '/workspace/sf';
 const SESSIONS_ROOT = process.env.PI_STUDIO_SESSIONS ?? path.join(os.homedir(), '.pi', 'agent', 'sessions');
+const DRAIN_MS = Number(process.env.PI_STUDIO_DRAIN_MS ?? 45_000);
+const SPILL_PATH =
+  process.env.PI_STUDIO_SPILL_PATH ?? path.join(os.homedir(), '.pi', 'agent', 'backend-spill.json');
 
-const client = createClient();
+let registry = null;
+let client;
+if (process.env.PI_STUDIO_CLIENT_MODULE) {
+  const mod = await import(pathToFileURL(process.env.PI_STUDIO_CLIENT_MODULE).href);
+  client = await mod.createClient();
+} else {
+  registry = new AgentRegistry();
+  client = createLocalClient(registry);
+}
 
 function parseEntries(content) {
   const out = [];
@@ -750,6 +763,7 @@ const HEARTBEAT_INTERVAL_MS = Number(process.env.PI_STUDIO_HEARTBEAT_INTERVAL_MS
 const HEARTBEAT_MISSED_LIMIT = Number(process.env.PI_STUDIO_HEARTBEAT_MISSED_LIMIT ?? 12);
 let connSeq = 0;
 let nestOnline = false;
+let draining = false;
 
 function viewersOf(file) {
   const out = [];
@@ -956,61 +970,55 @@ function scheduleTreePush() {
   }, 500);
 }
 
-async function relayNestEvents() {
-  for (;;) {
-    try {
-      if (!(await waitForNest(client, { timeoutMs: 5000, log: () => {} }))) {
-        await new Promise((r) => setTimeout(r, 1000));
-        continue;
-      }
-      const stream = client.subscribe('');
-      nestOnline = true;
-      console.log('[gateway] relay stream connected');
-      await new Promise((resolve) => {
-        stream.on('data', (ev) => {
-          let payload = {};
-          try {
-            payload = ev.json ? JSON.parse(ev.json) : {};
-          } catch {}
-          if (ev.type === 'session_status') {
-            if (payload.status === 'running') sessionStates.noteAgentRunning(ev.file);
-            else if (payload.status === 'idle')
-              sessionStates.noteAgentSettled(ev.file, { stale: !!payload.stale });
-          } else if (ev.type === 'message' && payload?.role === 'assistant' && payload.stopReason) {
-            sessionStates.noteAssistantOutcome(ev.file, payload.stopReason, payload.error ?? '');
-          }
-          if (ev.type === 'message') emit({ type: 'message', file: ev.file, message: payload });
-          else if (ev.type === 'refresh') emitRefresh(ev.file);
-          else emit({ type: ev.type, file: ev.file, ...payload });
-        });
-        stream.once('error', () => {
-          nestOnline = false;
-          console.log('[gateway] relay stream dropped — reconnecting');
-          resolve();
-        });
-        stream.once('end', () => {
-          nestOnline = false;
-          console.log('[gateway] relay stream ended — reconnecting');
-          resolve();
-        });
-        void (async () => {
-          try {
-            const { states: nestStates } = await client.listStates();
-            for (const s of nestStates) emitRefresh(s.agentId);
-            scheduleTreePush();
-          } catch {}
-          await sessionStates.probeNest(() => client.listStates(), resolveFileOutcome);
-          try {
-            const { states: nestStates } = await client.listStates();
-            await sessionStates.reconcileNest(nestStates, resolveFileOutcome, FILE_STALE_RUN_MS);
-          } catch {}
-        })();
-      });
-    } catch {}
-    await new Promise((r) => setTimeout(r, 1000));
+function handleClientEvent(ev) {
+  let payload = {};
+  try {
+    payload = ev.json ? JSON.parse(ev.json) : {};
+  } catch {}
+  if (ev.type === 'session_status') {
+    if (payload.status === 'running') sessionStates.noteAgentRunning(ev.file);
+    else if (payload.status === 'idle') sessionStates.noteAgentSettled(ev.file, { stale: !!payload.stale });
+  } else if (ev.type === 'message' && payload?.role === 'assistant' && payload.stopReason) {
+    sessionStates.noteAssistantOutcome(ev.file, payload.stopReason, payload.error ?? '');
+  }
+  if (ev.type === 'message') emit({ type: 'message', file: ev.file, message: payload });
+  else if (ev.type === 'refresh') emitRefresh(ev.file);
+  else emit({ type: ev.type, file: ev.file, ...payload });
+}
+
+function wireClientEvents() {
+  const stream = client.subscribe('');
+  stream.on('data', handleClientEvent);
+  nestOnline = true;
+  console.log('[backend] agent event stream wired');
+}
+
+async function bootReconcile() {
+  try {
+    const { states } = await client.listStates();
+    for (const s of states) emitRefresh(s.agentId);
+    scheduleTreePush();
+  } catch {}
+  await sessionStates.probeNest(() => client.listStates(), resolveFileOutcome);
+  try {
+    const { states } = await client.listStates();
+    await sessionStates.reconcileNest(states, resolveFileOutcome, FILE_STALE_RUN_MS);
+  } catch {}
+}
+
+function restoreSpill() {
+  if (!registry || !existsSync(SPILL_PATH)) return;
+  try {
+    const data = JSON.parse(readFileSync(SPILL_PATH, 'utf8'));
+    unlinkSync(SPILL_PATH);
+    const entries = Array.isArray(data?.entries) ? data.entries : [];
+    void registry.restore(entries).then((n) => {
+      if (n > 0) console.log(`[backend] restored ${n} queued message(s) from spill`);
+    });
+  } catch (e) {
+    console.error('[backend] spill restore failed:', e?.message ?? e);
   }
 }
-relayNestEvents();
 
 function sendJson(res, code, obj) {
   const body = JSON.stringify(obj);
@@ -1043,6 +1051,9 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const p = url.pathname;
   try {
+    if (draining && req.method === 'POST' && p !== '/api/events/heartbeat') {
+      return sendJson(res, 503, { ok: false, error: 'backend is draining for restart' });
+    }
     if (p === '/api/events' && req.method === 'GET') {
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
@@ -1285,15 +1296,18 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (p === '/api/agent-states' && req.method === 'GET') {
+      const { states } = await client.listStates();
+      sendJson(res, 200, { states });
+      return;
+    }
+
     if (p === '/api/health') {
-      let nest = false;
-      try {
-        nest = (await client.ping()).ok;
-      } catch {}
       const s = memorySnapshot();
       sendJson(res, 200, {
         ok: true,
-        nest,
+        nest: true,
+        draining,
         mem: {
           rss: s.rss,
           heapUsed: s.heapUsed,
@@ -1398,11 +1412,31 @@ function logMemoryState(label) {
 
 setInterval(() => logMemoryState('tick'), 60_000);
 
-for (const sig of ['SIGINT', 'SIGTERM']) {
-  process.on(sig, () => {
+async function shutdownGracefully(sig) {
+  if (draining) return;
+  draining = true;
+  const t0 = Date.now();
+  console.log(`[backend] received ${sig} — draining (grace ${DRAIN_MS}ms)`);
+  server.close(() => {});
+  try {
+    if (registry) {
+      const spilled = await registry.drain({ timeoutMs: DRAIN_MS });
+      if (spilled.length > 0) {
+        writeFileSync(SPILL_PATH, JSON.stringify({ spilledAt: Date.now(), entries: spilled }));
+        const n = spilled.reduce((t, e) => t + e.items.length, 0);
+        console.log(`[backend] spilled ${n} queued message(s) across ${spilled.length} agent(s)`);
+      }
+    }
     sessionStates.flush();
-    process.exit(0);
-  });
+  } catch (e) {
+    console.error('[backend] drain error:', e?.message ?? e);
+  }
+  console.log(`[backend] drain complete in ${Date.now() - t0}ms — exiting`);
+  process.exit(0);
+}
+
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => void shutdownGracefully(sig));
 }
 
 const _ssePing = setInterval(() => {
@@ -1508,13 +1542,18 @@ async function watchSessionFiles() {
   }
 }
 
+if (registry) setInterval(() => registry.scanStaleRuns(), WATCHDOG_INTERVAL_MS).unref();
+
 void watchSessionFiles().then(() => {
   setInterval(watchSessionFiles, 2000);
 });
 
 server.listen(PORT, HOST, () => {
   logMemoryState('boot');
-  console.log(`pi-agent-studio backend on ${HOST}:${PORT} (gateway → pi-nest)`);
+  wireClientEvents();
+  void bootReconcile();
+  restoreSpill();
+  console.log(`pi-agent-studio backend on ${HOST}:${PORT}`);
   console.log(`sessions: ${SESSIONS_ROOT}`);
   console.log(`new chats cwd: ${NEW_CHAT_CWD}`);
 });

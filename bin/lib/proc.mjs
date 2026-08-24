@@ -97,8 +97,8 @@ function viteConfigMatches(arg) {
 }
 
 export function serviceOfCmdline(argv, cwd = null) {
-  if (argv.some((a) => a.endsWith('pi-nest/src/index.mjs'))) return 'nest';
-  if (argv.some((a) => a.endsWith('src/pi-studio/server/index.mjs'))) return 'gateway';
+  if (argv.some((a) => a.endsWith('pi-nest/src/index.mjs'))) return 'backend';
+  if (argv.some((a) => a.endsWith('src/pi-studio/server/index.mjs'))) return 'backend';
   if (argv.some(viteArgMatches) && argv.some(viteConfigMatches)) {
     if (cwd && path.basename(cwd) === 'pi-agent-studio') return 'web';
     if (cwd && /(^|\/)pi-agent-studio$/.test(path.dirname(cwd))) return 'web';

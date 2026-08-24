@@ -20,25 +20,25 @@ const VERSION = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8'),
 ).version;
 
-const USAGE = `studio — manage pi-agent-studio stacks (nest · gateway · web)
+const USAGE = `studio — manage pi-agent-studio stacks (backend · web)
 
 usage: studio [-i <instance>] <command> [options]
 
 commands:
-  up [service]              start the stack (nest → gateway → web), health-gated;
-                            adopts already-running services; 'up gateway'
-                            starts its nest pair first
-  down [service]            stop the full stack (web + gateway + nest pair);
-                            'down gateway' also stops its nest pair;
-                            nest-stopping paths ask the covenant guard
-  restart <service>         stop + start one service; restart gateway keeps
-                            its nest pair alive (agents keep streaming);
-                            restart nest is guarded
-  kill <service> [--force]  hard stop (SIGTERM → grace → SIGKILL);
-                            killing gateway stops its nest pair too
+  up [service]              start the stack (backend → web), health-gated;
+                            adopts already-running services
+  down [service]            stop the stack (web + backend); backend stops
+                            gracefully (drains agents, spills queued prompts)
+  restart <service>         stop + start one service; restart backend is
+                            graceful: in-flight prompts drain (abort at the
+                            deadline), queued prompts spill to disk and are
+                            restored on boot; refused without --yes when no
+                            backend code changed since start
+  kill <service> [--force]  hard stop (SIGTERM → short grace → SIGKILL);
+                            guarded while agents are live
   status                    stack overview for all instances (or -i <id>)
   logs [service] [-f] [-n N]  tail managed service logs
-  agents                    live agents on this instance's nest
+  agents                    live agents on this instance's backend
   abort <agent-id>          abort one agent
   doctor [--fix]            diagnostics; --fix clears stale pidfiles + orphans,
                             installs the git guard hooks when missing
@@ -54,14 +54,14 @@ commands:
 
 options:
   -i, --instance <id>       select instance (default: detected from cwd, else main)
-  --port web=7500           ephemeral port override (web|gateway|nest)
+  --port web=7500           ephemeral port override (web|backend)
   --sessions <dir>          sessions dir override
   --host <host>             web bind host override
   --json                    machine-readable output (ndjson events for up)
   -q, --quiet               suppress human output
-  --yes                     skip guard prompts (nest restart/kill)
+  --yes                     skip guard prompts (backend restart/kill)
 
-config precedence: CLI args > environment (PI_NEST_*, PI_STUDIO_*) > instance
+config precedence: CLI args > environment (PI_STUDIO_*) > instance
 config (<pair-root>/.studio/config/instances/) > built-in defaults`;
 
 function parseRest(rest, valueFlags = []) {
@@ -170,7 +170,7 @@ async function main() {
       const { positional, flags } = parseRest(args, ['port', 'sessions', 'host']);
       const inst = resolveInstance(instanceId);
       const service = positional[0];
-      if (!service) throw new CliError(`${command} requires a service: nest | gateway | web`, 2);
+      if (!service) throw new CliError(`${command} requires a service: backend | web`, 2);
       const opts = {
         service,
         force: !!flags.force,

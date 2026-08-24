@@ -5,8 +5,9 @@ import { fileURLToPath } from 'node:url';
 
 export const PRODUCT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const SF_ROOT = path.join(path.dirname(PRODUCT_ROOT), 'StudioFramework');
-export const RESERVED_PORTS = [7492, 7494, 7495];
-export const SERVICE_NAMES = ['nest', 'gateway', 'web'];
+export const RESERVED_PORTS = [7492, 7494];
+export const SERVICE_NAMES = ['backend', 'web'];
+export const BACKEND_WATCH_PATHS = ['src/pi-nest', 'src/pi-studio/server'];
 
 export function mainPairRoot() {
   return path.dirname(PRODUCT_ROOT);
@@ -81,6 +82,17 @@ export function logPath(id, service) {
   return path.join(instanceStateDir(id), 'logs', `${service}.log`);
 }
 
+export function auditPath(id) {
+  return id ? path.join(instanceStateDir(id), 'audit.log') : path.join(stateRoot(), 'audit.log');
+}
+
+export function appendAudit(id, meta) {
+  try {
+    fs.mkdirSync(path.dirname(auditPath(id)), { recursive: true });
+    fs.appendFileSync(auditPath(id), `${JSON.stringify({ ts: new Date().toISOString(), ...meta })}\n`);
+  } catch {}
+}
+
 export function defaultSessionsDir() {
   return path.join(os.homedir(), '.pi', 'agent', 'sessions');
 }
@@ -125,7 +137,9 @@ export function loadInstance(id) {
   const file = path.join(instancesDir(), `${id}.json`);
   if (!fs.existsSync(file)) return null;
   try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
+    const rec = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (rec && rec.backendPort == null && rec.gatewayPort != null) rec.backendPort = rec.gatewayPort;
+    return rec;
   } catch {
     return null;
   }
@@ -159,8 +173,7 @@ export function ensureMain() {
     pairRoot,
     branch: 'main',
     webPort: 7492,
-    gatewayPort: 7494,
-    nestPort: 7495,
+    backendPort: 7494,
     host: '0.0.0.0',
     createdAt: Date.now(),
   };

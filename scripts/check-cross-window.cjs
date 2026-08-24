@@ -27,10 +27,9 @@ function freePort() {
 }
 
 async function pickPorts() {
-  const nest = Number(process.env.XWIN_NEST_PORT) || (await freePort());
   const backend = Number(process.env.XWIN_BACKEND_PORT) || (await freePort());
   const vite = Number(process.env.XWIN_VITE_PORT) || (await freePort());
-  return { nest, backend, vite };
+  return { backend, vite };
 }
 
 const PNG1 = Buffer.from(
@@ -196,7 +195,7 @@ function makeReporter() {
   let browser;
   try {
     const ports = await pickPorts();
-    console.log(`stack: nest :${ports.nest} backend :${ports.backend} vite :${ports.vite}`);
+    console.log(`stack: backend :${ports.backend} vite :${ports.vite}`);
     writeSessions();
     writeTestImages();
     fs.rmSync(TEST_STATES_PATH, { force: true });
@@ -204,26 +203,17 @@ function makeReporter() {
     procs.push(
       spawnBg(
         'node',
-        ['src/pi-nest/src/index.mjs'],
-        { PI_NEST_PORT: String(ports.nest), PI_NEST_CWD: TEST_CWD },
-        '/tmp/xwin-check-nest.log',
-      ),
-    );
-    await delay(1200);
-    procs.push(
-      spawnBg(
-        'node',
         ['src/pi-studio/server/index.mjs'],
         {
           PI_STUDIO_PORT: String(ports.backend),
-          PI_NEST_PORT: String(ports.nest),
           PI_STUDIO_SESSIONS: ISOLATED_ROOT,
           PI_STUDIO_STATES_PATH: TEST_STATES_PATH,
+          PI_STUDIO_CWD: TEST_CWD,
         },
         '/tmp/xwin-check-backend.log',
       ),
     );
-    await waitHttp(`http://127.0.0.1:${ports.backend}/api/health`, 'gateway');
+    await waitHttp(`http://127.0.0.1:${ports.backend}/api/health`, 'backend');
     procs.push(
       spawnBg(
         'node',

@@ -25,7 +25,7 @@ import {
   cmdDown,
   httpJson,
   listStatesSafe,
-  pingNest,
+  pingBackend,
   serviceStatus,
 } from './stack.mjs';
 import { errSym, formatBytes, okSym, paint, printTable, warnSym } from './ui.mjs';
@@ -245,14 +245,14 @@ export async function cmdInstanceLs(out) {
   for (const id of listInstances()) {
     const inst = loadInstance(id);
     let upCount = 0;
-    for (const svc of ['nest', 'gateway', 'web']) {
+    for (const svc of ['backend', 'web']) {
       if (serviceStatus(inst, svc, attributed).state !== 'stopped') upCount += 1;
     }
     rows.push([
       id,
       inst.branch ?? '',
       String(inst.webPort ?? ''),
-      `${upCount}/3`,
+      `${upCount}/2`,
       inst.pairRoot ?? '',
       id === 'main' ? paint('gray', 'product') : '',
     ]);
@@ -315,7 +315,7 @@ export async function cmdInstanceRm(out, id) {
   const inst = loadInstance(id);
   if (!inst) throw new CliError(`instance '${id}' not found`, 2);
   if (id === 'main') throw new CliError('main cannot be removed', 2);
-  for (const svc of ['nest', 'gateway', 'web']) {
+  for (const svc of ['backend', 'web']) {
     const rec = readPidfile(pidfilePath(id, svc));
     if (rec?.pid && alive(rec.pid)) {
       throw new CliError(`instance '${id}' still has a live ${svc} — run studio -i ${id} down first`, 1);
@@ -358,7 +358,7 @@ async function doctorInstance(inst, results) {
   if (inst.branch && branch && branch !== inst.branch && branch !== 'unknown') {
     push('branch drift', 'warn', `recorded ${inst.branch}, checked out ${branch}`);
   }
-  for (const svc of ['nest', 'gateway', 'web']) {
+  for (const svc of ['backend', 'web']) {
     const rec = readPidfile(pidfilePath(inst.id, svc));
     if (!rec?.pid) continue;
     if (!alive(rec.pid)) {
@@ -366,7 +366,7 @@ async function doctorInstance(inst, results) {
     }
   }
   const attributed = attributeProcesses([inst]);
-  for (const svc of ['nest', 'gateway', 'web']) {
+  for (const svc of ['backend', 'web']) {
     const rec = readPidfile(pidfilePath(inst.id, svc));
     const mine = attributed.rows.filter((r) => r.instanceId === inst.id && r.service === svc);
     const primary = mine.find((r) => r.pid === rec?.pid);
@@ -386,30 +386,27 @@ async function doctorInstance(inst, results) {
       }
     }
   }
-  const nestRec = readPidfile(pidfilePath(inst.id, 'nest')) ?? {};
-  const gwRec = readPidfile(pidfilePath(inst.id, 'gateway')) ?? {};
-  if (alive(nestRec.pid)) {
-    const ping = await pingNest(nestRec.port ?? inst.nestPort ?? 7495);
-    push('nest ping', ping.ok ? 'ok' : 'err', ping.ok ? '' : `unreachable on :${nestRec.port}`);
+  const backendRec = readPidfile(pidfilePath(inst.id, 'backend')) ?? {};
+  if (alive(backendRec.pid)) {
+    const ping = await pingBackend(backendRec.port ?? inst.backendPort ?? 7494);
+    push('backend ping', ping.ok ? 'ok' : 'err', ping.ok ? '' : `unreachable on :${backendRec.port}`);
     if (ping.ok) {
-      const states = await listStatesSafe(nestRec.port);
-      if (states) push('nest agents', 'info', `${states.length} open`);
+      const states = await listStatesSafe(backendRec.port);
+      if (states) push('backend agents', 'info', `${states.length} open`);
     }
-  }
-  if (alive(gwRec.pid)) {
-    const r = await httpJson(gwRec.port ?? inst.gatewayPort ?? 7494);
-    if (r.status !== 200 || !r.json?.ok) push('gateway health', 'err', `:${gwRec.port} not healthy`);
+    const r = await httpJson(backendRec.port ?? inst.backendPort ?? 7494);
+    if (r.status !== 200 || !r.json?.ok) push('backend health', 'err', `:${backendRec.port} not healthy`);
     else {
       const mem = r.json.mem ?? {};
       const heapPct = mem.heapLimit ? (mem.heapUsed / mem.heapLimit) * 100 : 0;
       if (heapPct >= 85 || (mem.rss ?? 0) >= 1.7 * 1024 * 1024 * 1024) {
         push(
-          'gateway health',
+          'backend health',
           'warn',
           `rss ${formatBytes(mem.rss)} · heap ${heapPct.toFixed(0)}% near ceiling`,
         );
       } else {
-        push('gateway health', 'ok', `rss ${formatBytes(mem.rss)} · ${r.json.sseClients ?? 0} sse clients`);
+        push('backend health', 'ok', `rss ${formatBytes(mem.rss)} · ${r.json.sseClients ?? 0} sse clients`);
       }
     }
   }
@@ -527,7 +524,7 @@ export async function cmdDoctor(out, opts = {}) {
       await cmdGuard(out, { action: 'install' });
       fixed += 1;
     }
-    for (const svc of ['nest', 'gateway', 'web']) {
+    for (const svc of ['backend', 'web']) {
       for (const inst of insts) {
         const rec = readPidfile(pidfilePath(inst.id, svc));
         if (rec && !alive(rec.pid)) {
@@ -536,16 +533,30 @@ export async function cmdDoctor(out, opts = {}) {
         }
       }
     }
+    const isolatedRegistry = !!(process.env.PI_STUDIO_CONFIG_DIR || process.env.PI_STUDIO_STATE_DIR);
     for (const u of unattributed) {
+      if (isolatedRegistry) {
+        out.line(
+          `${warnSym} orphan ${u.service} pid ${u.pid} left alone (isolated registry — belongs to another instance set)`,
+        );
+        continue;
+      }
       out.line(`${warnSym} killing orphan ${u.service} pid ${u.pid}`);
+      appendAudit(null, {
+        action: 'terminate',
+        reason: 'doctor-orphan-sweep',
+        service: u.service,
+        pid: u.pid,
+        caller: process.argv.slice(1).join(' '),
+      });
       await terminate(u.pid, 3000);
       fixed += 1;
     }
     for (const inst of insts) {
       const attributed2 = attributeProcesses([inst]);
-      for (const svc of ['nest', 'gateway', 'web']) {
+      for (const svc of ['backend', 'web']) {
         const rec = readPidfile(pidfilePath(inst.id, svc));
-        const expected = svc === 'nest' ? inst.nestPort : svc === 'gateway' ? inst.gatewayPort : inst.webPort;
+        const expected = svc === 'backend' ? inst.backendPort : inst.webPort;
         const mine = attributed2.rows.filter((r) => r.instanceId === inst.id && r.service === svc);
         const primary =
           mine.find((r) => r.pid === rec?.pid) ??
@@ -554,6 +565,13 @@ export async function cmdDoctor(out, opts = {}) {
         for (const extra of mine) {
           if (extra === primary) continue;
           out.line(`${warnSym} killing stray ${inst.id}/${svc} pid ${extra.pid}`);
+          appendAudit(inst.id, {
+            action: 'terminate',
+            reason: 'doctor-stray-sweep',
+            service: svc,
+            pid: extra.pid,
+            caller: process.argv.slice(1).join(' '),
+          });
           await terminate(extra.pid, 3000);
           fixed += 1;
         }
@@ -584,7 +602,7 @@ export async function cmdClean(out, opts = {}) {
   let count = 0;
   if (doPidfiles || all) {
     for (const id of listInstances()) {
-      for (const svc of ['nest', 'gateway', 'web']) {
+      for (const svc of ['backend', 'web', 'nest', 'gateway']) {
         const file = pidfilePath(id, svc);
         const rec = readPidfile(file);
         if (rec?.pid && !alive(rec.pid)) {

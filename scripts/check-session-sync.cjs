@@ -4,12 +4,9 @@ const http = require('node:http');
 const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
-const { once } = require('node:events');
-const grpc = require('@grpc/grpc-js');
-const protoLoader = require('@grpc/proto-loader');
+const { writeStubClient } = require('./lib/stub-backend.cjs');
 
 const PRODUCT_ROOT = path.join(__dirname, '..');
-const PROTO_PATH = path.join(PRODUCT_ROOT, 'src', 'pi-nest', 'proto', 'pi_nest.proto');
 const RUN_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'session-sync-'));
 const SESSIONS_ROOT = path.join(RUN_ROOT, 'sessions');
 const STATES_PATH = path.join(RUN_ROOT, 'states.json');
@@ -86,62 +83,6 @@ function writeSessionFile(name, { error = false, turns = 2 } = {}) {
   const old = new Date(Date.now() - 60_000);
   fs.utimesSync(file, old, old);
   return file;
-}
-
-function startStubNest(port) {
-  const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
-    keepCase: false,
-    longs: Number,
-    defaults: true,
-    oneofs: true,
-  });
-  const piNest = grpc.loadPackageDefinition(packageDefinition).pi_nest;
-  let stream = null;
-  let liveStates = [];
-  const server = new grpc.Server();
-  server.addService(piNest.PiNest.service, {
-    ping: (_call, cb) => cb(null, { ok: true }),
-    createSession: (_call, cb) => cb(null, { file: '/unused' }),
-    openAgent: (_call, cb) => cb(null, { ok: true, state: null }),
-    closeAgent: (_call, cb) => cb(null, { ok: true }),
-    prompt: (_call, cb) => cb(null, { ok: true }),
-    abort: (_call, cb) => cb(null, { ok: true }),
-    slash: (call, cb) => {
-      if (call.request.command === 'delete') {
-        try {
-          fs.rmSync(call.request.agentId, { force: true });
-        } catch {}
-        return cb(null, { ok: true, notice: 'Session deleted.' });
-      }
-      cb(null, { ok: true });
-    },
-    getSlashCatalog: (_call, cb) => cb(null, { commandsJson: '[]', skillsJson: '[]' }),
-    listStates: (_call, cb) => cb(null, { states: liveStates }),
-    getAgentState: (_call, cb) => cb(null, { state: null }),
-    subscribe: (call) => {
-      stream = call;
-      call.on('cancelled', () => {
-        if (stream === call) stream = null;
-      });
-    },
-  });
-  const writeEvent = async (type, file, payload) => {
-    if (!stream) throw new Error('no relay subscriber yet');
-    const okToWrite = stream.write({ type, file, json: JSON.stringify(payload ?? {}) });
-    if (!okToWrite) await once(stream, 'drain').catch(() => {});
-  };
-  return new Promise((resolve, reject) => {
-    server.bindAsync(`127.0.0.1:${port}`, grpc.ServerCredentials.createInsecure(), (err) => {
-      if (err) return reject(err);
-      resolve({
-        server,
-        writeEvent,
-        setLiveStates: (s) => {
-          liveStates = s;
-        },
-      });
-    });
-  });
 }
 
 function postJson(port, p, body) {
@@ -266,13 +207,14 @@ async function waitDown(port, tries = 40) {
   throw new Error('gateway never went down');
 }
 
-function spawnGateway(port, nestPort) {
+function spawnBackend(port, stub) {
   const child = spawn('node', ['src/pi-studio/server/index.mjs'], {
     cwd: PRODUCT_ROOT,
     env: {
       ...process.env,
       PI_STUDIO_PORT: String(port),
-      PI_NEST_PORT: String(nestPort),
+      PI_STUDIO_CLIENT_MODULE: stub.stubPath,
+      STUB_CONTROL_FILE: stub.controlPath,
       PI_STUDIO_SESSIONS: SESSIONS_ROOT,
       PI_STUDIO_STATES_PATH: STATES_PATH,
       PI_STUDIO_CWD: RUN_ROOT,
@@ -290,10 +232,9 @@ async function stateOfSession(port, file) {
 
 (async () => {
   const { report, isFailed } = makeReporter();
-  const nestPort = await freePort();
   const gatewayPort = await freePort();
-  const stub = await startStubNest(nestPort);
-  let gateway = spawnGateway(gatewayPort, nestPort);
+  const stub = writeStubClient(RUN_ROOT);
+  let gateway = spawnBackend(gatewayPort, stub);
   await waitHealthy(gatewayPort);
 
   const F_ERR = writeSessionFile('sync-err', { error: true });
@@ -322,7 +263,7 @@ async function stateOfSession(port, file) {
   report('S1 prompt marks the session working and syncs to all frontends', t.ok, t.why);
 
   t = await (async () => {
-    await stub.writeEvent('message', F_OK, {
+    await stub.emit('message', F_OK, {
       id: 'asst-1',
       role: 'assistant',
       text: 'done',
@@ -330,7 +271,7 @@ async function stateOfSession(port, file) {
       error: 'API quota reached',
       ts: Date.now(),
     });
-    await stub.writeEvent('session_status', F_OK, { status: 'idle' });
+    await stub.emit('session_status', F_OK, { status: 'idle' });
     const ev = await waitFor(
       A,
       (e) => e.type === 'session_state' && e.file === F_OK && e.state === 'error',
@@ -386,8 +327,8 @@ async function stateOfSession(port, file) {
 
   t = await (async () => {
     await postJson(gatewayPort, '/api/chat', { file: F_ERR, message: 'run' });
-    await stub.writeEvent('session_status', F_ERR, { status: 'running' });
-    await stub.writeEvent('session_status', F_ERR, { status: 'idle', stale: true });
+    await stub.emit('session_status', F_ERR, { status: 'running' });
+    await stub.emit('session_status', F_ERR, { status: 'idle', stale: true });
     const ev = await waitFor(
       A,
       (e) => e.type === 'session_state' && e.file === F_ERR && e.state === 'error',
@@ -399,8 +340,8 @@ async function stateOfSession(port, file) {
 
   t = await (async () => {
     await postJson(gatewayPort, '/api/chat', { file: F_WORK, message: 'run' });
-    await stub.writeEvent('session_status', F_WORK, { status: 'running' });
-    await stub.writeEvent('session_status', F_WORK, { status: 'idle' });
+    await stub.emit('session_status', F_WORK, { status: 'running' });
+    await stub.emit('session_status', F_WORK, { status: 'idle' });
     const unreadEv = await waitFor(
       A,
       (e) => e.type === 'session_state' && e.file === F_WORK && e.state === 'unread',
@@ -453,8 +394,8 @@ async function stateOfSession(port, file) {
       .map((e) => `${path.basename(e.file)}:${e.state}`)
       .sort()
       .join(',');
-    stub.setLiveStates([]);
-    gateway = spawnGateway(gatewayPort, nestPort);
+    stub.setStates([]);
+    gateway = spawnBackend(gatewayPort, stub);
     await waitHealthy(gatewayPort);
     await delay(1500);
     const errState = await stateOfSession(gatewayPort, F_ERR);
@@ -541,12 +482,12 @@ async function stateOfSession(port, file) {
     const F_MULTI = writeSessionFile('sync-multi', {});
     const r1 = await postJson(gatewayPort, '/api/chat', { file: F_OK, message: 'run 1' });
     const r2 = await postJson(gatewayPort, '/api/chat', { file: F_MULTI, message: 'run 2' });
-    stub.setLiveStates([
+    stub.setStates([
       { agentId: F_OK, status: 'running' },
       { agentId: F_MULTI, status: 'running' },
     ]);
-    await stub.writeEvent('session_status', F_OK, { status: 'running' });
-    await stub.writeEvent('session_status', F_MULTI, { status: 'running' });
+    await stub.emit('session_status', F_OK, { status: 'running' });
+    await stub.emit('session_status', F_MULTI, { status: 'running' });
     const E = sseClient(gatewayPort);
     await waitReady(E);
     await delay(500);
@@ -557,7 +498,7 @@ async function stateOfSession(port, file) {
       (x) => (x.file === F_OK || x.file === F_MULTI) && x.running,
     ).length;
     E.destroy();
-    stub.setLiveStates([]);
+    stub.setStates([]);
     return {
       ok: r1.status === 200 && r2.status === 200 && s1 === 'working' && s2 === 'working' && runningBoth === 2,
       why: `two concurrent web-UI runs: ${s1}/${s2} running-flag count:${runningBoth}`,
@@ -568,7 +509,7 @@ async function stateOfSession(port, file) {
   t = await (async () => {
     const F_R1 = writeSessionFile('sync-recon1', {});
     const F_R2 = writeSessionFile('sync-recon2', {});
-    stub.setLiveStates([
+    stub.setStates([
       { agentId: F_R1, status: 'running' },
       { agentId: F_R2, status: 'running' },
     ]);
@@ -583,7 +524,7 @@ async function stateOfSession(port, file) {
       (e) => e.type === 'session_state' && (e.file === F_R1 || e.file === F_R2) && e.state === 'working',
     );
     E.destroy();
-    stub.setLiveStates([]);
+    stub.setStates([]);
     return {
       ok: preListed === 0 && after1 === 'working' && after2 === 'working' && evs.length >= 2,
       why: `nest-running, no registry entry: snapshot pre-listed:${preListed} → poll reconciled to ${after1}/${after2} (events:${evs.length})`,
@@ -593,7 +534,7 @@ async function stateOfSession(port, file) {
 
   A.destroy();
   gateway.kill('SIGTERM');
-  await new Promise((resolve) => stub.server.tryShutdown(resolve));
+
   console.log(isFailed() ? 'session-sync checks FAILED' : 'session-sync checks passed');
   process.exitCode = isFailed() ? 1 : 0;
 })().catch((e) => {

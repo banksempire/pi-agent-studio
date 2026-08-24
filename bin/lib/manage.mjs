@@ -86,6 +86,23 @@ function validatePair(pairRoot) {
   return { repo, sf };
 }
 
+function copyModulesFrom(srcRepo, dstRepo) {
+  const src = path.join(srcRepo, 'node_modules');
+  const dst = path.join(dstRepo, 'node_modules');
+  if (fs.existsSync(dst) || !fs.existsSync(src)) return false;
+  try {
+    execFileSync('cp', ['-al', src, dst]);
+    return true;
+  } catch {
+    try {
+      fs.cpSync(src, dst, { recursive: true });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
 async function npmInstallIfMissing(dir, { skip = false } = {}) {
   if (fs.existsSync(path.join(dir, 'node_modules'))) return false;
   if (skip) {
@@ -138,6 +155,9 @@ export async function cmdInit(out, opts = {}) {
     ? path.resolve(opts.sessions)
     : path.join(pairRoot, '.studio', 'sessions');
   fs.mkdirSync(sessionsDir, { recursive: true });
+  const copiedPa = copyModulesFrom(PRODUCT_ROOT, repo);
+  const copiedSf = copyModulesFrom(SF_ROOT, path.join(pairRoot, 'StudioFramework'));
+  if (copiedPa || copiedSf) out.line(`${okSym} node_modules hardlink-copied (no install needed)`);
   const skippedPa = await npmInstallIfMissing(repo, { skip: opts.noInstall });
   const skippedSf = await npmInstallIfMissing(path.join(pairRoot, 'StudioFramework'), {
     skip: opts.noInstall,
@@ -400,6 +420,49 @@ async function doctorInstance(inst, results) {
   }
 }
 
+function guardHooksDir() {
+  return path.join(PRODUCT_ROOT, 'hooks');
+}
+
+export async function cmdGuard(out, { action = 'status' } = {}) {
+  const hooksDir = guardHooksDir();
+  if (action === 'install') {
+    for (const f of ['pre-commit', 'pre-push']) {
+      const p = path.join(hooksDir, f);
+      if (fs.existsSync(p)) fs.chmodSync(p, 0o755);
+    }
+    for (const repo of [PRODUCT_ROOT, SF_ROOT]) {
+      git(['config', 'core.hooksPath', hooksDir], repo);
+      out.line(`${okSym} ${path.basename(repo)} → core.hooksPath ${hooksDir}`);
+    }
+    return;
+  }
+  for (const repo of [PRODUCT_ROOT, SF_ROOT]) {
+    const cur = git(['config', 'core.hooksPath'], repo, { allowFail: true });
+    out.line(`${path.basename(repo)}: ${cur ?? '(not set) — studio guard install'}`);
+  }
+}
+
+function guardCheck(results) {
+  const hooksDir = guardHooksDir();
+  let missing = false;
+  for (const repo of [PRODUCT_ROOT, SF_ROOT]) {
+    const cur = git(['config', 'core.hooksPath'], repo, { allowFail: true });
+    if (cur === hooksDir) {
+      results.push({ scope: 'guard', name: path.basename(repo), level: 'ok', detail: 'hooks active' });
+    } else {
+      missing = true;
+      results.push({
+        scope: 'guard',
+        name: path.basename(repo),
+        level: 'warn',
+        detail: 'core.hooksPath not set — studio guard install',
+      });
+    }
+  }
+  return missing;
+}
+
 export async function cmdDoctor(out, opts = {}) {
   const results = [];
   const nodeMajor = Number(process.versions.node.split('.')[0]);
@@ -409,6 +472,7 @@ export async function cmdDoctor(out, opts = {}) {
     level: nodeMajor >= 18 ? 'ok' : 'err',
     detail: nodeMajor >= 18 ? `${nodeMajor}.x` : `node ${nodeMajor}.x too old (need >= 18)`,
   });
+  const guardMissing = guardCheck(results);
   const ids = opts.instance ? [opts.instance] : listInstances();
   const insts = ids.map((id) => loadInstance(id)).filter(Boolean);
   for (const inst of insts) await doctorInstance(inst, results);
@@ -459,6 +523,10 @@ export async function cmdDoctor(out, opts = {}) {
   }
   if (opts.fix) {
     let fixed = 0;
+    if (guardMissing) {
+      await cmdGuard(out, { action: 'install' });
+      fixed += 1;
+    }
     for (const svc of ['nest', 'gateway', 'web']) {
       for (const inst of insts) {
         const rec = readPidfile(pidfilePath(inst.id, svc));

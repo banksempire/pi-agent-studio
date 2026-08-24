@@ -40,7 +40,11 @@ commands:
   logs [service] [-f] [-n N]  tail managed service logs
   agents                    live agents on this instance's nest
   abort <agent-id>          abort one agent
-  doctor [--fix]            diagnostics; --fix clears stale pidfiles + orphans
+  doctor [--fix]            diagnostics; --fix clears stale pidfiles + orphans,
+                            installs the git guard hooks when missing
+  guard [install|status]    install/inspect core.hooksPath on both repos
+                            (pre-commit: main-branch rule + biome gate;
+                            pre-push: typecheck)
   clean [--snapshots] [--pidfiles] [--instances]
   open                      open this instance's web URL
   init                      register the pair root in cwd as an instance
@@ -211,6 +215,11 @@ async function main() {
       const inst = resolveInstance(instanceId);
       if (!positional[0]) throw new CliError('abort requires an agent id', 2);
       await cmdAbort(out, inst, positional[0]);
+      return 0;
+    }
+    case 'guard': {
+      const { positional } = parseRest(args, []);
+      await manage.cmdGuard(out, { action: positional[0] ?? 'status' });
       return 0;
     }
     case 'doctor': {

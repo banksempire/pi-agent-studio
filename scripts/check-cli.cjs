@@ -11,12 +11,14 @@ const RUN_ID = `studio-cli-check-${process.pid}-${Date.now()}`;
 const BASE = path.join(path.dirname(PRODUCT_ROOT), '.studio-check', RUN_ID);
 const CFG = path.join(BASE, 'config');
 const STATE = path.join(BASE, 'state');
-const WT = path.join(BASE, 'wt');
+const WT = path.join(BASE, '.branch');
 const PAIR = path.join(WT, 'check');
 const ID = 'check';
 const RESERVED = [7492, 7493, 7494, 7495];
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const run = (cmd, args, cwd, env) => spawnSync(cmd, args, { cwd, encoding: 'utf8', env: env ?? process.env });
 
 function makeReporter() {
   let failed = false;
@@ -107,6 +109,46 @@ async function main() {
 
   fs.mkdirSync(WT, { recursive: true });
 
+  const HOOKS = path.join(PRODUCT_ROOT, 'hooks');
+  const scratch = path.join(BASE, 'guard-scratch');
+  fs.mkdirSync(scratch, { recursive: true });
+  run('git', ['init', '-q', '-b', 'main'], scratch);
+  run('git', ['config', 'user.email', 'check@studio.local'], scratch);
+  run('git', ['config', 'user.name', 'studio-check'], scratch);
+  run('git', ['config', 'core.hooksPath', HOOKS], scratch);
+  fs.writeFileSync(path.join(scratch, 'code.ts'), 'x\n');
+  run('git', ['add', '.'], scratch);
+  const g1 = run('git', ['commit', '-qm', 'probe'], scratch);
+  report(
+    'guard blocks non-docs commit outside .branch',
+    g1.status !== 0 && /refusing commit on main/.test(g1.stderr),
+    '',
+  );
+  const g2 = run('git', ['commit', '-qm', 'probe'], scratch, { ...process.env, STUDIO_ALLOW_MAIN: '1' });
+  report('STUDIO_ALLOW_MAIN overrides the main rule', g2.status === 0, g2.stderr);
+  fs.writeFileSync(path.join(scratch, 'notes.md'), 'x\n');
+  run('git', ['add', '.'], scratch);
+  const g3 = run('git', ['commit', '-qm', 'docs'], scratch);
+  report('docs-only commits allowed on main', g3.status === 0, g3.stderr);
+  run('git', ['checkout', '-q', '-b', 'feat'], scratch);
+  fs.writeFileSync(path.join(scratch, 'feat.ts'), 'x\n');
+  run('git', ['add', '.'], scratch);
+  run('git', ['commit', '-qm', 'feat'], scratch, { ...process.env, STUDIO_ALLOW_MAIN: '1' });
+  run('git', ['checkout', '-q', 'main'], scratch);
+  const g4 = run('git', ['merge', '--no-ff', '-qm', 'merge feat', 'feat'], scratch);
+  report('merge commits allowed on main (release path)', g4.status === 0, g4.stderr);
+
+  const branchRepo = path.join(BASE, '.branch', 'demo-repo');
+  fs.mkdirSync(branchRepo, { recursive: true });
+  run('git', ['init', '-q', '-b', 'main'], branchRepo);
+  run('git', ['config', 'user.email', 'check@studio.local'], branchRepo);
+  run('git', ['config', 'user.name', 'studio-check'], branchRepo);
+  run('git', ['config', 'core.hooksPath', HOOKS], branchRepo);
+  fs.writeFileSync(path.join(branchRepo, 'code.ts'), 'x\n');
+  run('git', ['add', '.'], branchRepo);
+  const g5 = run('git', ['commit', '-qm', 'probe'], branchRepo);
+  report('commits inside .branch/* allowed', g5.status === 0, g5.stderr);
+
   const mainPair = path.dirname(PRODUCT_ROOT);
   const envProbe = spawnSync(
     'node',
@@ -143,12 +185,6 @@ async function main() {
     cwd: SF_ROOT,
   });
   sh('cp', ['-r', `${path.join(PRODUCT_ROOT, 'src')}/.`, path.join(PAIR, 'pi-agent-studio', 'src')]);
-  sh('cp', [
-    '-al',
-    path.join(PRODUCT_ROOT, 'node_modules'),
-    path.join(PAIR, 'pi-agent-studio', 'node_modules'),
-  ]);
-  sh('cp', ['-al', path.join(SF_ROOT, 'node_modules'), path.join(PAIR, 'StudioFramework', 'node_modules')]);
 
   try {
     const initRes = studio(
@@ -159,6 +195,26 @@ async function main() {
       },
     );
     report('studio init registers the pair', initRes.status === 0);
+    report(
+      'init hardlink-copies node_modules (zero-friction branch setup)',
+      fs.existsSync(path.join(PAIR, 'pi-agent-studio', 'node_modules', '.bin', 'vite')),
+      '',
+    );
+
+    const pairRepo = path.join(PAIR, 'pi-agent-studio');
+    const hookGit = ['-c', `core.hooksPath=${path.join(PRODUCT_ROOT, 'hooks')}`];
+    fs.writeFileSync(path.join(pairRepo, 'lintprobe.mjs'), 'const x = "double";\n');
+    sh('git', [...hookGit, 'add', 'lintprobe.mjs'], { cwd: pairRepo });
+    const b1 = run('git', [...hookGit, 'commit', '-qm', 'lint probe'], pairRepo);
+    report(
+      'pre-commit blocks lint errors (biome gate)',
+      b1.status !== 0 && /biome|lint/.test(b1.stdout + b1.stderr),
+      b1.stdout.slice(0, 80),
+    );
+    fs.writeFileSync(path.join(pairRepo, 'lintprobe.mjs'), "export const x = 'single';\n");
+    sh('git', [...hookGit, 'add', 'lintprobe.mjs'], { cwd: pairRepo });
+    const b2 = run('git', [...hookGit, 'commit', '-qm', 'lint probe fixed'], pairRepo);
+    report('pre-commit passes when biome-clean', b2.status === 0, b2.stderr);
 
     const upRes = studio(['-i', ID, 'up'], { env, expect: 0, label: 'up' });
     report('studio up starts the stack', upRes.status === 0, upRes.status === 0 ? '' : upRes.stderr);

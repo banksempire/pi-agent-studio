@@ -190,13 +190,22 @@ export function attributeProcesses(instances = null) {
       }
     }
     if (!instanceId && proc.cwd) {
-      for (const inst of insts) {
-        const root = path.resolve(inst.pairRoot ?? '');
-        if (root && (proc.cwd === root || proc.cwd.startsWith(`${root}${path.sep}`))) {
-          instanceId = inst.id;
-          via = 'cwd';
-          break;
+      let best = null;
+      let bestLen = -1;
+      for (const inst of listInstances().map((id) => loadInstance(id))) {
+        const root = path.resolve(inst?.pairRoot ?? '');
+        if (
+          root &&
+          (proc.cwd === root || proc.cwd.startsWith(`${root}${path.sep}`)) &&
+          root.length > bestLen
+        ) {
+          best = inst;
+          bestLen = root.length;
         }
+      }
+      if (best && insts.some((i) => i.id === best.id)) {
+        instanceId = best.id;
+        via = 'cwd';
       }
     }
     if (!instanceId) {

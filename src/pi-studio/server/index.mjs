@@ -753,7 +753,11 @@ async function resolveFileOutcome(file) {
 }
 
 function syncViewState(file) {
-  sessionStates.noteViews(file, viewersOf(file).length);
+  const viewers = viewersOf(file).length;
+  sessionStates.noteViews(file, viewers);
+  if (viewers === 0 && registry && !existsSync(file) && registry.pendingInfo(file)) {
+    registry.close(file);
+  }
 }
 
 const conns = new Map();

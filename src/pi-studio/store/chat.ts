@@ -651,6 +651,7 @@ async function fetchList() {
     ];
     syncTabStatuses();
     state.backend = 'online';
+    saveDrafts();
     sweepGhostChatTabs();
   } catch (_e) {
     state.backend = 'offline';
@@ -1158,6 +1159,7 @@ export function bindWorkspace(api: WorkspaceApi) {
       if (state.reviewTabId && !ids.includes(state.reviewTabId)) {
         state.reviewTabId = null;
       }
+      sweepLazySessions(new Set(ids));
       syncViewSubscriptions();
     },
     { immediate: true },
@@ -1504,6 +1506,31 @@ export async function renameSession(sessionId: string, name: string): Promise<bo
   }
 }
 
+function forgetSessionUi(s: ChatSession) {
+  forgetVisit(s.file);
+  delete state.drafts[s.id];
+  delete windowUi[s.id];
+  delete state.sessionErrors[s.id];
+  delete sessionAttachments[s.id];
+  delete sessionOpenGroups[s.id];
+  forgetChatScroll(s.id);
+  saveDrafts();
+}
+
+function sweepLazySessions(openIds: Set<string>) {
+  const keep: ChatSession[] = [];
+  let changed = false;
+  for (const s of state.sessions) {
+    if (!s.onDisk && s.messages.length === 0 && !openIds.has(chatTabId(s.id))) {
+      forgetSessionUi(s);
+      changed = true;
+    } else {
+      keep.push(s);
+    }
+  }
+  if (changed) state.sessions = keep;
+}
+
 export async function deleteSession(sessionId: string): Promise<boolean> {
   const s = findSession(sessionId);
   if (!s) return false;
@@ -1519,15 +1546,8 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
       state.lastError = j.error || 'Delete failed';
       return false;
     }
-    forgetVisit(s.file);
-    delete state.drafts[sessionId];
-    delete windowUi[sessionId];
-    delete state.sessionErrors[sessionId];
-    delete sessionAttachments[sessionId];
-    delete sessionOpenGroups[sessionId];
-    forgetChatScroll(sessionId);
+    forgetSessionUi(s);
     state.sessions = state.sessions.filter((x) => x.id !== sessionId);
-    saveDrafts();
     await refreshList();
     return true;
   } catch (e) {

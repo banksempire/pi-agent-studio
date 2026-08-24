@@ -1196,7 +1196,7 @@ function makeReporter() {
       t17.why,
     );
 
-    const t18 = await (async () => {
+    const t19 = await (async () => {
       const histSub = page.locator('.sf-subsection:has([data-sub-body="history"])');
       const plusBtn = histSub.locator('.sf-subsection-util[title="New Chat (Ctrl+N)"]');
       const newRow = () => page.locator('[data-sub-body="history"] .chat-list-item:has-text("New Chat")');
@@ -1231,9 +1231,76 @@ function makeReporter() {
       };
     })();
     report(
-      'T18 lazy New Chat never shows in history nor persists — one window only, gone after reload',
-      t18.ok,
-      t18.why,
+      'T19 lazy New Chat never shows in history nor persists — one window only, gone after reload',
+      t19.ok,
+      t19.why,
+    );
+
+    const t20 = await (async () => {
+      const jsonlFiles = () => fs.readdirSync(TEST_SESSIONS_DIR).filter((f) => f.endsWith('.jsonl'));
+      const agentStates = () =>
+        page.evaluate(() =>
+          fetch('/api/agent-states')
+            .then((r) => r.json())
+            .then((j) => j.states ?? []),
+        );
+      const draftsClean = async () => {
+        const drafts = await page.evaluate(() => JSON.parse(localStorage.getItem('sf-chat:drafts') || '{}'));
+        const onDisk = new Set(jsonlFiles());
+        const stale = Object.keys(drafts).filter((k) => !onDisk.has(path.basename(decodeURIComponent(k))));
+        return { ok: stale.length === 0, stale: stale.length };
+      };
+      const statesFileClean = () => {
+        if (!fs.existsSync(TEST_STATES_PATH)) return true;
+        const onDisk = new Set(jsonlFiles());
+        let j;
+        try {
+          j = JSON.parse(fs.readFileSync(TEST_STATES_PATH, 'utf8'));
+        } catch {
+          return false;
+        }
+        return (j.entries ?? []).every((e) => onDisk.has(path.basename(e.file)));
+      };
+      const filesBefore = jsonlFiles().length;
+      const agentsBefore = (await agentStates()).length;
+      const boot = await draftsClean();
+      const histSub = page.locator('.sf-subsection:has([data-sub-body="history"])');
+      const plusBtn = histSub.locator('.sf-subsection-util[title="New Chat (Ctrl+N)"]');
+      await histSub.locator('.sf-subsection-header').hover();
+      await delay(150);
+      await plusBtn.click({ force: true });
+      await delay(1200);
+      const lazyTile = page.locator('.sf-tile:has(.sf-tab:has-text("New Chat"))').first();
+      await lazyTile.locator('.chat-input').first().fill('unsent lazy draft');
+      await delay(600);
+      const filesWithLazyOpen = jsonlFiles().length;
+      const pendingWhileOpen = (await agentStates()).length;
+      await page.locator('.sf-tab:has-text("New Chat")').first().click({ button: 'middle' });
+      let pendingAfterClose = -1;
+      for (let i = 0; i < 20; i++) {
+        await delay(300);
+        pendingAfterClose = (await agentStates()).length;
+        if (pendingAfterClose <= agentsBefore) break;
+      }
+      const filesAfterClose = jsonlFiles().length;
+      const drafts = await draftsClean();
+      const statesOk = statesFileClean();
+      return {
+        ok:
+          boot.ok &&
+          filesWithLazyOpen === filesBefore &&
+          pendingWhileOpen === agentsBefore + 1 &&
+          pendingAfterClose === agentsBefore &&
+          filesAfterClose === filesBefore &&
+          drafts.ok &&
+          statesOk,
+        why: `bootDraftsStale:${boot.stale} files:${filesBefore}→${filesWithLazyOpen}→${filesAfterClose} agents:${agentsBefore}→${pendingWhileOpen}→${pendingAfterClose} draftsStale:${drafts.stale} statesFileClean:${statesOk}`,
+      };
+    })();
+    report(
+      'T20 lazy New Chat leaves nothing behind — no file, pending dropped on close, drafts/states clean',
+      t20.ok,
+      t20.why,
     );
 
     if (errors.length) console.log(`page errors: ${errors.join(' | ')}`);

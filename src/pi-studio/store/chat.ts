@@ -311,32 +311,9 @@ const state = reactive<ChatState>({
   prefs: loadPrefs(),
 });
 
-const PENDING_KEY = 'sf-chat:pending';
-
-interface PendingChatInfo {
-  file: string;
-  cwd: string;
-  createdAt: number;
-}
-
-function loadPendingChats(): PendingChatInfo[] {
-  try {
-    const raw = localStorage.getItem(PENDING_KEY);
-    if (raw) {
-      const j = JSON.parse(raw);
-      if (Array.isArray(j)) {
-        return j.filter((p) => p && typeof p.file === 'string');
-      }
-    }
-  } catch {}
-  return [];
-}
-
-function persistPendingChats(list: PendingChatInfo[]) {
-  try {
-    localStorage.setItem(PENDING_KEY, JSON.stringify(list.slice(-20)));
-  } catch {}
-}
+try {
+  localStorage.removeItem('sf-chat:pending');
+} catch {}
 
 function pendingSessionEntry(file: string, cwd: string, createdAt: number): ChatSession {
   return {
@@ -382,15 +359,6 @@ function pendingSessionEntry(file: string, cwd: string, createdAt: number): Chat
     onDisk: false,
   };
 }
-
-function seedPendingSessions() {
-  const known = new Set(state.sessions.map((s) => s.file));
-  for (const p of loadPendingChats()) {
-    if (!known.has(p.file)) state.sessions.push(pendingSessionEntry(p.file, p.cwd, p.createdAt));
-  }
-}
-
-seedPendingSessions();
 
 const TAB_PREFIX = 'chat-';
 const chatTabId = (sessionId: string) => TAB_PREFIX + sessionId;
@@ -607,10 +575,6 @@ async function fetchList() {
     }
     if (!sameSessionStates(state.sessionStates, synced)) state.sessionStates = synced;
     pruneVisits(onDisk);
-    const pending = loadPendingChats();
-    if (pending.some((p) => onDisk.has(p.file))) {
-      persistPendingChats(pending.filter((p) => !onDisk.has(p.file)));
-    }
     const memoryOnly = state.sessions.filter((s) => !onDisk.has(s.file) && !s.onDisk);
     if (
       memoryOnly.length === 0 &&
@@ -646,8 +610,19 @@ async function fetchList() {
     ];
     syncTabStatuses();
     state.backend = 'online';
+    sweepGhostChatTabs();
   } catch (_e) {
     state.backend = 'offline';
+  }
+}
+
+function sweepGhostChatTabs() {
+  if (!ws) return;
+  for (const tabId of Object.keys(ws.tabDefs)) {
+    if (!tabId.startsWith(TAB_PREFIX)) continue;
+    if (ws.tabDefs[tabId].content !== BLANK_CONTENT) continue;
+    if (findSession(tabId.slice(TAB_PREFIX.length))) continue;
+    ws.ops.closeTab(tabId);
   }
 }
 
@@ -1281,11 +1256,6 @@ export async function newChat(): Promise<void> {
     const now = Date.now();
     if (!findSession(id)) {
       state.sessions.unshift(pendingSessionEntry(file, NEW_CHAT_CWD, now));
-      const pending = loadPendingChats();
-      if (!pending.some((p) => p.file === file)) {
-        pending.push({ file, cwd: NEW_CHAT_CWD, createdAt: now });
-        persistPendingChats(pending);
-      }
     }
     openChat(id);
   } catch (e) {
@@ -1515,7 +1485,6 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
     delete sessionAttachments[sessionId];
     delete sessionOpenGroups[sessionId];
     forgetChatScroll(sessionId);
-    persistPendingChats(loadPendingChats().filter((p) => p.file !== s.file));
     state.sessions = state.sessions.filter((x) => x.id !== sessionId);
     saveDrafts();
     await refreshList();
@@ -1669,7 +1638,7 @@ export const store = {
     return state.sessions;
   },
   get filteredSessions() {
-    return state.sessions.filter((s) => cwdMatches(s, state.selectedDirs));
+    return state.sessions.filter((s) => s.onDisk && cwdMatches(s, state.selectedDirs));
   },
   get selectedDirs() {
     return state.selectedDirs;

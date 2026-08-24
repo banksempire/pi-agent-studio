@@ -110,6 +110,7 @@ function scrollToBottom() {
   const el = listEl.value;
   if (!el) return;
   const { max } = posInfo(el);
+  scrollBias = 0;
   el.scrollTop = zeroIsBottom ? 0 : max;
 }
 
@@ -144,6 +145,33 @@ function clampScroll(max: number, v: number): number {
 }
 
 let scrollAnchor: { sid: string; row: HTMLElement; top: number } | null = null;
+let scrollBias = 0;
+let scrollScale: number | null = null;
+let scrollScaleTried = false;
+
+function detectScrollScale(el: HTMLElement): number | null {
+  const base = el.scrollTop;
+  const p1 = base + 3.63;
+  const p2 = base + 1.27;
+  el.scrollTop = p1;
+  const l1 = el.scrollTop;
+  el.scrollTop = p2;
+  const l2 = el.scrollTop;
+  el.scrollTop = base;
+  if (el.scrollTop !== base) return null;
+  const dpr = window.devicePixelRatio || 1;
+  const candidates = [dpr, 1, 0.9, 1.1, 1.25, 4 / 3, 1.5, 1.75, 2, 2.25, 2.5, 0.75, 0.8];
+  let best: number | null = null;
+  let bestErr = Infinity;
+  for (const c of candidates) {
+    const err = Math.abs(Math.round(p1 * c) / c - l1) + Math.abs(Math.round(p2 * c) / c - l2);
+    if (err < bestErr) {
+      bestErr = err;
+      best = c;
+    }
+  }
+  return bestErr <= 0.05 ? best : null;
+}
 
 function captureAnchor() {
   scrollAnchor = null;
@@ -164,12 +192,26 @@ function applyAnchor() {
   const a = scrollAnchor;
   scrollAnchor = null;
   const el = listEl.value;
-  if (!el || !a || a.sid !== props.sessionId || !a.row.isConnected) return;
+  if (!el || !a || a.sid !== props.sessionId || !a.row.isConnected) {
+    scrollBias = 0;
+    return;
+  }
   const { max, distFromTop } = posInfo(el);
-  if (distFromTop > max - STICKY_ZONE) return;
-  const delta = a.row.getBoundingClientRect().top - el.getBoundingClientRect().top - a.top;
+  if (distFromTop > max - STICKY_ZONE) {
+    scrollBias = 0;
+    return;
+  }
+  const delta = a.row.getBoundingClientRect().top - el.getBoundingClientRect().top - a.top + scrollBias;
+  scrollBias = 0;
   if (!delta) return;
-  el.scrollTop = clampScroll(max, el.scrollTop + delta);
+  const target = clampScroll(max, el.scrollTop + delta);
+  if (scrollScale === null && !scrollScaleTried && el.scrollHeight > el.clientHeight) {
+    scrollScaleTried = true;
+    scrollScale = detectScrollScale(el);
+  }
+  const s = scrollScale;
+  el.scrollTop = s === null ? target : Math.round(target * s) / s;
+  scrollBias = target - el.scrollTop;
 }
 
 let sepJumpAt = 0;
@@ -1023,6 +1065,7 @@ watch(
   () => props.sessionId,
   (newId, oldId) => {
     const el = listEl.value;
+    scrollBias = 0;
     if (el && oldId) {
       captureScroll(el, chatScrollOf(oldId));
     }

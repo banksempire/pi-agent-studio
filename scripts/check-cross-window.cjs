@@ -1196,6 +1196,37 @@ function makeReporter() {
       t17.why,
     );
 
+    const t18 = await (async () => {
+      const histSub = page.locator('.sf-subsection:has([data-sub-body="history"])');
+      const plusBtn = histSub.locator('.sf-subsection-util[title="New Chat (Ctrl+N)"]');
+      const newRow = () => page.locator('[data-sub-body="history"] .chat-list-item:has-text("New Chat")');
+      await histSub.locator('.sf-subsection-header').hover();
+      await delay(150);
+      for (let i = 0; i < 3; i++) {
+        await plusBtn.click({ force: true });
+        await delay(900);
+      }
+      await delay(1200);
+      const rowsAfterPlus = await newRow().count();
+      const newTabs = await page.locator('.sf-tab:has-text("New Chat")').count();
+      await newRow().first().click({ button: 'right' });
+      await page.locator('.sf-sm-menu .sf-sm-menu-row', { hasText: 'Delete' }).click();
+      let rowsAfterDelete = await newRow().count();
+      for (let i = 0; i < 20 && rowsAfterDelete > 0; i++) {
+        await delay(300);
+        rowsAfterDelete = await newRow().count();
+      }
+      return {
+        ok: rowsAfterPlus === 1 && newTabs === 1 && rowsAfterDelete === 0,
+        why: `rowsAfter3xPlus:${rowsAfterPlus} tabs:${newTabs} rowsAfterDelete:${rowsAfterDelete}`,
+      };
+    })();
+    report(
+      'T18 "+" reuses the single lazy New Chat row; delete removes the non-materialized chat',
+      t18.ok,
+      t18.why,
+    );
+
     if (errors.length) console.log(`page errors: ${errors.join(' | ')}`);
     const failed = isFailed() || errors.length > 0;
     console.log(failed ? '\nCROSS-WINDOW CHECKS FAILED' : '\nALL CROSS-WINDOW CHECKS PASSED');

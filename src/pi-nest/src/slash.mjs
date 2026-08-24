@@ -415,7 +415,7 @@ export async function execSlash(registry, { agentId, command, args, extra = {} }
       if (st?.status === 'running') {
         return { ok: false, error: 'The session is generating a response — stop it first.' };
       }
-      if (st?.status === 'pending') {
+      if (st?.status === 'pending' && !registry.pendingInfo(file)) {
         return { ok: false, error: 'The session has queued messages — wait for them to finish.' };
       }
       const root = path.resolve(SESSIONS_ROOT);

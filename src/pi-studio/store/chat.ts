@@ -898,13 +898,16 @@ function pushPingSample(ms: number | null) {
   state.pingSamples.push({ t: now, ms });
 }
 
-function postStreamSignal(endpoint: string, files: string[]) {
-  if (!esClientId || files.length === 0) return;
-  fetch(endpoint, {
+function postStreamSignal(endpoint: string, files: string[]): Promise<void> {
+  if (!esClientId || files.length === 0) return Promise.resolve();
+  return fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ clientId: esClientId, files }),
-  }).catch(() => {});
+  }).then(
+    () => {},
+    () => {},
+  );
 }
 
 const visitSentAt: Record<string, number> = {};
@@ -1494,7 +1497,7 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
   const s = findSession(sessionId);
   if (!s) return false;
   closeChatView(sessionId);
-  postStreamSignal('/api/events/close', [s.file]);
+  await postStreamSignal('/api/events/close', [s.file]);
   try {
     const j = await api<any>('/api/slash', {
       method: 'POST',
@@ -1512,6 +1515,8 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
     delete sessionAttachments[sessionId];
     delete sessionOpenGroups[sessionId];
     forgetChatScroll(sessionId);
+    persistPendingChats(loadPendingChats().filter((p) => p.file !== s.file));
+    state.sessions = state.sessions.filter((x) => x.id !== sessionId);
     saveDrafts();
     await refreshList();
     return true;

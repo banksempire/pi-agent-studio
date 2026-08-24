@@ -1,6 +1,6 @@
 import { BLANK_CONTENT, type ExternalDropTarget, type WorkspaceApi } from '@sf/composables/useWorkspace';
 import type { WorkspaceTabDef } from '@sf/types/layout';
-import { readUiValue, uiEpoch, writeUiValue } from '@sf/uiState';
+import { readUiValue, removeUiValue, uiEpoch, writeUiValue } from '@sf/uiState';
 import { collectAllTabs, firstTile } from '@sf/workspace/tree';
 import { reactive, watch } from 'vue';
 
@@ -187,13 +187,20 @@ function setSendKey(mode: SendKeyMode) {
 }
 
 function loadDrafts(): Record<string, string> {
-  const j = readPersistedObject('app.chat.drafts', DRAFTS_KEY);
-  if (!j) return {};
-  const out: Record<string, string> = {};
-  for (const [id, text] of Object.entries(j)) {
-    if (typeof text === 'string') out[id] = text;
-  }
-  return out;
+  try {
+    const raw = localStorage.getItem(DRAFTS_KEY);
+    if (raw) {
+      const j = JSON.parse(raw);
+      if (j && typeof j === 'object' && !Array.isArray(j)) {
+        const out: Record<string, string> = {};
+        for (const [id, text] of Object.entries(j)) {
+          if (typeof text === 'string') out[id] = text;
+        }
+        return out;
+      }
+    }
+  } catch {}
+  return {};
 }
 function saveDrafts() {
   if (state.sessions.length > 0) {
@@ -202,8 +209,25 @@ function saveDrafts() {
       if (!known.has(id)) delete state.drafts[id];
     }
   }
-  writePersistedObject('app.chat.drafts', DRAFTS_KEY, state.drafts);
+  try {
+    localStorage.setItem(DRAFTS_KEY, JSON.stringify(state.drafts));
+  } catch {}
 }
+
+function migrateDraftsOutOfUiStore(): void {
+  const v = readUiValue('app.chat.drafts');
+  if (v === undefined) return;
+  if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+    try {
+      if (localStorage.getItem(DRAFTS_KEY) === null) {
+        localStorage.setItem(DRAFTS_KEY, JSON.stringify(v));
+      }
+    } catch {}
+  }
+  removeUiValue('app.chat.drafts');
+}
+
+migrateDraftsOutOfUiStore();
 
 export interface WindowUi {
   composerHeight: number | null;
@@ -322,13 +346,11 @@ const state = reactive<ChatState>({
 watch(uiEpoch, () => {
   state.stateFilter = loadStateFilter();
   state.prefs = loadPrefs();
-  state.drafts = loadDrafts();
 });
 
 if (readUiValue('app.chat.stateFilter') === undefined)
   writeUiValue('app.chat.stateFilter', state.stateFilter);
 if (readUiValue('app.chat.prefs') === undefined) writeUiValue('app.chat.prefs', state.prefs);
-if (readUiValue('app.chat.drafts') === undefined) writeUiValue('app.chat.drafts', state.drafts);
 
 const PENDING_KEY = 'sf-chat:pending';
 

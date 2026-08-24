@@ -107,6 +107,28 @@ async function main() {
   const webPort = await freePortAbove(7800);
   const env = { PI_NEST_PORT: String(nestPort), PI_STUDIO_PORT: String(gwPort) };
 
+  const CHECK_ROOT = path.join(path.dirname(PRODUCT_ROOT), '.studio-check');
+  if (fs.existsSync(CHECK_ROOT)) {
+    let swept = 0;
+    for (const pidDir of fs.readdirSync('/proc').filter((d) => /^\d+$/.test(d))) {
+      let cwd = null;
+      try {
+        cwd = fs.readlinkSync(`/proc/${pidDir}/cwd`);
+      } catch {
+        continue;
+      }
+      if (cwd?.startsWith(`${CHECK_ROOT}${path.sep}`)) {
+        try {
+          process.kill(Number(pidDir), 'SIGKILL');
+          swept += 1;
+        } catch {}
+      }
+    }
+    fs.rmSync(CHECK_ROOT, { recursive: true, force: true });
+    sh('git', ['worktree', 'prune'], { cwd: PRODUCT_ROOT, allowFail: true });
+    sh('git', ['worktree', 'prune'], { cwd: SF_ROOT, allowFail: true });
+    if (swept > 0) console.log(`  swept ${swept} leftover process(es) from a prior/killed run`);
+  }
   fs.mkdirSync(WT, { recursive: true });
 
   const HOOKS = path.join(PRODUCT_ROOT, 'hooks');
@@ -361,7 +383,7 @@ async function main() {
     });
     sh('git', ['worktree', 'prune'], { cwd: PRODUCT_ROOT, allowFail: true });
     sh('git', ['worktree', 'prune'], { cwd: SF_ROOT, allowFail: true });
-    fs.rmSync(BASE, { recursive: true, force: true });
+    if (!process.env.KEEPDIR) fs.rmSync(BASE, { recursive: true, force: true });
   }
 }
 

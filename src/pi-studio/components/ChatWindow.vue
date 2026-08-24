@@ -715,36 +715,26 @@ async function onPickerSelect(id: string) {
 const MOBILE_INPUT_MAX_PX = 120;
 const isMobile = ref(window.innerWidth < 500);
 
-function autoGrowMobileInput() {
-  const el = inputEl.value;
-  if (!el || !isMobile.value) return;
-  const borders = el.offsetHeight - el.clientHeight;
-  const contentH = el.scrollHeight + borders;
-  el.style.height = 'auto';
-  el.style.height = `${Math.min(contentH, MOBILE_INPUT_MAX_PX)}px`;
-  el.style.overflowY = contentH > MOBILE_INPUT_MAX_PX ? 'auto' : 'hidden';
-}
-
-function resetMobileInputHeight() {
+function autoGrowInput() {
   const el = inputEl.value;
   if (!el) return;
-  if (!isMobile.value && manualHeight.value !== null) return;
-  el.style.height = '';
-  el.style.overflowY = '';
+  el.style.height = 'auto';
+  const borders = el.offsetHeight - el.clientHeight;
+  const contentH = el.scrollHeight + borders;
+  const fs = parseFloat(getComputedStyle(el).fontSize) || 16;
+  const maxH = isMobile.value ? MOBILE_INPUT_MAX_PX : fs * MAX_INPUT_EM;
+  const baseH = !isMobile.value && manualHeight.value !== null ? manualHeight.value : 0;
+  const h = Math.min(Math.max(contentH, baseH), maxH);
+  el.style.height = `${h}px`;
+  el.style.overflowY = contentH > h ? 'auto' : 'hidden';
 }
 
 function onViewportResize() {
   isMobile.value = window.innerWidth < 500;
-  if (isMobile.value) autoGrowMobileInput();
-  else resetMobileInputHeight();
+  autoGrowInput();
 }
 
-watch(input, () => {
-  nextTick(() => {
-    if (input.value) autoGrowMobileInput();
-    else resetMobileInputHeight();
-  });
-});
+watch(input, () => nextTick(autoGrowInput));
 
 function send() {
   const text = input.value.trim();
@@ -921,6 +911,8 @@ const manualHeight = computed({
 const MIN_INPUT_EM = 1.4 + 2 * 0.44 + 2 / 16;
 const MAX_INPUT_EM = 320 / 16;
 
+watch(manualHeight, () => nextTick(autoGrowInput));
+
 let resizeCleanup: (() => void) | null = null;
 
 function startResize(e: MouseEvent) {
@@ -969,7 +961,7 @@ onMounted(() => {
   el?.addEventListener('touchstart', onTouchStart);
   el?.addEventListener('touchend', onTouchEnd);
   el?.addEventListener('touchcancel', onTouchEnd);
-  if (isMobile.value) nextTick(autoGrowMobileInput);
+  nextTick(autoGrowInput);
   if (el) {
     let firstObs = true;
     listObserver = new ResizeObserver(() => {
@@ -1247,7 +1239,6 @@ watch(
           class="chat-input"
           rows="1"
           :disabled="!!composerBlock"
-          :style="!isMobile && manualHeight !== null ? { height: manualHeight + 'px', maxHeight: manualHeight + 'px' } : {}"
           @keydown="onKeydown"
           @input="onComposerInput"
         />

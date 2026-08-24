@@ -62,7 +62,7 @@ options:
   --yes                     skip guard prompts (nest restart/kill)
 
 config precedence: CLI args > environment (PI_NEST_*, PI_STUDIO_*) > instance
-config (~/.config/pi-agent-studio/instances/) > built-in defaults`;
+config (<pair-root>/.studio/config/instances/) > built-in defaults`;
 
 function parseRest(rest, valueFlags = []) {
   const positional = [];

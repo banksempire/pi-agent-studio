@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 export const PRODUCT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const SF_ROOT = path.join(path.dirname(PRODUCT_ROOT), 'StudioFramework');
-export const RESERVED_PORTS = [7492, 7493, 7494, 7495];
+export const RESERVED_PORTS = [7492, 7494, 7495];
 export const SERVICE_NAMES = ['nest', 'gateway', 'web'];
 
 export function mainPairRoot() {
@@ -159,7 +159,7 @@ export function ensureMain() {
     pairRoot,
     branch: 'main',
     webPort: 7492,
-    gatewayPort: 7493,
+    gatewayPort: 7494,
     nestPort: 7495,
     host: '0.0.0.0',
     createdAt: Date.now(),

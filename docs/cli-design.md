@@ -51,7 +51,7 @@ picks any free port at stack start and wires the services together via ENV.
 
 | Port | Persistence | Rules |
 |:--|:--|:--|
-| `web` | Persisted in instance config; stable across restarts | Unique across instances; `main` = 7492; never 7493/7494/7495; no other instance may use 7492 |
+| `web` | Persisted in instance config; stable across restarts | Unique across instances; `main` = 7492; `test` conventionally pins 7493 (the exposed test port); never 7494/7495; no other instance may use 7492 |
 | `gateway` | Ephemeral; recorded in runtime state for the stack's lifetime | Chosen at `up` from free ports, loopback bind |
 | `nest` | Ephemeral; recorded in runtime state for the stack's lifetime | Chosen at `up` from free ports, loopback bind |
 
@@ -66,8 +66,12 @@ If that port was taken by a foreign process meanwhile: the port falls back to
 a fresh ephemeral pick, and `restart web` (re-wire) or `down && up` are the
 suggested remedies.
 
-Reserved ports: 7492 (product web), 7493 (gateway), 7494 (framework tests),
-7495 (nest gRPC) — the ephemeral picker skips them; only `main` uses 7492–7495.
+Reserved ports: 7492 (main web — the exposed production port), 7494
+(main gateway), 7495 (main nest) — the ephemeral picker skips them; only
+`main` uses 7494/7495. 7493 is the shared test port — the only other
+externally reachable port — hosting the `test` instance web, the
+StudioFramework check server, or ad-hoc test servers (first come, first
+served).
 
 Hosts: `web` binds `0.0.0.0` (or instance `host`); `nest` and `gateway` bind
 `127.0.0.1` always (loopback-only by design; gateway proxying happens
@@ -377,7 +381,7 @@ $ studio -i test up
 $ studio status
   INSTANCE  SERVICE   PID     STATE  PORT    DETAIL
   main      nest      14353   up     7495    2 agents (1 running) ⚠ destructive
-  main      gateway   27859   up     7493    rss 412 MB · 3 sse
+  main      gateway   27859   up     7494    rss 412 MB · 3 sse
   main      web       42416   up     7492
   test      nest      51017   up     34191   0 agents
   test      gateway   51044   up     34195   rss 88 MB

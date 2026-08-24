@@ -149,7 +149,7 @@ export async function cmdInit(out, opts = {}) {
     throw new CliError(`web port ${webPort} already used by instance '${used.get(webPort)}'`, 4);
   }
   if (webPort !== 7492 && RESERVED_PORTS.includes(webPort)) {
-    throw new CliError(`web port ${webPort} is reserved (7492-7495 belong to main)`, 4);
+    throw new CliError(`web port ${webPort} is reserved (7492/7494/7495 belong to main)`, 4);
   }
   const sessionsDir = opts.sessions
     ? path.resolve(opts.sessions)
@@ -298,7 +298,7 @@ export async function cmdInstanceSet(out, id, pairs) {
       value = Number(value);
       if (!Number.isFinite(value)) throw new CliError(`${key} must be a number`, 2);
       if (key === 'webPort' && value !== 7492 && RESERVED_PORTS.includes(value) && id !== 'main') {
-        throw new CliError(`web port ${value} is reserved (7492-7495 belong to main)`, 4);
+        throw new CliError(`web port ${value} is reserved (7492/7494/7495 belong to main)`, 4);
       }
       const used = webPortsInUse(id);
       if (key === 'webPort' && used.has(value)) {
@@ -397,7 +397,7 @@ async function doctorInstance(inst, results) {
     }
   }
   if (alive(gwRec.pid)) {
-    const r = await httpJson(gwRec.port ?? inst.gatewayPort ?? 7493);
+    const r = await httpJson(gwRec.port ?? inst.gatewayPort ?? 7494);
     if (r.status !== 200 || !r.json?.ok) push('gateway health', 'err', `:${gwRec.port} not healthy`);
     else {
       const mem = r.json.mem ?? {};

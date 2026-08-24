@@ -32,7 +32,7 @@ export default defineConfig({
     },
     proxy: {
       '/api': {
-        target: process.env.PI_API_PROXY ?? 'http://127.0.0.1:7493',
+        target: process.env.PI_API_PROXY ?? 'http://127.0.0.1:7494',
         changeOrigin: true,
       },
     },

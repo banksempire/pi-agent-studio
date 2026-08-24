@@ -31,12 +31,12 @@ APP: Chat
 Two processes, both served from `/workspace/sf`:
 
 ```bash
-npm run server   # backend: node server/index.mjs → 0.0.0.0:7493
-npm run dev      # frontend: vite → 0.0.0.0:7492 (proxies /api → 7493)
+npm run server   # backend: node server/index.mjs → 127.0.0.1:7494
+npm run dev      # frontend: vite → 0.0.0.0:7492 (proxies /api → 7494)
 ```
 
 Open http://localhost:7492. Backend config via env:
-`PI_STUDIO_PORT` (7493), `PI_STUDIO_CWD` (new-chat working dir, default
+`PI_STUDIO_PORT` (7494), `PI_STUDIO_CWD` (new-chat working dir, default
 `/workspace/sf`), `PI_SDK_DIR` (default: global pi install), `PI_SESSION_FILE`
 (session to mark read-only — auto-set when run under pi), `PI_TUI_PID`
 (optional: pin the TUI process; default: scan for a live `pi` process).

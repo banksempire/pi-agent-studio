@@ -7,8 +7,8 @@ import { getHeapStatistics } from 'node:v8';
 import { createClient, waitForNest } from '../../pi-nest/src/client.mjs';
 import { createSessionStates } from './session-states.mjs';
 
-const PORT = Number(process.env.PI_STUDIO_PORT ?? 7493);
-const HOST = process.env.PI_STUDIO_HOST ?? '0.0.0.0';
+const PORT = Number(process.env.PI_STUDIO_PORT ?? 7494);
+const HOST = process.env.PI_STUDIO_HOST ?? '127.0.0.1';
 const NEW_CHAT_CWD = process.env.PI_STUDIO_CWD ?? '/workspace/sf';
 const SESSIONS_ROOT = process.env.PI_STUDIO_SESSIONS ?? path.join(os.homedir(), '.pi', 'agent', 'sessions');
 

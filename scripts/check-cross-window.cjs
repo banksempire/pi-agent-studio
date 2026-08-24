@@ -1379,6 +1379,62 @@ function makeReporter() {
       t20.why,
     );
 
+    const t21 = await (async () => {
+      const marker = 'XWin-D:';
+      const i = await tabIndex(marker);
+      if (i >= 0) {
+        await page.locator('.sf-tab-label').nth(i).click({ button: 'middle' });
+        for (let k = 0; k < 20 && (await tabIndex(marker)) >= 0; k++) await delay(300);
+      }
+      await page.setViewportSize({ width: 450, height: 900 });
+      await delay(500);
+      const dockChat = page.locator('.sf-docker-app[title="Chat"]');
+      const openList = async () => {
+        await dockChat.click();
+        await delay(400);
+      };
+      await openList();
+      await page.locator(`.chat-list-item:has-text("${marker}")`).first().click({ force: true });
+      await delay(2500);
+      await page.locator('.sf-panel-close-btn').click();
+      await delay(400);
+      const label = page.locator('.sf-mobile-tab-label');
+      await label.waitFor({ state: 'visible', timeout: 10000 });
+      const reviewOn = () => label.evaluate((el) => el.classList.contains('sf-tab--review'));
+      const dimBefore = await reviewOn();
+      const b = await label.boundingBox();
+      await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+      await page.mouse.down();
+      await delay(900);
+      await page.mouse.up();
+      await delay(600);
+      const pinned = !(await reviewOn());
+      const dropdownClosed = (await page.locator('.sf-tab-dropdown').count()) === 0;
+      await openList();
+      await page.locator('.chat-list-item:has-text("XWin-C:")').first().click({ force: true });
+      await delay(2500);
+      await page.locator('.sf-panel-close-btn').click();
+      await delay(400);
+      await label.click();
+      await delay(300);
+      const rows = await page.locator('.sf-tab-dropdown .sf-tab-dropdown-label').allInnerTexts();
+      const kept = rows.some((t) => t.includes('XWin-D'));
+      const freshReview = await reviewOn();
+      await page.locator('.sf-tab-dropdown-close').click();
+      await delay(200);
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await delay(500);
+      return {
+        ok: dimBefore && pinned && dropdownClosed && kept && freshReview,
+        why: `review:${dimBefore} pinnedByLongPress:${pinned} dropdownStayedClosed:${dropdownClosed} pinnedTabKept:${kept} nextChatIsReview:${freshReview}`,
+      };
+    })();
+    report(
+      'T21 mobile: long-press on the tab selection bar makes a window out of review mode',
+      t21.ok,
+      t21.why,
+    );
+
     if (errors.length) console.log(`page errors: ${errors.join(' | ')}`);
     const failed = isFailed() || errors.length > 0;
     console.log(failed ? '\nCROSS-WINDOW CHECKS FAILED' : '\nALL CROSS-WINDOW CHECKS PASSED');

@@ -4,12 +4,9 @@ const http = require('node:http');
 const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
-const { once } = require('node:events');
-const grpc = require('@grpc/grpc-js');
-const protoLoader = require('@grpc/proto-loader');
+const { writeStubClient } = require('./lib/stub-backend.cjs');
 
 const PRODUCT_ROOT = path.join(__dirname, '..');
-const PROTO_PATH = path.join(PRODUCT_ROOT, 'src', 'pi-nest', 'proto', 'pi_nest.proto');
 const BACKEND_LOG = '/tmp/sse-flood-backend.log';
 const BACKEND_HEAP_MB = Number(process.env.SSE_FLOOD_HEAP_MB || 256);
 const QUEUE_CAP_MB = Number(process.env.SSE_FLOOD_QUEUE_CAP_MB || 4);
@@ -56,37 +53,6 @@ function parseFrames(buf) {
     }
   }
   return events;
-}
-
-function startStubNest(port) {
-  const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
-    keepCase: false,
-    longs: Number,
-    defaults: true,
-    oneofs: true,
-  });
-  const piNest = grpc.loadPackageDefinition(packageDefinition).pi_nest;
-  let stream = null;
-  const server = new grpc.Server();
-  server.addService(piNest.PiNest.service, {
-    ping: (_, cb) => cb(null, { ok: true }),
-    listStates: (_, cb) => cb(null, { states: [] }),
-    getAgentState: (_, cb) => cb(null, { state: null }),
-    subscribe: (call) => {
-      stream = call;
-    },
-  });
-  const writeEvent = async (type, payload) => {
-    if (!stream) throw new Error('no relay subscriber yet');
-    const okToWrite = stream.write({ type, file: FLOOD_FILE, json: JSON.stringify(payload) });
-    if (!okToWrite) await once(stream, 'drain').catch(() => {});
-  };
-  return new Promise((resolve, reject) => {
-    server.bindAsync(`127.0.0.1:${port}`, grpc.ServerCredentials.createInsecure(), (err) => {
-      if (err) return reject(err);
-      resolve({ server, writeEvent });
-    });
-  });
 }
 
 function health(port) {
@@ -201,7 +167,7 @@ function killClient(c) {
   } catch {}
 }
 
-async function runBackend(nestPort, opts) {
+async function runBackend(stub, opts) {
   const port = await freePort();
   const child = spawn(
     process.execPath,
@@ -211,7 +177,8 @@ async function runBackend(nestPort, opts) {
       env: {
         ...process.env,
         PI_STUDIO_PORT: String(port),
-        PI_NEST_PORT: String(nestPort),
+        PI_STUDIO_CLIENT_MODULE: stub.stubPath,
+        STUB_CONTROL_FILE: stub.controlPath,
         PI_STUDIO_SESSIONS: opts.sessionsDir,
         PI_STUDIO_CWD: opts.cwdDir,
         PI_STUDIO_SSE_MAX_QUEUED: String(QUEUE_CAP_MB * 1024 * 1024),
@@ -244,23 +211,24 @@ async function runBackend(nestPort, opts) {
   const { report, isFailed } = makeReporter();
   const sessionsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sse-flood-sessions-'));
   const cwdDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sse-flood-cwd-'));
-  const nestPort = await freePort();
-  const stub = await startStubNest(nestPort);
+  const runRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'sse-flood-run-'));
+  const stub = writeStubClient(runRoot);
+  const writeEvent = async (type, payload) => {
+    stub.emit(type, FLOOD_FILE, payload);
+    await delay(5);
+  };
   const backends = [];
   const clients = [];
 
   const cleanup = () => {
     for (const c of clients) killClient(c);
     for (const b of backends) b.stop();
-    try {
-      stub.server.tryShutdown(() => {});
-    } catch {}
-    for (const d of [sessionsDir, cwdDir]) fs.rmSync(d, { recursive: true, force: true });
+    for (const d of [sessionsDir, cwdDir, runRoot]) fs.rmSync(d, { recursive: true, force: true });
   };
 
   try {
     console.log('phase 1 — fold + valve (beating views)');
-    const b1 = await runBackend(nestPort, {
+    const b1 = await runBackend(stub, {
       sessionsDir,
       cwdDir,
       hbIntervalMs: 500,
@@ -277,7 +245,7 @@ async function runBackend(nestPort, opts) {
 
     for (let i = 1; i <= PHASE1_FRAMES; i++) {
       const isFinal = i === PHASE1_FRAMES;
-      await stub.writeEvent('message', {
+      await writeEvent('message', {
         id: MSG_ID,
         role: 'assistant',
         text: isFinal
@@ -329,7 +297,7 @@ async function runBackend(nestPort, opts) {
     stalled.res.pause();
     stalled.res.removeAllListeners('data');
     for (let i = 0; i < PHASE2_IDS; i++) {
-      await stub.writeEvent('message', {
+      await writeEvent('message', {
         id: `burst-${i}`,
         role: 'assistant',
         text: `burst ${i} ${'y'.repeat(PHASE2_PAYLOAD)}`,
@@ -347,7 +315,7 @@ async function runBackend(nestPort, opts) {
       `stalledClosed=${stalled.closed} health=${h2.status} ${b1.died()}`,
     );
 
-    await stub.writeEvent('message', {
+    await writeEvent('message', {
       id: 'sentinel',
       role: 'assistant',
       text: 'SENTINEL-AFTER-DROP',
@@ -367,7 +335,7 @@ async function runBackend(nestPort, opts) {
     await delay(1000);
 
     console.log('phase 2 — dead-frontend (missed heartbeats) + one queue per session');
-    const b2 = await runBackend(nestPort, { sessionsDir, cwdDir, hbIntervalMs: 500, hbMissedLimit: 8 });
+    const b2 = await runBackend(stub, { sessionsDir, cwdDir, hbIntervalMs: 500, hbMissedLimit: 8 });
     backends.push(b2);
 
     const dead = await sseClient(b2.port, { files: [FLOOD_FILE], label: 'dead' });
@@ -377,7 +345,7 @@ async function runBackend(nestPort, opts) {
     dead.res.removeAllListeners('data');
     dead.stopBeating();
     for (let i = 0; i < 60; i++) {
-      await stub.writeEvent('message', {
+      await writeEvent('message', {
         id: MSG_ID,
         role: 'assistant',
         text: `dead-probe ${i} ${'z'.repeat(PHASE1_PAYLOAD)}`,
@@ -411,7 +379,7 @@ async function runBackend(nestPort, opts) {
     await delay(600);
     for (let i = 1; i <= SHARED_FRAMES; i++) {
       const isFinal = i === SHARED_FRAMES;
-      await stub.writeEvent('message', {
+      await writeEvent('message', {
         id: MSG_ID,
         role: 'assistant',
         text: isFinal
@@ -461,7 +429,7 @@ async function runBackend(nestPort, opts) {
       `close=${closeA} sse=${afterClose.json ? afterClose.json.sseClients : '?'} views=${afterClose.json ? afterClose.json.sseViews : '?'}`,
     );
 
-    await stub.writeEvent('message', {
+    await writeEvent('message', {
       id: 'postclose',
       role: 'assistant',
       text: 'POST-CLOSE-MARKER',
@@ -487,7 +455,7 @@ async function runBackend(nestPort, opts) {
       `sse=${afterReconcile.json ? afterReconcile.json.sseClients : '?'} views=${afterReconcile.json ? afterReconcile.json.sseViews : '?'}`,
     );
 
-    await stub.writeEvent('message', {
+    await writeEvent('message', {
       id: 'noviewer',
       role: 'assistant',
       text: 'NO-VIEWER-MARKER',

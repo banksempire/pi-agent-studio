@@ -1,10 +1,13 @@
 import { EventEmitter } from 'node:events';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { extractText, hashId, messageId, newSessionPath, sdk, toDisplayMessage } from './sdk-bridge.mjs';
 
 export const STALE_RUN_MS = 20 * 60 * 1000;
 export const IDLE_EVICT_MS = Number(process.env.PI_NEST_IDLE_EVICT_MS ?? 60 * 60 * 1000);
 export const WATCHDOG_INTERVAL_MS = 30 * 1000;
+
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export class AgentRegistry extends EventEmitter {
   #live = new Map();
@@ -88,50 +91,122 @@ export class AgentRegistry extends EventEmitter {
       runningSince: null,
       compacting: false,
       lastEventAt: Date.now(),
-      opChain: Promise.resolve(),
-      pendingOps: 0,
+      queue: [],
+      pumping: false,
+      drained: false,
     };
     this.#live.set(agentId, live);
     this.#attach(agentId, live);
     return live;
   }
 
-  enqueue(live, op) {
-    live.pendingOps += 1;
-    const next = live.opChain.then(async () => {
-      live.pendingOps -= 1;
-      return op();
+  #submit(live, agentId, item) {
+    let done = null;
+    const completion = new Promise((resolve) => {
+      done = resolve;
     });
-    live.opChain = next.catch(() => {});
-    return next;
+    item.done = done;
+    live.queue.push(item);
+    this.#pump(agentId, live);
+    return completion;
+  }
+
+  #pump(agentId, live) {
+    if (live.pumping || live.drained) return;
+    live.pumping = true;
+    (async () => {
+      while (!live.drained) {
+        const item = live.queue.shift();
+        if (!item) break;
+        try {
+          const ts = Date.now();
+          const row = { id: `pending-${ts}`, role: 'user', text: item.message, ts };
+          if (item.images?.length) row.images = item.images;
+          this.broadcast('message', agentId, row);
+          await live.session.prompt(
+            item.message,
+            item.images?.length
+              ? {
+                  images: item.images.map((i) => ({ type: 'image', data: i.data, mimeType: i.mimeType })),
+                }
+              : undefined,
+          );
+        } catch (e) {
+          console.error(`[pi-nest] prompt failed (${agentId.split('/').pop()}):`, e?.message ?? e);
+        } finally {
+          item.done?.();
+        }
+      }
+      live.pumping = false;
+    })();
   }
 
   async prompt(agentId, message, { interrupt = true, images = [] } = {}) {
     const live = await this.open(agentId);
     if (interrupt && live.status === 'running') {
-      await live.session.abort().catch(() => {});
+      try {
+        await live.session.abort();
+      } catch {}
     }
-    await this.enqueue(live, async () => {
-      const ts = Date.now();
-      const row = { id: `pending-${ts}`, role: 'user', text: message, ts };
-      if (images.length) row.images = images;
-      this.broadcast('message', agentId, row);
-      await live.session.prompt(
-        message,
-        images.length
-          ? {
-              images: images.map((i) => ({ type: 'image', data: i.data, mimeType: i.mimeType })),
-            }
-          : undefined,
-      );
-    });
-    return { ok: true };
+    return this.#submit(live, agentId, { message, images });
   }
 
   async abort(agentId) {
     const live = this.#live.get(agentId);
-    if (live) await live.session.abort().catch(() => {});
+    if (live) {
+      try {
+        await live.session.abort();
+      } catch {}
+    }
     return { ok: true };
+  }
+
+  async drain({ timeoutMs = 45000 } = {}) {
+    const spilled = [];
+    for (const [agentId, live] of this.#live) {
+      live.drained = true;
+      if (live.pumping) {
+        const deadline = Date.now() + timeoutMs;
+        while (live.pumping && Date.now() < deadline) await delay(200);
+        if (live.pumping) {
+          console.log(`[pi-nest][drain] aborting still-running ${agentId.split('/').pop()}`);
+          try {
+            await live.session.abort();
+          } catch {}
+          const hardDeadline = Date.now() + 10000;
+          while (live.pumping && Date.now() < hardDeadline) await delay(100);
+        }
+      }
+      if (live.queue.length > 0) {
+        const items = live.queue.splice(0);
+        for (const item of items) item.done?.();
+        spilled.push({ agentId, items: items.map(({ message, images }) => ({ message, images })) });
+        console.log(
+          `[pi-nest][drain] spilled ${items.length} queued message(s) for ${agentId.split('/').pop()}`,
+        );
+      }
+    }
+    return spilled;
+  }
+
+  async restore(entries) {
+    let restored = 0;
+    for (const { agentId, items } of entries ?? []) {
+      if (typeof agentId !== 'string' || !existsSync(agentId)) continue;
+      try {
+        const live = await this.open(agentId);
+        live.drained = false;
+        for (const item of items ?? []) {
+          if (typeof item?.message !== 'string') continue;
+          live.queue.push({ message: item.message, images: Array.isArray(item.images) ? item.images : [] });
+          restored += 1;
+        }
+        this.#pump(agentId, live);
+      } catch (e) {
+        console.error(`[pi-nest][restore] failed for ${String(agentId).split('/').pop()}:`, e?.message ?? e);
+      }
+    }
+    return restored;
   }
 
   state(agentId) {
@@ -142,7 +217,7 @@ export class AgentRegistry extends EventEmitter {
         status: live.status,
         runningSinceMs: live.runningSince ?? 0,
         lastEventAtMs: live.lastEventAt,
-        queueDepth: live.pendingOps,
+        queueDepth: live.queue.length,
         lastError: '',
       };
     }
@@ -180,7 +255,12 @@ export class AgentRegistry extends EventEmitter {
         this.broadcast('refresh', agentId, {});
         continue;
       }
-      if (IDLE_EVICT_MS > 0 && live.pendingOps === 0 && now - live.lastEventAt > IDLE_EVICT_MS) {
+      if (
+        IDLE_EVICT_MS > 0 &&
+        live.queue.length === 0 &&
+        !live.pumping &&
+        now - live.lastEventAt > IDLE_EVICT_MS
+      ) {
         this.#live.delete(agentId);
         try {
           live.session.dispose();

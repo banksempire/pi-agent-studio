@@ -2,19 +2,21 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
 const net = require('node:net');
+const os = require('node:os');
 const path = require('node:path');
 
 const PRODUCT_ROOT = path.join(__dirname, '..');
 const SF_ROOT = path.join(path.dirname(PRODUCT_ROOT), 'StudioFramework');
 const BIN = path.join(PRODUCT_ROOT, 'bin', 'studio.mjs');
 const RUN_ID = `studio-cli-check-${process.pid}-${Date.now()}`;
-const BASE = path.join(path.dirname(PRODUCT_ROOT), '.studio-check', RUN_ID);
+const TMPROOT = path.join(os.tmpdir(), 'studio-cli-check');
+const BASE = path.join(TMPROOT, RUN_ID);
 const CFG = path.join(BASE, 'config');
 const STATE = path.join(BASE, 'state');
 const WT = path.join(BASE, '.branch');
 const PAIR = path.join(WT, 'check');
 const ID = 'check';
-const RESERVED = [7492, 7493, 7494, 7495];
+const RESERVED = [7492, 7494];
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -78,6 +80,11 @@ function pidfile(service) {
   return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
 }
 
+function backendLog() {
+  const file = path.join(PAIR, '.studio', 'state', 'logs', 'backend.log');
+  return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+}
+
 function getJson(port, p, method = 'GET', body = null) {
   return new Promise((resolve, reject) => {
     const req = http.request(
@@ -102,12 +109,11 @@ function getJson(port, p, method = 'GET', body = null) {
 
 async function main() {
   const { report, isFailed } = makeReporter();
-  const nestPort = await freePortAbove(7600);
-  const gwPort = await freePortAbove(7700);
+  const backendPort = await freePortAbove(7600);
   const webPort = await freePortAbove(7800);
-  const env = { PI_NEST_PORT: String(nestPort), PI_STUDIO_PORT: String(gwPort) };
+  const env = { PI_STUDIO_PORT: String(backendPort), PI_STUDIO_DRAIN_MS: '1500' };
 
-  const CHECK_ROOT = path.join(path.dirname(PRODUCT_ROOT), '.studio-check');
+  const CHECK_ROOT = TMPROOT;
   if (fs.existsSync(CHECK_ROOT)) {
     let swept = 0;
     for (const pidDir of fs.readdirSync('/proc').filter((d) => /^\d+$/.test(d))) {
@@ -124,9 +130,6 @@ async function main() {
         } catch {}
       }
     }
-    fs.rmSync(CHECK_ROOT, { recursive: true, force: true });
-    sh('git', ['worktree', 'prune'], { cwd: PRODUCT_ROOT, allowFail: true });
-    sh('git', ['worktree', 'prune'], { cwd: SF_ROOT, allowFail: true });
     if (swept > 0) console.log(`  swept ${swept} leftover process(es) from a prior/killed run`);
   }
   fs.mkdirSync(WT, { recursive: true });
@@ -241,30 +244,26 @@ async function main() {
     const upRes = studio(['-i', ID, 'up'], { env, expect: 0, label: 'up' });
     report('studio up starts the stack', upRes.status === 0, upRes.status === 0 ? '' : upRes.stderr);
 
-    const nestRec = pidfile('nest');
-    const gwRec = pidfile('gateway');
+    const backendRec = pidfile('backend');
     const webRec = pidfile('web');
     report(
-      'ENV pins nest port (args > env > config)',
-      nestRec?.port === nestPort,
-      `${nestRec?.port} vs ${nestPort}`,
+      'ENV pins backend port (args > env > config)',
+      backendRec?.port === backendPort,
+      `${backendRec?.port} vs ${backendPort}`,
     );
-    report('ENV pins gateway port', gwRec?.port === gwPort, `${gwRec?.port} vs ${gwPort}`);
     report('web port comes from instance config', webRec?.port === webPort, `${webRec?.port} vs ${webPort}`);
-
-    const health = await getJson(gwPort, '/api/health');
-    report('gateway healthy and wired to its nest', !!health?.ok && health?.nest === true);
     report(
-      'all branch state lives in the branch folder',
-      fs.existsSync(path.join(PAIR, '.studio', 'state', 'pids', 'nest.json')) &&
-        fs.existsSync(path.join(PAIR, '.studio', 'state', 'logs', 'nest.log')),
+      'nest service is gone (merged into backend)',
+      !fs.existsSync(path.join(PAIR, '.studio', 'state', 'pids', 'nest.json')),
       '',
     );
-    report('nothing leaks into the machine state dir', !fs.existsSync(path.join(STATE, 'instances', ID)), '');
 
-    const chat = await getJson(gwPort, '/api/new-chat', 'POST', {});
+    const health = await getJson(backendPort, '/api/health');
+    report('backend healthy (merged agents + HTTP in one process)', !!health?.ok && health.nest === true);
+
+    const chat = await getJson(backendPort, '/api/new-chat', 'POST', {});
     report(
-      'sessions isolated in the pair (PI_NEST_SESSIONS)',
+      'sessions isolated in the pair (PI_STUDIO_SESSIONS)',
       typeof chat?.file === 'string' && chat.file.startsWith(path.join(PAIR, '.studio', 'sessions')),
       chat?.file ?? 'no file',
     );
@@ -274,95 +273,128 @@ async function main() {
       '',
     );
 
-    const guardRes = studio(['-i', ID, 'restart', 'nest'], { expect: 5, label: 'guard' });
-    report('nest restart refused without --yes (exit 5)', guardRes.status === 5, `exit=${guardRes.status}`);
-    report('guard explains the refusal', /src\/pi-nest/.test(guardRes.stderr + guardRes.stdout), '');
-
-    const oldPid = nestRec?.pid;
-    const restartRes = studio(['-i', ID, 'restart', 'nest', '--yes'], { env, expect: 0, label: 'restart' });
-    const newRec = pidfile('nest');
-    report('nest restart succeeds with --yes', restartRes.status === 0, restartRes.stderr);
+    const guardRes = studio(['-i', ID, 'restart', 'backend'], { expect: 5, label: 'guard' });
     report(
-      'nest restart spawns a new pid',
+      'backend restart refused without --yes (exit 5)',
+      guardRes.status === 5,
+      `exit=${guardRes.status}`,
+    );
+    report(
+      'guard explains the refusal',
+      /src\/pi-nest|src\/pi-studio/.test(guardRes.stderr + guardRes.stdout),
+      '',
+    );
+
+    const oldPid = backendRec?.pid;
+    const restartRes = studio(['-i', ID, 'restart', 'backend', '--yes'], {
+      env,
+      expect: 0,
+      label: 'restart',
+    });
+    const newRec = pidfile('backend');
+    report('backend restart succeeds with --yes', restartRes.status === 0, restartRes.stderr);
+    report(
+      'backend restart spawns a new pid',
       newRec?.pid != null && newRec.pid !== oldPid,
       `${oldPid} → ${newRec?.pid}`,
     );
     report(
-      'nest restart reuses the internal port',
-      newRec?.port === nestPort,
-      `${newRec?.port} vs ${nestPort}`,
-    );
-
-    const restart2 = studio(['-i', ID, 'restart', 'nest', '--yes'], { expect: 0, label: 'restart-no-env' });
-    const rec2 = pidfile('nest');
-    report(
-      'internal port survives without ENV (tombstone reuse)',
-      restart2.status === 0 && rec2?.port === nestPort,
-      `${rec2?.port} vs ${nestPort}`,
+      'backend restart reuses the internal port (tombstone)',
+      newRec?.port === backendPort,
+      `${newRec?.port} vs ${backendPort}`,
     );
     let health2 = null;
-    for (let i = 0; i < 12 && health2?.nest !== true; i++) {
-      health2 = await getJson(gwPort, '/api/health').catch(() => null);
-      if (health2?.nest !== true) await delay(500);
+    for (let i = 0; i < 12 && health2?.ok !== true; i++) {
+      health2 = await getJson(backendPort, '/api/health').catch(() => null);
+      if (health2?.ok !== true) await delay(500);
     }
+    report('backend healthy after restart', health2?.ok === true);
     report(
-      'gateway still wired to its nest after tombstone restart',
-      health2?.ok === true && health2?.nest === true,
+      'graceful drain logged on stop (SIGTERM handler drains before exit)',
+      /drain complete/.test(backendLog()),
+      backendLog().split('\n').slice(-3).join(' | ').slice(0, 120),
     );
 
-    const gwPidBefore = pidfile('gateway')?.pid;
-    const gwRestart = studio(['-i', ID, 'restart', 'gateway'], { expect: 0, label: 'restart gateway' });
+    const auditFile = path.join(PAIR, '.studio', 'state', 'audit.log');
     report(
-      'restart gateway leaves its nest pair running',
-      gwRestart.status === 0 && pidfile('nest')?.pid === rec2?.pid,
-      `${pidfile('nest')?.pid} vs ${rec2?.pid}`,
+      'CLI terminates are audited (pid + reason + caller)',
+      fs.existsSync(auditFile) &&
+        fs.readFileSync(auditFile, 'utf8').includes(String(oldPid)) &&
+        fs.readFileSync(auditFile, 'utf8').includes('"reason":"stop"'),
+      auditFile,
     );
+
+    fs.utimesSync(
+      path.join(PAIR, 'pi-agent-studio', 'src', 'pi-nest', 'src', 'registry.mjs'),
+      new Date(),
+      new Date(Date.now() + 5000),
+    );
+    const restartNoYes = studio(['-i', ID, 'restart', 'backend'], {
+      env,
+      expect: 0,
+      label: 'restart-code-changed',
+    });
     report(
-      'restart gateway respawns only the gateway',
-      pidfile('gateway')?.pid != null && pidfile('gateway').pid !== gwPidBefore,
-      `${gwPidBefore} → ${pidfile('gateway')?.pid}`,
+      'backend restart allowed without --yes when backend code changed',
+      restartNoYes.status === 0 && pidfile('backend')?.pid !== newRec?.pid,
+      restartNoYes.stderr.slice(0, 100),
     );
-    let health3 = null;
-    for (let i = 0; i < 12 && health3?.nest !== true; i++) {
-      health3 = await getJson(gwPort, '/api/health').catch(() => null);
-      if (health3?.nest !== true) await delay(500);
-    }
-    report('gateway healthy after its own restart', health3?.ok === true && health3?.nest === true);
+
+    const spillPath = path.join(PAIR, '.studio', 'state', 'backend-spill.json');
+    fs.writeFileSync(
+      spillPath,
+      JSON.stringify({
+        spilledAt: Date.now(),
+        entries: [{ agentId: '/nonexistent/gone.jsonl', items: [{ message: 'x' }] }],
+      }),
+    );
+    const spillRestart = studio(['-i', ID, 'restart', 'backend', '--yes'], {
+      env,
+      expect: 0,
+      label: 'spill-restart',
+    });
+    report(
+      'spill file consumed on boot (stale agents skipped, no crash)',
+      spillRestart.status === 0 && !fs.existsSync(spillPath),
+      spillRestart.stderr.slice(0, 100),
+    );
+
+    const killRes = studio(['-i', ID, 'kill', 'backend', '--yes'], { expect: 0, label: 'kill backend' });
+    report('kill backend stops it', killRes.status === 0 && !pidfile('backend')?.pid, killRes.stderr);
+    studio(['-i', ID, 'kill', 'web', '--yes'], { expect: 0, label: 'kill web' });
+
+    const upWebAfterKill = studio(['-i', ID, 'up', 'web'], { env, expect: 3, label: 'up web after kill' });
+    report(
+      'up web refuses without a live backend',
+      upWebAfterKill.status === 3,
+      `exit=${upWebAfterKill.status}`,
+    );
+
+    const afterFailedUp = pidfile('backend');
+    report(
+      'failed up does not destroy the backend tombstone (port survives)',
+      afterFailedUp?.port === backendPort,
+      JSON.stringify(afterFailedUp),
+    );
+
+    const revive = studio(['-i', ID, 'up'], { env, expect: 0, label: 'revive' });
+    report(
+      'up revives the stack on the same backend port',
+      revive.status === 0 && pidfile('backend')?.port === backendPort,
+      revive.stderr.slice(0, 100),
+    );
 
     const downRes = studio(['-i', ID, 'down'], { expect: 0, label: 'down' });
     report('down tears down the full stack (no --yes needed, no agents)', downRes.status === 0, '');
-    report('down stops the nest pair', !pidfile('nest')?.pid, '');
-    report('down stops the gateway', !pidfile('gateway')?.pid, '');
+    report('down stops the backend', !pidfile('backend')?.pid, '');
+    const webAfterDown = await getJson(webPort, '/').catch(() => null);
+    report('web port released after down', webAfterDown === null || webAfterDown === undefined, '');
 
-    const webUp = await getJson(webPort, '/').catch(() => null);
-    report('web port released after down', webUp === null || webUp === undefined, '');
-
-    const pairUp = studio(['-i', ID, 'up', 'gateway'], { env, expect: 0, label: 'up gateway' });
+    const pairUp = studio(['-i', ID, 'up', 'backend'], { env, expect: 0, label: 'up backend' });
     report(
-      'up gateway brings up its nest pair',
-      pairUp.status === 0 && pidfile('nest')?.pid != null,
+      'up backend works standalone',
+      pairUp.status === 0 && pidfile('backend')?.pid != null,
       pairUp.stderr,
-    );
-    report('up gateway does not start web', !pidfile('web')?.pid, '');
-    let health4 = null;
-    for (let i = 0; i < 12 && health4?.nest !== true; i++) {
-      health4 = await getJson(gwPort, '/api/health').catch(() => null);
-      if (health4?.nest !== true) await delay(500);
-    }
-    report('gateway+nest pair healthy after up gateway', health4?.ok === true && health4?.nest === true);
-
-    const killGw = studio(['-i', ID, 'kill', 'gateway'], { expect: 0, label: 'kill gateway' });
-    report(
-      'kill gateway stops the nest pair too',
-      killGw.status === 0 && !pidfile('gateway')?.pid && !pidfile('nest')?.pid,
-      '',
-    );
-
-    const webAlone = studio(['-i', ID, 'up', 'web'], { expect: 3, label: 'up web alone' });
-    report(
-      'up web refuses without a live gateway',
-      webAlone.status === 3 && /gateway/.test(webAlone.stderr),
-      `exit=${webAlone.status}`,
     );
 
     const rmRes = studio(['worktree', 'rm', ID, '--purge', '--yes'], { expect: 0, label: 'worktree rm' });

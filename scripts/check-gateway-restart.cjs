@@ -5,15 +5,12 @@ const http = require('node:http');
 const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
-const grpc = require('@grpc/grpc-js');
-const protoLoader = require('@grpc/proto-loader');
 
 const PRODUCT_ROOT = path.join(__dirname, '..');
-const PROTO_PATH = path.join(PRODUCT_ROOT, 'src', 'pi-nest', 'proto', 'pi_nest.proto');
 const RUN_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-restart-check-'));
 const SESSIONS_ROOT = path.join(RUN_ROOT, 'sessions');
 const STATES_PATH = path.join(RUN_ROOT, 'states.json');
-const GATEWAY_LOG = '/tmp/gw-restart-check-backend.log';
+const BACKEND_LOG = '/tmp/gw-restart-check-backend.log';
 const VITE_LOG = '/tmp/gw-restart-check-vite.log';
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -96,121 +93,147 @@ function makeSessionFile() {
   return file;
 }
 
-async function startStubNest(port, sessFile) {
-  const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
-    keepCase: false,
-    longs: Number,
-    defaults: true,
-    oneofs: true,
+function writeStubClient(sessFile) {
+  const stub = `
+import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+
+const SESS_FILE = ${JSON.stringify(sessFile)};
+const bus = new EventEmitter();
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+let n = 0;
+try {
+  const lines = fs.readFileSync(SESS_FILE, 'utf8').split('\\n').filter(Boolean);
+  for (const line of lines) {
+    try {
+      const e = JSON.parse(line);
+      if (typeof e.id === 'string' && e.id.startsWith('stub-a')) n += 1;
+    } catch {}
+  }
+} catch {}
+let chain = Promise.resolve();
+
+const lastId = () => {
+  try {
+    const lines = fs.readFileSync(SESS_FILE, 'utf8').split('\\n').filter(Boolean);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const e = JSON.parse(lines[i]);
+        if (e.id) return e.id;
+      } catch {}
+    }
+  } catch {}
+  return 'seeda0';
+};
+
+const append = (entry) => fs.appendFileSync(SESS_FILE, \`\${JSON.stringify(entry)}\\n\`);
+const emit = (type, file, payload) => bus.emit('agent-event', { type, file, json: JSON.stringify(payload ?? {}) });
+
+async function runPrompt(agentId, text) {
+  const file = agentId;
+  emit('ack', file, { reqId: '', kind: 'message' });
+  n += 1;
+  const ts = Date.now();
+  emit('message', file, { id: \`pending-\${ts}\`, role: 'user', text, ts });
+  append({
+    type: 'message',
+    id: \`stub-u\${n}\`,
+    parentId: lastId(),
+    timestamp: new Date(ts).toISOString(),
+    message: { role: 'user', content: [{ type: 'text', text }], timestamp: ts },
   });
-  const piNest = grpc.loadPackageDefinition(packageDefinition).pi_nest;
-  let stream = null;
-  let n = 0;
-  let lastId = 'seeda0';
-  let promptChain = Promise.resolve();
-  const server = new grpc.Server();
-  const writeEvent = async (type, file, payload) => {
-    if (!stream) throw new Error('no relay subscriber');
-    const ok = stream.write({ type, file, json: JSON.stringify(payload ?? {}) });
-    if (!ok) await new Promise((r) => stream.once('drain', r)).catch(() => {});
-  };
-  server.addService(piNest.PiNest.service, {
-    ping: (_c, cb) => cb(null, { ok: true }),
-    createSession: (_c, cb) => cb(null, { file: '/unused' }),
-    openAgent: (_c, cb) => cb(null, { ok: true, state: null }),
-    closeAgent: (_c, cb) => cb(null, { ok: true }),
-    prompt: (call, cb) => {
-      const run = async () => {
-        const file = call.request.agentId;
-        const text = call.request.message;
-        await writeEvent('ack', file, { reqId: call.request.reqId ?? '', kind: 'message' });
-        n += 1;
-        const ts = Date.now();
-        await writeEvent('message', file, { id: `pending-${ts}`, role: 'user', text, ts });
-        fs.appendFileSync(
-          sessFile,
-          `${JSON.stringify({ type: 'message', id: `stub-u${n}`, parentId: lastId, timestamp: new Date(ts).toISOString(), message: { role: 'user', content: [{ type: 'text', text }], timestamp: ts } })}\n`,
-        );
-        lastId = `stub-u${n}`;
-        await writeEvent('session_status', file, { status: 'running', runningSince: ts });
-        await writeEvent('message', file, { id: `user-${ts}`, role: 'user', text, ts });
-        await writeEvent('refresh', file, {});
-        await delay(60);
-        const ats = ts + 500;
-        const reply = `REPLY-${n}-MARKER: ${'stub answer text '.repeat(6)}`;
-        await writeEvent('message', file, {
-          id: `asst-${ats}`,
-          role: 'assistant',
-          text: reply.slice(0, 20),
-          ts: ats,
-        });
-        await delay(60);
-        fs.appendFileSync(
-          sessFile,
-          `${JSON.stringify({ type: 'message', id: `stub-a${n}`, parentId: lastId, timestamp: new Date(ats).toISOString(), message: { role: 'assistant', content: [{ type: 'text', text: reply }], timestamp: ats, stopReason: 'stop' } })}\n`,
-        );
-        lastId = `stub-a${n}`;
-        await writeEvent('message', file, {
-          id: `asst-${ats}`,
-          role: 'assistant',
-          text: reply,
-          ts: ats,
-          stopReason: 'stop',
-        });
-        await writeEvent('refresh', file, {});
-        await writeEvent('session_status', file, { status: 'idle' });
-        await writeEvent('refresh', file, {});
-      };
-      promptChain = promptChain.then(run, run);
-      promptChain = promptChain.then(
-        () => cb(null, { ok: true }),
-        (e) => cb({ code: grpc.status.INTERNAL, message: String(e) }),
-      );
-    },
-    abort: (_c, cb) => cb(null, { ok: true }),
-    slash: (_c, cb) => cb(null, { ok: true, notice: '' }),
-    getSlashCatalog: (_c, cb) => cb(null, { commandsJson: '[]', skillsJson: '[]' }),
-    listStates: (_c, cb) => cb(null, { states: [] }),
-    getAgentState: (_c, cb) => cb(null, { state: null }),
-    subscribe: (call) => {
-      stream = call;
-      call.on('cancelled', () => {
-        if (stream === call) stream = null;
-      });
-    },
+  emit('session_status', file, { status: 'running', runningSince: ts });
+  emit('message', file, { id: \`user-\${ts}\`, role: 'user', text, ts });
+  emit('refresh', file, {});
+  await delay(60);
+  const ats = ts + 500;
+  const reply = \`REPLY-\${n}-MARKER: \${'stub answer text '.repeat(6)}\`;
+  emit('message', file, { id: \`asst-\${ats}\`, role: 'assistant', text: reply.slice(0, 20), ts: ats });
+  await delay(60);
+  append({
+    type: 'message',
+    id: \`stub-a\${n}\`,
+    parentId: \`stub-u\${n}\`,
+    timestamp: new Date(ats).toISOString(),
+    message: { role: 'assistant', content: [{ type: 'text', text: reply }], timestamp: ats, stopReason: 'stop' },
   });
-  return new Promise((resolve, reject) => {
-    server.bindAsync(`127.0.0.1:${port}`, grpc.ServerCredentials.createInsecure(), (err) => {
-      if (err) return reject(err);
-      resolve({ server });
-    });
-  });
+  emit('message', file, { id: \`asst-\${ats}\`, role: 'assistant', text: reply, ts: ats, stopReason: 'stop' });
+  emit('refresh', file, {});
+  emit('session_status', file, { status: 'idle' });
+  emit('refresh', file, {});
 }
 
-const spawnGateway = (port, nestPort) =>
+export async function createClient() {
+  return {
+    async ping() {
+      return { ok: true };
+    },
+    async createSession() {
+      return { file: '/unused' };
+    },
+    async openAgent() {
+      return { ok: true, state: null };
+    },
+    async closeAgent() {
+      return { ok: true };
+    },
+    async prompt({ agentId, message }) {
+      chain = chain.then(() => runPrompt(agentId, message), () => runPrompt(agentId, message));
+      await chain;
+      return { ok: true };
+    },
+    async abort() {
+      return { ok: true };
+    },
+    async slash() {
+      return { ok: true, notice: '' };
+    },
+    async getSlashCatalog() {
+      return { commandsJson: '[]', skillsJson: '[]' };
+    },
+    async listStates() {
+      return { states: [] };
+    },
+    async getAgentState() {
+      return { state: null };
+    },
+    subscribe() {
+      const stream = new EventEmitter();
+      bus.on('agent-event', (ev) => stream.emit('data', ev));
+      return stream;
+    },
+    close() {},
+  };
+}
+`;
+  const file = path.join(RUN_ROOT, 'stub-client.mjs');
+  fs.writeFileSync(file, stub);
+  return file;
+}
+
+const spawnBackend = (port, stubPath) =>
   spawn('node', ['src/pi-studio/server/index.mjs'], {
     cwd: PRODUCT_ROOT,
     env: {
       ...process.env,
       PI_STUDIO_PORT: String(port),
-      PI_NEST_PORT: String(nestPort),
+      PI_STUDIO_CLIENT_MODULE: stubPath,
       PI_STUDIO_SESSIONS: SESSIONS_ROOT,
       PI_STUDIO_STATES_PATH: STATES_PATH,
       PI_STUDIO_CWD: RUN_ROOT,
     },
-    stdio: ['ignore', fs.openSync(GATEWAY_LOG, 'a'), fs.openSync(GATEWAY_LOG, 'a')],
+    stdio: ['ignore', fs.openSync(BACKEND_LOG, 'a'), fs.openSync(BACKEND_LOG, 'a')],
     detached: true,
   });
 
 (async () => {
   const { report, isFailed } = makeReporter();
-  const nestPort = await freePort();
   const backendPort = await freePort();
   const vitePort = await freePort();
-  console.log(`stack: stub-nest :${nestPort} gateway :${backendPort} vite :${vitePort}`);
+  console.log(`stack: stub-client backend :${backendPort} vite :${vitePort}`);
   const sessFile = makeSessionFile();
-  const stub = await startStubNest(nestPort, sessFile);
-  let gateway = spawnGateway(backendPort, nestPort);
+  const stubPath = writeStubClient(sessFile);
+  let backend = spawnBackend(backendPort, stubPath);
   let vite = null;
   let browser = null;
 
@@ -218,12 +241,11 @@ const spawnGateway = (port, nestPort) =>
     try {
       if (browser) await browser.close();
     } catch {}
-    for (const child of [gateway, vite]) {
+    for (const child of [backend, vite]) {
       try {
-        if (child) process.kill(-child.pid, 'SIGTERM');
+        if (child) process.kill(-child.pid, 'SIGKILL');
       } catch {}
     }
-    stub.server.tryShutdown(() => {});
     setTimeout(() => fs.rmSync(RUN_ROOT, { recursive: true, force: true }), 1000).unref();
   };
 
@@ -277,9 +299,13 @@ const spawnGateway = (port, nestPort) =>
       ['B', pageB],
     ]) {
       p.on('pageerror', (e) => console.log(`page${tag} pageerror: ${e.message}`));
+      p.on('console', (m) => {
+        if (m.type() === 'error') console.log(`page${tag} console: ${m.text().slice(0, 160)}`);
+      });
       p.on('response', (r) => {
         const u = r.url();
-        if (u.includes('/api/events/heartbeat')) netLog.push(`${tag} hb ${r.status()}`);
+        if (u.includes('/api/chat')) console.log(`page${tag} POST /api/chat → ${r.status()}`);
+        else if (u.includes('/api/events/heartbeat')) netLog.push(`${tag} hb ${r.status()}`);
         else if (u.includes('/api/events') && u.includes('open'))
           netLog.push(`${tag} open-views ${r.status()}`);
         else if (u.includes('/api/sessions/messages'))
@@ -311,9 +337,9 @@ const spawnGateway = (port, nestPort) =>
       (await hasMarker(pageA, 'REPLY-1-MARKER')) && (await hasMarker(pageB, 'REPLY-1-MARKER')),
     );
 
-    process.kill(-gateway.pid, 'SIGKILL');
+    process.kill(-backend.pid, 'SIGKILL');
     await delay(5000);
-    gateway = spawnGateway(backendPort, nestPort);
+    backend = spawnBackend(backendPort, stubPath);
     for (let i = 0; i < 60; i++) {
       try {
         if (await getJson(backendPort, '/api/health')) break;
@@ -337,6 +363,13 @@ const spawnGateway = (port, nestPort) =>
     }
 
     const h = await health();
+    let views = h.sseViews;
+    for (let i = 0; i < 60 && !(h.sseClients === 2 && views === 2); i++) {
+      await delay(500);
+      const again = await health();
+      views = again.sseViews;
+      h.sseClients = again.sseClients;
+    }
     const missing = [];
     for (const m of ['A', 'B']) {
       for (const n of [2, 3, 4]) {
@@ -344,7 +377,7 @@ const spawnGateway = (port, nestPort) =>
       }
     }
     report(
-      'T2 after gateway restart: both pages keep receiving new turns (replies 2-4 visible)',
+      'T2 after backend restart: both pages keep receiving new turns (replies 2-4 visible)',
       missing.length === 0,
       missing.length ? `missing ${missing.join(' ')}` : '',
     );
@@ -387,6 +420,6 @@ const spawnGateway = (port, nestPort) =>
   }
 
   await cleanup();
-  console.log(isFailed() ? 'gateway-restart check: FAILED' : 'gateway-restart check: all passed');
+  console.log(isFailed() ? 'backend-restart check: FAILED' : 'backend-restart check: all passed');
   process.exit(isFailed() ? 1 : 0);
 })();

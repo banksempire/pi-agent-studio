@@ -31,15 +31,18 @@ APP: Chat
 Two processes, both served from `/workspace/sf`:
 
 ```bash
-npm run server   # backend: node server/index.mjs → 127.0.0.1:7494
+npm run server   # backend (HTTP+SSE + agents in one process): → 127.0.0.1:7494
 npm run dev      # frontend: vite → 0.0.0.0:7492 (proxies /api → 7494)
 ```
 
 Open http://localhost:7492. Backend config via env:
 `PI_STUDIO_PORT` (7494), `PI_STUDIO_CWD` (new-chat working dir, default
-`/workspace/sf`), `PI_SDK_DIR` (default: global pi install), `PI_SESSION_FILE`
-(session to mark read-only — auto-set when run under pi), `PI_TUI_PID`
-(optional: pin the TUI process; default: scan for a live `pi` process).
+`/workspace/sf`), `PI_SDK_DIR` (default: global pi install),
+`PI_STUDIO_DRAIN_MS` (grace period for in-flight prompts on SIGTERM,
+default 45000), `PI_STUDIO_SPILL_PATH` (where queued prompts are spilled
+across a graceful restart). On SIGTERM the backend drains running prompts
+(aborting at the deadline), spills queued prompts to disk and exits 0; on
+boot a leftover spill file is consumed and the queued prompts resume.
 
 TUI lock lifecycle (polled every 3s): TUI running → its session is locked;
 TUI exits → lock released; a (new) TUI starts → lock re-engages on that
@@ -51,7 +54,7 @@ when it first writes to it).
 
 | Path | Role |
 |:---|:---|
-| `server/index.mjs` | Dependency-free Node HTTP+SSE backend: lists/parses real session files, runs the real agent via the pi SDK (`createAgentSession`), streams events to browsers |
+| `server/index.mjs` | Dependency-free Node backend, one process: HTTP+SSE API, session-file parsing, and the agent runtime (`src/pi-nest/src/` — registry with per-agent FIFO queues, drain/spill for graceful restart, slash catalog) via the pi SDK |
 | `src/layout/app.layout.json` | Single JSON: menu, docker (Chat app), left panel (Chat History + Sessions), right panel (Session Stats), workspace, status bar |
 | `src/shell/StudioShell.vue` | Root shell: mounts the framework with the app layout, handles actions (New Chat…) |
 | `src/store/chat.ts` | Store: real backend client (fetch + EventSource), workspace-API binding, live message merging |

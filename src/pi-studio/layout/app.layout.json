@@ -79,7 +79,8 @@
                   {
                     "id": "new-chat",
                     "icon": "➕",
-                    "tooltip": "New Chat (Ctrl+N)"
+                    "tooltip": "New Chat (Ctrl+N)",
+                    "closeMobilePanel": true
                   }
                 ],
                 "components": [

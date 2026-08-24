@@ -14,6 +14,7 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "check:crosswin": "node scripts/check-cross-window.cjs",
+    "check:mobile": "node scripts/check-mobile-open.cjs",
     "check:sse": "node scripts/check-sse-flood.cjs",
     "check:states": "node scripts/check-session-states.cjs",
     "check:sync": "node scripts/check-session-sync.cjs",

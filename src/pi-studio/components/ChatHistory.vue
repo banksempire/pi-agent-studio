@@ -1,13 +1,20 @@
 <script setup lang="ts">
 import SingleMenu from '@sf/components/SingleMenu.vue';
 import SvgIcon from '@sf/components/SvgIcon.vue';
+import { kMobilePanelDismiss } from '@sf/composables/useWorkspace';
 import type { SingleMenuOption } from '@sf/types/singleMenu';
-import { computed, nextTick, ref } from 'vue';
+import { computed, inject, nextTick, ref } from 'vue';
 import { type ChatSession, endExternalDrag, startSessionDrag, timeAgo, useChatStore } from '../store/chat';
 
 const store = useChatStore();
+const dismissMobilePanel = inject<(() => void) | null>(kMobilePanelDismiss, null);
 
 const sessions = computed(() => [...store.filteredSessions].sort((a, b) => b.lastActivity - a.lastActivity));
+
+function open(s: ChatSession) {
+  store.openChat(s.id);
+  dismissMobilePanel?.();
+}
 
 function preview(s: ChatSession): string {
   const t = (s.preview || s.title).replace(/\s+/g, ' ').trim();
@@ -67,7 +74,7 @@ function onMenuSelect(s: ChatSession, item: SingleMenuOption) {
       :key-of="(s: ChatSession) => s.id"
       :title-of="(s: ChatSession) => s.title"
       draggable
-      @activate="(s: ChatSession) => store.openChat(s.id)"
+      @activate="open"
       @select="onMenuSelect"
       @dragstart="(s: ChatSession, e: DragEvent) => startSessionDrag(e, s)"
       @dragend="endExternalDrag"

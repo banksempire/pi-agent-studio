@@ -296,6 +296,7 @@ there is no auto-relocate.
 | existing `PI_NEST_HOST/PORT` | nest, gateway (client.mjs ctor) | already supported; CLI sets per stack |
 | existing `PI_STUDIO_PORT/SESSIONS/STATES_PATH/CWD` | gateway | already supported |
 | existing `PI_API_PROXY` | vite.config.ts proxy target | CLI sets at web spawn |
+| **new** `PI_STUDIO_CACHE_MAX_BYTES` | gateway | session-parse cache budget (default 128 MB), LRU whole-file eviction; effective ceiling = max(budget, largest session file) |
 | **new** `PI_STUDIO_WORKTREES` | CLI only | branch-folder root (default `<main pair root>/.branch`; keep it on the same filesystem as the repos so `node_modules` can be hardlink-copied) |
 | **new** `PI_STUDIO_WEB_HOST` / `PI_STUDIO_WEB_PORT` | CLI only | web bind host / port fallbacks below args and above instance config |
 

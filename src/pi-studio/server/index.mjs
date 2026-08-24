@@ -348,6 +348,23 @@ function leafChain(entries) {
 }
 
 const sessionParseCache = new Map();
+const CACHE_MAX_BYTES = Number(process.env.PI_STUDIO_CACHE_MAX_BYTES ?? 128 * 1024 * 1024);
+
+function cacheTotalBytes() {
+  let total = 0;
+  for (const c of sessionParseCache.values()) total += c.bytes ?? 0;
+  return total;
+}
+
+function cacheTrim() {
+  let total = cacheTotalBytes();
+  while (total > CACHE_MAX_BYTES && sessionParseCache.size > 1) {
+    const oldest = sessionParseCache.keys().next().value;
+    const c = sessionParseCache.get(oldest);
+    sessionParseCache.delete(oldest);
+    total -= c?.bytes ?? 0;
+  }
+}
 
 function deriveSession(entries, st) {
   const chain = leafChain(entries);
@@ -525,10 +542,14 @@ async function analyzeSession(file, opts = {}) {
     return null;
   }
   let cached = sessionParseCache.get(file);
-  if (!cached || cached.mtime !== st.mtimeMs || cached.size !== st.size) {
+  if (cached && cached.mtime === st.mtimeMs && cached.size === st.size) {
+    sessionParseCache.delete(file);
+    sessionParseCache.set(file, cached);
+  } else {
     cached = await reloadSessionCache(file, st, cached);
     if (!cached) return null;
     sessionParseCache.set(file, cached);
+    cacheTrim();
   }
   const { base, merged: baseMerged } = cached;
 

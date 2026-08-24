@@ -9,6 +9,17 @@ export default defineConfig({
       '@sf': fileURLToPath(new URL('../StudioFramework/src', import.meta.url)),
     },
   },
+  build: {
+    target: 'esnext',
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['vue'],
+          markdown: ['marked', 'dompurify'],
+        },
+      },
+    },
+  },
   server: {
     host: '0.0.0.0',
     port: 7492,

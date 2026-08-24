@@ -1,0 +1,10 @@
+#!/bin/sh
+repo=$(git rev-parse --show-toplevel) || exit 0
+cd "$repo" || exit 0
+if [ -f package.json ] && [ -d node_modules ] && grep -q '"typecheck"' package.json; then
+  if ! npm run --silent typecheck; then
+    echo "typecheck failed — push aborted (bypass: git push --no-verify)" >&2
+    exit 1
+  fi
+fi
+exit 0

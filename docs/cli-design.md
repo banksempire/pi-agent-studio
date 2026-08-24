@@ -202,6 +202,10 @@ studio [-i <instance>] <command> …        # auto-detects instance from CWD's p
   agents                      live agents via nest ListStates: id, state, queue, activity
   abort <agent-id>            wraps gRPC Abort
   doctor [--fix]              diagnostics per §11; --fix auto-applies safe fixes
+                              (stale pidfiles, orphans, git guard hooks)
+  guard [install|status]      install/inspect core.hooksPath on both repos
+                              (pre-commit: main-branch rule + biome gate;
+                              pre-push: typecheck)
   clean [--snapshots] [--pidfiles] [--instances]
   open [--path /]             open the instance's web URL (human review step)
   help | --version

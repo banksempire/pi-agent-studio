@@ -1,0 +1,32 @@
+#!/bin/sh
+repo=$(git rev-parse --show-toplevel) || exit 1
+cd "$repo" || exit 1
+dir=$(pwd -P)
+case "$dir" in
+  */.branch/*) ;;
+  *)
+    allow=0
+    [ -n "$STUDIO_ALLOW_MAIN" ] && allow=1
+    if [ "$allow" -eq 0 ] && git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+      allow=1
+    fi
+    if [ "$allow" -eq 0 ]; then
+      non_docs=$(git diff --cached --name-only --diff-filter=ACMRT | grep -vE '\.md$' | head -n 1)
+      [ -z "$non_docs" ] && allow=1
+    fi
+    if [ "$allow" -eq 0 ]; then
+      echo "refusing commit on main — dev work belongs in a branch" >&2
+      echo "  studio worktree add <branch> --new   (see agents.md)" >&2
+      echo "  release merge or user-approved work: STUDIO_ALLOW_MAIN=1 git commit ..." >&2
+      exit 1
+    fi
+    ;;
+esac
+if [ -x node_modules/.bin/biome ]; then
+  if ! ./node_modules/.bin/biome check .; then
+    echo "" >&2
+    echo "biome check failed — run: npx biome check --write .   (never --unsafe on *.vue; fix .vue by hand)" >&2
+    exit 1
+  fi
+fi
+exit 0

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { kMobilePanelDismiss } from '@sf/composables/useWorkspace';
+import { computed, inject } from 'vue';
 import {
   type ChatSession,
   endExternalDrag,
@@ -9,6 +10,12 @@ import {
 } from '../store/chat';
 
 const store = useChatStore();
+const dismissMobilePanel = inject<(() => void) | null>(kMobilePanelDismiss, null);
+
+function open(s: ChatSession) {
+  store.openChat(s.id);
+  dismissMobilePanel?.();
+}
 
 const list = computed(() =>
   store.syncedSessions().filter((s) => store.stateFilter[store.syncStateOf(s)?.state ?? 'open']),
@@ -53,7 +60,7 @@ function errorOf(s: ChatSession): string {
       :class="{ 'chat-list-item--active': s.id === store.activeChatId }"
       :title="rowTitle(s)"
       draggable="true"
-      @click="store.openChat(s.id)"
+      @click="open(s)"
       @dragstart="startSessionDrag($event, s)"
       @dragend="endExternalDrag"
     >

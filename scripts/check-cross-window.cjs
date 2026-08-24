@@ -6,12 +6,15 @@ const net = require('node:net');
 const path = require('node:path');
 
 const PRODUCT_ROOT = path.join(__dirname, '..');
-const ISOLATED_ROOT = '/tmp/xwin-check-sessions';
+const TMP_BASE = process.env.XWIN_CHECK_TMP || '';
+const ISOLATED_ROOT = TMP_BASE ? path.join(TMP_BASE, 'sessions') : '/tmp/xwin-check-sessions';
 const TEST_DIR_NAME = '--tmp-xwin-check--';
 const TEST_SESSIONS_DIR = path.join(ISOLATED_ROOT, TEST_DIR_NAME);
-const TEST_STATES_PATH = '/tmp/xwin-check-states.json';
-const TEST_CWD = '/tmp/xwin-check';
-const IMG_DIR = '/tmp/xwin-check-imgs';
+const TEST_STATES_PATH = TMP_BASE ? path.join(TMP_BASE, 'states.json') : '/tmp/xwin-check-states.json';
+const TEST_CWD = TMP_BASE ? path.join(TMP_BASE, 'cwd') : '/tmp/xwin-check';
+const IMG_DIR = TMP_BASE ? path.join(TMP_BASE, 'imgs') : '/tmp/xwin-check-imgs';
+const BACKEND_LOG = TMP_BASE ? path.join(TMP_BASE, 'backend.log') : '/tmp/xwin-check-backend.log';
+const VITE_LOG = TMP_BASE ? path.join(TMP_BASE, 'vite.log') : '/tmp/xwin-check-vite.log';
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -210,7 +213,7 @@ function makeReporter() {
           PI_STUDIO_STATES_PATH: TEST_STATES_PATH,
           PI_STUDIO_CWD: TEST_CWD,
         },
-        '/tmp/xwin-check-backend.log',
+        BACKEND_LOG,
       ),
     );
     await waitHttp(`http://127.0.0.1:${ports.backend}/api/health`, 'backend');
@@ -227,7 +230,7 @@ function makeReporter() {
           String(ports.vite),
         ],
         { PI_API_PROXY: `http://127.0.0.1:${ports.backend}` },
-        '/tmp/xwin-check-vite.log',
+        VITE_LOG,
       ),
     );
     await waitHttp(`http://127.0.0.1:${ports.vite}/`, 'vite');
@@ -1195,6 +1198,79 @@ function makeReporter() {
       t17.ok,
       t17.why,
     );
+
+    const t18 = await (async () => {
+      const why = [];
+      await switchTab('XWin-B:');
+      const input = page
+        .locator('.sf-tab-label:has-text("XWin-B:")')
+        .locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " sf-tile ")][1]')
+        .locator('.chat-input');
+      const metrics = () =>
+        input.evaluate((el) => ({
+          h: el.offsetHeight,
+          scrollable: el.scrollHeight - el.clientHeight,
+          overflowY: getComputedStyle(el).overflowY,
+        }));
+      await input.fill('');
+      await delay(300);
+      const empty = await metrics();
+      await input.fill('one\ntwo\nthree');
+      await delay(300);
+      const three = await metrics();
+      await input.fill(`${'autogrow probe line\n'.repeat(40)}`);
+      await delay(300);
+      const big = await metrics();
+      await input.fill('shrunk back to a single line');
+      await delay(300);
+      const shrunk = await metrics();
+      await input.fill('');
+      const growOk = three.h > empty.h + 20 && three.h < 300 && three.scrollable <= 0;
+      const capOk = Math.abs(big.h - 320) <= 1 && big.scrollable > 0 && big.overflowY === 'auto';
+      const shrinkOk = Math.abs(shrunk.h - empty.h) <= 2;
+      why.push(
+        `grow ${empty.h}→${three.h} (ok:${growOk})`,
+        `cap h=${big.h} scroll=${big.scrollable} ovf=${big.overflowY} (ok:${capOk})`,
+        `shrink →${shrunk.h} (ok:${shrinkOk})`,
+      );
+      let mobileOk = false;
+      let mobileWhy = 'n/a';
+      let mob;
+      try {
+        mob = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+        await mob.goto(`http://127.0.0.1:${ports.vite}`, { waitUntil: 'domcontentloaded' });
+        await mob.waitForSelector('.chat-list-item', { timeout: 60000 });
+        await mob.locator('.chat-list-item').first().click({ force: true });
+        await mob.waitForSelector('.chat-input', { timeout: 20000 });
+        await delay(1500);
+        await mob.setViewportSize({ width: 420, height: 900 });
+        await delay(600);
+        const minput = mob.locator('.chat-input').first();
+        const mm = () =>
+          minput.evaluate((el) => ({
+            h: el.offsetHeight,
+            scrollable: el.scrollHeight - el.clientHeight,
+            overflowY: getComputedStyle(el).overflowY,
+          }));
+        await minput.fill(`${'mobile autogrow probe line\n'.repeat(40)}`);
+        await delay(300);
+        const mBig = await mm();
+        await minput.fill('mobile single line');
+        await delay(300);
+        const mSmall = await mm();
+        const capMob = Math.abs(mBig.h - 120) <= 1 && mBig.scrollable > 0 && mBig.overflowY === 'auto';
+        const shrinkMob = mSmall.h < 120 && mSmall.scrollable <= 0;
+        mobileOk = capMob && shrinkMob;
+        mobileWhy = `cap h=${mBig.h} scroll=${mBig.scrollable} ovf=${mBig.overflowY}; small h=${mSmall.h}`;
+      } catch (e) {
+        mobileWhy = `error: ${e.message}`;
+      } finally {
+        if (mob) await mob.close().catch(() => {});
+      }
+      why.push(`mobile (ok:${mobileOk}) ${mobileWhy}`);
+      return { ok: growOk && capOk && shrinkOk && mobileOk, why: why.join(' | ') };
+    })();
+    report('T18 chat input auto-grows to its cap then scrolls (desktop + mobile)', t18.ok, t18.why);
 
     if (errors.length) console.log(`page errors: ${errors.join(' | ')}`);
     const failed = isFailed() || errors.length > 0;

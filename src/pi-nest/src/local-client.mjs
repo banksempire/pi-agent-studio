@@ -33,7 +33,7 @@ export function createLocalClient(registry) {
     },
 
     async createSession({ cwd }) {
-      return registry.createSession(cwd);
+      return registry.reuseOrCreateSession(cwd);
     },
 
     async openAgent({ agentId }) {

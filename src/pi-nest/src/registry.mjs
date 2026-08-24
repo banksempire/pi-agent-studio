@@ -19,6 +19,14 @@ export class AgentRegistry extends EventEmitter {
     return { file };
   }
 
+  reuseOrCreateSession(cwd) {
+    const resolved = path.resolve(cwd);
+    for (const [file, p] of this.#pending) {
+      if (path.resolve(p.cwd) === resolved) return { file };
+    }
+    return this.createSession(cwd);
+  }
+
   pendingInfo(agentId) {
     return this.#pending.get(agentId) ?? null;
   }

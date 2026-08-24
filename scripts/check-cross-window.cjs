@@ -1285,20 +1285,29 @@ function makeReporter() {
       await delay(1200);
       const rowsAfterPlus = await newRow().count();
       const newTabs = await page.locator('.sf-tab:has-text("New Chat")').count();
-      await newRow().first().click({ button: 'right' });
-      await page.locator('.sf-sm-menu .sf-sm-menu-row', { hasText: 'Delete' }).click();
-      let rowsAfterDelete = await newRow().count();
-      for (let i = 0; i < 20 && rowsAfterDelete > 0; i++) {
-        await delay(300);
-        rowsAfterDelete = await newRow().count();
-      }
+      const savedPending = await page.evaluate(() => localStorage.getItem('sf-chat:pending'));
+      const composer = page.locator('.chat-input').first();
+      await composer.fill('pins the lazy tab');
+      await delay(900);
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('.chat-list-item', { timeout: 60000 });
+      await delay(4000);
+      const rowsAfterReload = await newRow().count();
+      const tabsAfterReload = await page.locator('.sf-tab:has-text("New Chat")').count();
+      const ghostsAfterReload = await page.locator('.sf-tab--ghost').count();
       return {
-        ok: rowsAfterPlus === 1 && newTabs === 1 && rowsAfterDelete === 0,
-        why: `rowsAfter3xPlus:${rowsAfterPlus} tabs:${newTabs} rowsAfterDelete:${rowsAfterDelete}`,
+        ok:
+          rowsAfterPlus === 0 &&
+          newTabs === 1 &&
+          savedPending === null &&
+          rowsAfterReload === 0 &&
+          tabsAfterReload === 0 &&
+          ghostsAfterReload === 0,
+        why: `rowsAfter3xPlus:${rowsAfterPlus} tabs:${newTabs} savedPending:${savedPending ?? 'null'} rowsAfterReload:${rowsAfterReload} tabsAfterReload:${tabsAfterReload} ghosts:${ghostsAfterReload}`,
       };
     })();
     report(
-      'T19 "+" reuses the single lazy New Chat row; delete removes the non-materialized chat',
+      'T19 lazy New Chat never shows in history nor persists — one window only, gone after reload',
       t19.ok,
       t19.why,
     );

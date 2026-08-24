@@ -1,5 +1,6 @@
 import { BLANK_CONTENT, type ExternalDropTarget, type WorkspaceApi } from '@sf/composables/useWorkspace';
 import type { WorkspaceTabDef } from '@sf/types/layout';
+import { readUiValue, uiEpoch, writeUiValue } from '@sf/uiState';
 import { collectAllTabs, firstTile } from '@sf/workspace/tree';
 import { reactive, watch } from 'vue';
 
@@ -126,25 +127,41 @@ interface ChatState {
 
 const PREFS_KEY = 'sf-chat:prefs';
 const STATE_FILTER_KEY = 'sf-chat:stateFilter';
+const DRAFTS_KEY = 'sf-chat:drafts';
+
+function readPersistedObject(uiKey: string, legacyKey: string): Record<string, unknown> | null {
+  const v = readUiValue(uiKey);
+  if (typeof v === 'object' && v !== null && !Array.isArray(v)) return v as Record<string, unknown>;
+  try {
+    const raw = localStorage.getItem(legacyKey);
+    if (raw) {
+      const j = JSON.parse(raw);
+      if (j && typeof j === 'object' && !Array.isArray(j)) return j as Record<string, unknown>;
+    }
+  } catch {}
+  return null;
+}
+
+function writePersistedObject(uiKey: string, legacyKey: string, value: unknown): void {
+  writeUiValue(uiKey, value);
+  try {
+    if (localStorage.getItem(legacyKey) !== null) localStorage.removeItem(legacyKey);
+  } catch {}
+}
 
 function loadStateFilter(): StateFilter {
   const base: StateFilter = { working: true, unread: true, error: true, open: true };
-  try {
-    const raw = localStorage.getItem(STATE_FILTER_KEY);
-    if (raw) {
-      const j = JSON.parse(raw);
-      for (const k of SYNC_STATES) {
-        if (typeof j?.[k] === 'boolean') base[k] = j[k];
-      }
+  const j = readPersistedObject('app.chat.stateFilter', STATE_FILTER_KEY);
+  if (j) {
+    for (const k of SYNC_STATES) {
+      if (typeof j[k] === 'boolean') base[k] = j[k];
     }
-  } catch {}
+  }
   return base;
 }
 
 function saveStateFilter() {
-  try {
-    localStorage.setItem(STATE_FILTER_KEY, JSON.stringify(state.stateFilter));
-  } catch {}
+  writePersistedObject('app.chat.stateFilter', STATE_FILTER_KEY, state.stateFilter);
 }
 
 function toggleStateFilter(s: SessionSyncState) {
@@ -152,49 +169,40 @@ function toggleStateFilter(s: SessionSyncState) {
   saveStateFilter();
 }
 function loadPrefs(): ChatState['prefs'] {
-  try {
-    const raw = localStorage.getItem(PREFS_KEY);
-    if (raw) {
-      const j = JSON.parse(raw);
-      return {
-        sendKey: j.sendKey === 'shiftEnter' ? 'shiftEnter' : 'enter',
-        renderMarkdown: j.renderMarkdown !== false,
-      };
-    }
-  } catch {}
+  const j = readPersistedObject('app.chat.prefs', PREFS_KEY);
+  if (j) {
+    return {
+      sendKey: j.sendKey === 'shiftEnter' ? 'shiftEnter' : 'enter',
+      renderMarkdown: j.renderMarkdown !== false,
+    };
+  }
   return { sendKey: 'enter', renderMarkdown: true };
 }
 function savePrefs() {
-  try {
-    localStorage.setItem(PREFS_KEY, JSON.stringify(state.prefs));
-  } catch {}
+  writePersistedObject('app.chat.prefs', PREFS_KEY, state.prefs);
 }
 function setSendKey(mode: SendKeyMode) {
   state.prefs.sendKey = mode;
   savePrefs();
 }
 
-const DRAFTS_KEY = 'sf-chat:drafts';
 function loadDrafts(): Record<string, string> {
-  try {
-    const raw = localStorage.getItem(DRAFTS_KEY);
-    if (raw) {
-      const j = JSON.parse(raw);
-      if (j && typeof j === 'object') return j;
-    }
-  } catch {}
-  return {};
+  const j = readPersistedObject('app.chat.drafts', DRAFTS_KEY);
+  if (!j) return {};
+  const out: Record<string, string> = {};
+  for (const [id, text] of Object.entries(j)) {
+    if (typeof text === 'string') out[id] = text;
+  }
+  return out;
 }
 function saveDrafts() {
-  try {
-    if (state.sessions.length > 0) {
-      const known = new Set(state.sessions.map((s) => s.id));
-      for (const id of Object.keys(state.drafts)) {
-        if (!known.has(id)) delete state.drafts[id];
-      }
+  if (state.sessions.length > 0) {
+    const known = new Set(state.sessions.map((s) => s.id));
+    for (const id of Object.keys(state.drafts)) {
+      if (!known.has(id)) delete state.drafts[id];
     }
-    localStorage.setItem(DRAFTS_KEY, JSON.stringify(state.drafts));
-  } catch {}
+  }
+  writePersistedObject('app.chat.drafts', DRAFTS_KEY, state.drafts);
 }
 
 export interface WindowUi {
@@ -310,6 +318,17 @@ const state = reactive<ChatState>({
   stateFilter: loadStateFilter(),
   prefs: loadPrefs(),
 });
+
+watch(uiEpoch, () => {
+  state.stateFilter = loadStateFilter();
+  state.prefs = loadPrefs();
+  state.drafts = loadDrafts();
+});
+
+if (readUiValue('app.chat.stateFilter') === undefined)
+  writeUiValue('app.chat.stateFilter', state.stateFilter);
+if (readUiValue('app.chat.prefs') === undefined) writeUiValue('app.chat.prefs', state.prefs);
+if (readUiValue('app.chat.drafts') === undefined) writeUiValue('app.chat.drafts', state.drafts);
 
 const PENDING_KEY = 'sf-chat:pending';
 

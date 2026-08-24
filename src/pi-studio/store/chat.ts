@@ -1153,6 +1153,10 @@ export function bindWorkspace(api: WorkspaceApi) {
     if (tabId.startsWith(TAB_PREFIX)) noteVisit(tabId.slice(TAB_PREFIX.length));
   });
 
+  api.setTabLongPressHandler((tabId) => {
+    if (tabId === state.reviewTabId) exitReview();
+  });
+
   api.setExternalDropHandler(
     (types) => types.includes(CHAT_DROP_TYPE),
     (e, target: ExternalDropTarget) => {

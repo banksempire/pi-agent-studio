@@ -313,6 +313,8 @@ function fmtTime(ms: number | null): string {
 .job-editor {
   height: 100%;
   overflow-y: auto;
+  overflow-x: clip;
+
   display: flex;
   flex-direction: column;
 }

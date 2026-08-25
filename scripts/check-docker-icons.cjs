@@ -7,6 +7,12 @@ const path = require('node:path');
 const { createRequire } = require('node:module');
 const { chromium } = createRequire(path.join(__dirname, '..', 'package.json'))('playwright');
 const { writeStubClient } = require('./lib/stub-backend.cjs');
+const {
+  assertMemoryHeadroom,
+  installStackCleanup,
+  spawnStackProc,
+  sweepStaleStackProcesses,
+} = require('./lib/suite-stack.cjs');
 
 const PRODUCT_ROOT = path.join(__dirname, '..');
 const RUN_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'docker-icons-'));
@@ -68,7 +74,11 @@ function waitHttp(url, label, tries = 40) {
 
 (async () => {
   const { report, isFailed } = makeReporter();
+  assertMemoryHeadroom({ label: 'check-docker-icons' });
+  sweepStaleStackProcesses('check-docker-icons:stack');
   const procs = [];
+  const browserRef = { current: null };
+  installStackCleanup({ procs, stamp: 'check-docker-icons:stack', browserRef, label: 'check-docker-icons' });
   let browser;
   try {
     const backendPort = await freePort();
@@ -77,7 +87,7 @@ function waitHttp(url, label, tries = 40) {
     const stub = writeStubClient(RUN_ROOT);
 
     procs.push(
-      spawn('node', ['src/pi-studio/server/index.mjs'], {
+      spawnStackProc(spawn, 'check-docker-icons:stack', 'node', ['src/pi-studio/server/index.mjs'], {
         cwd: PRODUCT_ROOT,
         env: {
           ...process.env,
@@ -97,7 +107,9 @@ function waitHttp(url, label, tries = 40) {
     );
     await waitHttp(`http://127.0.0.1:${backendPort}/api/health`, 'backend');
     procs.push(
-      spawn(
+      spawnStackProc(
+        spawn,
+        'check-docker-icons:stack',
         'node',
         [
           'node_modules/.bin/vite',
@@ -122,6 +134,7 @@ function waitHttp(url, label, tries = 40) {
     await waitHttp(`http://127.0.0.1:${vitePort}/`, 'vite');
 
     browser = await chromium.launch();
+    browserRef.current = browser;
     const errors = [];
 
     for (const vp of [

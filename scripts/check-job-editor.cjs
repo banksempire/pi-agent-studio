@@ -7,6 +7,12 @@ const path = require('node:path');
 const { createRequire } = require('node:module');
 const { chromium } = createRequire(path.join(__dirname, '..', 'package.json'))('playwright');
 const { writeStubClient } = require('./lib/stub-backend.cjs');
+const {
+  assertMemoryHeadroom,
+  installStackCleanup,
+  spawnStackProc,
+  sweepStaleStackProcesses,
+} = require('./lib/suite-stack.cjs');
 
 const PRODUCT_ROOT = path.join(__dirname, '..');
 const RUN_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'job-editor-font-'));
@@ -106,7 +112,11 @@ function writeSessionFile(name) {
 
 (async () => {
   const { report, isFailed } = makeReporter();
+  assertMemoryHeadroom({ label: 'check-job-editor' });
+  sweepStaleStackProcesses('check-job-editor:stack');
   const procs = [];
+  const browserRef = { current: null };
+  installStackCleanup({ procs, stamp: 'check-job-editor:stack', browserRef, label: 'check-job-editor' });
   let browser;
   try {
     const backendPort = await freePort();
@@ -116,7 +126,7 @@ function writeSessionFile(name) {
     writeSessionFile('job-font-check');
 
     procs.push(
-      spawn('node', ['src/pi-studio/server/index.mjs'], {
+      spawnStackProc(spawn, 'check-job-editor:stack', 'node', ['src/pi-studio/server/index.mjs'], {
         cwd: PRODUCT_ROOT,
         env: {
           ...process.env,
@@ -136,7 +146,9 @@ function writeSessionFile(name) {
     );
     await waitHttp(`http://127.0.0.1:${backendPort}/api/health`, 'backend');
     procs.push(
-      spawn(
+      spawnStackProc(
+        spawn,
+        'check-job-editor:stack',
         'node',
         [
           'node_modules/.bin/vite',
@@ -161,6 +173,7 @@ function writeSessionFile(name) {
     await waitHttp(`http://127.0.0.1:${vitePort}/`, 'vite');
 
     browser = await chromium.launch();
+    browserRef.current = browser;
     const errors = [];
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
@@ -222,6 +235,45 @@ function writeSessionFile(name) {
         `${val}px`,
       );
     }
+
+    const injectWide = () =>
+      page.evaluate(() => {
+        const body = document.querySelector('.job-editor-body');
+        if (!body) return null;
+        const wide = document.createElement('div');
+        wide.style.width = '9999px';
+        wide.style.height = '4px';
+        body.appendChild(wide);
+        const ed = document.querySelector('.job-editor');
+        const ox = getComputedStyle(ed).overflowX;
+        const tile = ed.closest('.sf-tile-content');
+        const root = document.scrollingElement;
+        return {
+          ox,
+          editorUserPannable: ox === 'auto' || ox === 'scroll',
+          tilePannable: !!tile && tile.scrollWidth > tile.clientWidth,
+          rootPannable: root.scrollWidth > root.clientWidth,
+        };
+      });
+
+    const wideDesktop = await injectWide();
+    report(
+      'desktop: editor is never user-pannable horizontally (even with overflowing content)',
+      !!wideDesktop &&
+        !wideDesktop.editorUserPannable &&
+        !wideDesktop.tilePannable &&
+        !wideDesktop.rootPannable,
+      JSON.stringify(wideDesktop),
+    );
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(600);
+    const wideMobile = await injectWide();
+    report(
+      'mobile: editor is never user-pannable horizontally (even with overflowing content)',
+      !!wideMobile && !wideMobile.editorUserPannable && !wideMobile.tilePannable && !wideMobile.rootPannable,
+      JSON.stringify(wideMobile),
+    );
 
     report('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   } catch (e) {

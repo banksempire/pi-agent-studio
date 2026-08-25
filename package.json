@@ -16,6 +16,7 @@
     "check:crosswin": "node scripts/check-cross-window.cjs",
     "check:drafts": "node scripts/check-drafts.cjs",
     "check:mobile": "node scripts/check-mobile-open.cjs",
+    "check:send-stop": "node scripts/check-send-stop.cjs",
     "check:sse": "node scripts/check-sse-flood.cjs",
     "check:states": "node scripts/check-session-states.cjs",
     "check:sync": "node scripts/check-session-sync.cjs",

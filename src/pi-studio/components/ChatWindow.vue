@@ -818,6 +818,14 @@ const attachments = computed({
 });
 const fileInput = ref<HTMLInputElement | null>(null);
 
+const canStop = computed(
+  () => session.value?.status === 'running' && !input.value.trim() && !attachments.value.length,
+);
+
+function stopGeneration() {
+  void store.stopSession(props.sessionId);
+}
+
 function pickImages() {
   fileInput.value?.click();
 }
@@ -1315,6 +1323,13 @@ watch(
             @change="onFilesChosen"
           />
           <button
+            v-if="canStop"
+            class="chat-send-btn chat-send-btn--stop"
+            title="Interrupt generation"
+            @click="stopGeneration"
+          ><SvgIcon name="■" /> Stop</button>
+          <button
+            v-else
             class="chat-send-btn"
             :disabled="!!composerBlock || (!input.trim() && !attachments.length)"
             @click="send"

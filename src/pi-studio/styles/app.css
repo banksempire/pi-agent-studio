@@ -462,6 +462,9 @@
 }
 
 .chat-aborted--error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   color: var(--sf-danger);
   white-space: pre-wrap;
 }
@@ -491,6 +494,9 @@
 }
 
 .chat-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 4px 10px;
   background: color-mix(in srgb, var(--sf-status-warn) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--sf-status-warn) 30%, transparent);

@@ -7,6 +7,7 @@ const PERSIST_DEBOUNCE_MS = 250;
 
 export function createSessionStates({
   persistPath = path.join(homedir(), '.pi', 'agent', 'studio-session-states.json'),
+  store = null,
   fileExists = existsSync,
   onSync = () => {},
   now = () => Date.now(),
@@ -65,22 +66,37 @@ export function createSessionStates({
     const json = persistedJson();
     if (json === lastPersistedJson) return;
     try {
-      mkdirSync(path.dirname(persistPath), { recursive: true });
-      writeFileSync(persistPath, json);
-      lastPersistedJson = json;
-      persistWrites += 1;
+      if (store) {
+        store.save(persistedShape().entries);
+        lastPersistedJson = json;
+        persistWrites += 1;
+      } else {
+        mkdirSync(path.dirname(persistPath), { recursive: true });
+        writeFileSync(persistPath, json);
+        lastPersistedJson = json;
+        persistWrites += 1;
+      }
     } catch {}
   }
 
   function load() {
-    let raw = null;
-    try {
-      raw = JSON.parse(readFileSync(persistPath, 'utf8'));
-    } catch {
-      return;
+    let list = null;
+    if (store) {
+      try {
+        list = store.load();
+      } catch {
+        list = null;
+      }
+    } else {
+      try {
+        const raw = JSON.parse(readFileSync(persistPath, 'utf8'));
+        if (raw?.version === PERSIST_VERSION && Array.isArray(raw.entries)) list = raw.entries;
+      } catch {
+        list = null;
+      }
     }
-    if (!raw || raw.version !== PERSIST_VERSION || !Array.isArray(raw.entries)) return;
-    for (const item of raw.entries) {
+    if (!Array.isArray(list)) return;
+    for (const item of list) {
       if (!item || typeof item.file !== 'string') continue;
       if (item.state !== 'working' && item.state !== 'unread' && item.state !== 'error') continue;
       if (!fileExists(item.file)) continue;

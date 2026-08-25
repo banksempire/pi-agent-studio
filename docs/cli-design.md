@@ -74,20 +74,36 @@ Hosts: `web` binds `0.0.0.0` (or instance `host`); `backend` binds
 `127.0.0.1` always (loopback-only by design; proxying happens server-side in
 vite).
 
-## 3a. Graceful restart (drain → spill → restore)
+## 3a. Graceful restart (drain → journal → recover)
 
 The backend owns the agents, so its restart is the one destructive path —
-made graceful:
+made graceful. Durability comes from the SQLite journal
+(`<state>/studio.db`, WAL mode): every queue transition is committed
+**before** it takes effect in memory, so graceful and ungraceful (SIGKILL,
+OOM) exits recover identically on the next boot.
 
-1. **SIGTERM** → the backend stops accepting mutations (`503`), then drains:
+1. **Submit path** — a prompt is INSERTed (`status=queued`) before it joins
+   the in-memory queue; the pump UPDATEs it to `inflight` (with `started_at`)
+   before calling the SDK, throttled `message_update` deltas are snapshot into
+   `partial_text`, and a settled prompt's row is DELETEd. Rows only ever hold
+   live work, so the file stays tiny.
+2. **SIGTERM** → the backend stops accepting mutations (`503`), then drains:
    per agent it waits for the in-flight prompt to settle (up to
    `PI_STUDIO_DRAIN_MS`, default 45s), aborting still-running prompts at the
-   deadline (their partial transcripts stay in the session file).
-2. **Spill** — prompts queued but not yet started are written to
-   `<state>/backend-spill.json` and survive the restart.
+   deadline — an abort-at-deadline run keeps its journal row (`inflight` +
+   partial text) so it auto-resumes after the restart; its partial transcript
+   stays in the session file.
 3. **Exit 0**, CLI restarts the process (grace = drain deadline + 20s).
-4. **Boot** — a leftover spill file is consumed and the queued prompts are
-   re-enqueued on their agents automatically.
+4. **Boot** — `registry.recover()` reads outstanding rows and, per item:
+   re-queues `queued` prompts verbatim; for `inflight` prompts it inspects the
+   session-file tail — if the conversation advanced while the backend was
+   down (e.g. someone prompted via the TUI) the row is skipped, if the user
+   message never landed it is replayed verbatim, and if the run was cut off
+   mid-reply the agent is nudged to continue (the snapshot of streamed text
+   is quoted back when the transcript has no partial on disk). Pending
+   model/think-level prefs and per-session UI states are restored too. A
+   leftover `backend-spill.json` (pre-journal versions) is imported once and
+   consumed.
 
 CLI semantics: `restart backend` is allowed without `--yes` whenever backend
 code changed since start (it refuses exit 5 otherwise — `--yes` overrides);
@@ -309,7 +325,9 @@ there is no auto-relocate.
 | existing `PI_API_PROXY` | vite.config.ts proxy target | CLI sets at web spawn |
 | `PI_STUDIO_CACHE_MAX_BYTES` | backend | session-parse cache budget (default 128 MB), LRU whole-file eviction; effective ceiling = max(budget, largest session file) |
 | **new** `PI_STUDIO_DRAIN_MS` | backend + CLI | SIGTERM drain deadline (default 45s); CLI stop grace = deadline + 20s |
-| **new** `PI_STUDIO_SPILL_PATH` | backend | where queued prompts are spilled across a graceful restart (CLI pins it inside the instance state dir) |
+| existing `PI_STUDIO_SPILL_PATH` | backend | legacy: a leftover `backend-spill.json` here is imported into the journal once on boot (CLI pins it inside the instance state dir) |
+| **new** `PI_STUDIO_DB_PATH` | backend | SQLite journal location (default `<state>/studio.db`, derived from the spill path's dir; CLI pins it inside the instance state dir) |
+| **new** `PI_STUDIO_RESUME` / `PI_STUDIO_RESUME_MODE` | backend | `off` disables interrupted-run resume; mode `nudge` (default) / `replay` / `skip` controls how `inflight` rows are resubmitted on boot |
 | **new** `PI_STUDIO_CLIENT_MODULE` | backend | test seam: path to an ESM module exporting `createClient()`; replaces the real agent registry with a stub client (used by the check suites) |
 | **new** `PI_STUDIO_WORKTREES` | CLI only | branch-folder root (default `<main pair root>/.branch`; keep it on the same filesystem as the repos so `node_modules` can be hardlink-copied) |
 | **new** `PI_STUDIO_WEB_HOST` / `PI_STUDIO_WEB_PORT` | CLI only | web bind host / port fallbacks below args and above instance config |

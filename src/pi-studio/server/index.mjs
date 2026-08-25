@@ -1,10 +1,11 @@
-import { createReadStream, existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { getHeapStatistics } from 'node:v8';
+import { openJournal } from '../../pi-nest/src/journal.mjs';
 import { createLocalClient } from '../../pi-nest/src/local-client.mjs';
 import { AgentRegistry, WATCHDOG_INTERVAL_MS } from '../../pi-nest/src/registry.mjs';
 import { createSessionStates } from './session-states.mjs';
@@ -14,16 +15,30 @@ const HOST = process.env.PI_STUDIO_HOST ?? '127.0.0.1';
 const NEW_CHAT_CWD = process.env.PI_STUDIO_CWD ?? '/workspace/sf';
 const SESSIONS_ROOT = process.env.PI_STUDIO_SESSIONS ?? path.join(os.homedir(), '.pi', 'agent', 'sessions');
 const DRAIN_MS = Number(process.env.PI_STUDIO_DRAIN_MS ?? 45_000);
-const SPILL_PATH =
-  process.env.PI_STUDIO_SPILL_PATH ?? path.join(os.homedir(), '.pi', 'agent', 'backend-spill.json');
+const STATE_FALLBACK_DIR = path.join(os.homedir(), '.pi', 'agent');
+const DB_PATH =
+  process.env.PI_STUDIO_DB_PATH ??
+  path.join(
+    process.env.PI_STUDIO_SPILL_PATH ? path.dirname(process.env.PI_STUDIO_SPILL_PATH) : STATE_FALLBACK_DIR,
+    'studio.db',
+  );
+const LEGACY_STATES_PATH =
+  process.env.PI_STUDIO_STATES_PATH ?? path.join(STATE_FALLBACK_DIR, 'studio-session-states.json');
+const RESUME_MODE =
+  (process.env.PI_STUDIO_RESUME ?? 'on') === 'off' ? 'skip' : (process.env.PI_STUDIO_RESUME_MODE ?? 'nudge');
 
 let registry = null;
+let journal = null;
 let client;
 if (process.env.PI_STUDIO_CLIENT_MODULE) {
   const mod = await import(pathToFileURL(process.env.PI_STUDIO_CLIENT_MODULE).href);
   client = await mod.createClient();
 } else {
-  registry = new AgentRegistry();
+  journal = openJournal(DB_PATH, {
+    spillPath: process.env.PI_STUDIO_SPILL_PATH ?? null,
+    legacyStatesPath: LEGACY_STATES_PATH,
+  });
+  registry = new AgentRegistry({ journal });
   client = createLocalClient(registry);
 }
 
@@ -728,8 +743,8 @@ async function buildSessionTree() {
 
 const sessionStates = createSessionStates({
   persistPath:
-    process.env.PI_STUDIO_STATES_PATH ??
-    path.join(os.homedir(), '.pi', 'agent', 'studio-session-states.json'),
+    process.env.PI_STUDIO_STATES_PATH ?? path.join(STATE_FALLBACK_DIR, 'studio-session-states.json'),
+  store: journal ? { load: () => journal.loadUiStates(), save: (list) => journal.saveUiStates(list) } : null,
   fileExists: existsSync,
   onSync: (ev) => emit(ev),
 });
@@ -1010,17 +1025,19 @@ async function bootReconcile() {
   } catch {}
 }
 
-function restoreSpill() {
-  if (!registry || !existsSync(SPILL_PATH)) return;
+let lastRecovery = null;
+async function bootRecover() {
+  if (!registry) return;
   try {
-    const data = JSON.parse(readFileSync(SPILL_PATH, 'utf8'));
-    unlinkSync(SPILL_PATH);
-    const entries = Array.isArray(data?.entries) ? data.entries : [];
-    void registry.restore(entries).then((n) => {
-      if (n > 0) console.log(`[backend] restored ${n} queued message(s) from spill`);
-    });
+    lastRecovery = await registry.recover({ resumeMode: RESUME_MODE });
+    const r = lastRecovery;
+    if (r && (r.prefs || r.replayed || r.resumed || r.skipped)) {
+      console.log(
+        `[backend] journal recovery: prefs=${r.prefs} replayed=${r.replayed} resumed=${r.resumed} skipped=${r.skipped}`,
+      );
+    }
   } catch (e) {
-    console.error('[backend] spill restore failed:', e?.message ?? e);
+    console.error('[backend] journal recovery failed:', e?.message ?? e);
   }
 }
 
@@ -1312,6 +1329,7 @@ const server = createServer(async (req, res) => {
         ok: true,
         nest: true,
         draining,
+        journal: { pending: journal?.pendingCount() ?? 0, recovery: lastRecovery },
         mem: {
           rss: s.rss,
           heapUsed: s.heapUsed,
@@ -1424,14 +1442,15 @@ async function shutdownGracefully(sig) {
   server.close(() => {});
   try {
     if (registry) {
-      const spilled = await registry.drain({ timeoutMs: DRAIN_MS });
-      if (spilled.length > 0) {
-        writeFileSync(SPILL_PATH, JSON.stringify({ spilledAt: Date.now(), entries: spilled }));
-        const n = spilled.reduce((t, e) => t + e.items.length, 0);
-        console.log(`[backend] spilled ${n} queued message(s) across ${spilled.length} agent(s)`);
+      const r = await registry.drain({ timeoutMs: DRAIN_MS });
+      if (r && (r.queued || r.interrupted)) {
+        console.log(
+          `[backend] ${r.queued} queued + ${r.interrupted} interrupted prompt(s) durable in the journal`,
+        );
       }
     }
     sessionStates.flush();
+    journal?.close();
   } catch (e) {
     console.error('[backend] drain error:', e?.message ?? e);
   }
@@ -1556,7 +1575,7 @@ server.listen(PORT, HOST, () => {
   logMemoryState('boot');
   wireClientEvents();
   void bootReconcile();
-  restoreSpill();
+  void bootRecover();
   console.log(`pi-agent-studio backend on ${HOST}:${PORT}`);
   console.log(`sessions: ${SESSIONS_ROOT}`);
   console.log(`new chats cwd: ${NEW_CHAT_CWD}`);

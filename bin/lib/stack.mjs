@@ -338,6 +338,7 @@ async function ensureBackend(out, instance, { sessionsDir, used, ports, spawned 
     PI_STUDIO_SESSIONS: sessionsDir,
     PI_STUDIO_CWD: instance.cwd ?? instance.pairRoot,
     PI_STUDIO_SPILL_PATH: path.join(instanceStateDir(instance.id), 'backend-spill.json'),
+    PI_STUDIO_DB_PATH: path.join(instanceStateDir(instance.id), 'studio.db'),
   };
   if (statesPath) env.PI_STUDIO_STATES_PATH = statesPath;
   const pid = spawnDetached({

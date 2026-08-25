@@ -1,21 +1,101 @@
 import { EventEmitter } from 'node:events';
-import { existsSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { extractText, hashId, messageId, newSessionPath, sdk, toDisplayMessage } from './sdk-bridge.mjs';
 
 export const STALE_RUN_MS = 20 * 60 * 1000;
 export const IDLE_EVICT_MS = Number(process.env.PI_NEST_IDLE_EVICT_MS ?? 60 * 60 * 1000);
 export const WATCHDOG_INTERVAL_MS = 30 * 1000;
+export const PARTIAL_SNAPSHOT_MS = 500;
+export const RESUME_SLACK_MS = 10 * 1000;
+export const TAIL_BYTES = 64 * 1024;
+
+const NUDGE_SHORT =
+  '[gateway restart] Your previous reply was cut off mid-generation. Continue exactly where it stopped.';
+const NUDGE_NONE =
+  '[gateway restart] The gateway restarted before you produced any reply. Respond to the request above.';
+
+function nudgeEmbedded(partial) {
+  return `[gateway restart] Your previous reply was cut off mid-generation. Its last generated state was:\n\n<<<\n${partial}\n>>>\n\nContinue from that point without repeating yourself.`;
+}
+
+function readTranscriptTail(file) {
+  let fd = null;
+  try {
+    const size = statSync(file).size;
+    const start = Math.max(0, size - TAIL_BYTES);
+    fd = openSync(file, 'r');
+    const buf = Buffer.alloc(size - start);
+    readSync(fd, buf, 0, buf.length, start);
+    const lines = buf
+      .toString('utf8')
+      .split('\n')
+      .filter((l) => l.trim());
+    const from = start === 0 ? 0 : 1;
+    let lastTs = 0;
+    let lastUserTs = 0;
+    let lastAssistant = null;
+    for (const line of lines.slice(from)) {
+      let e;
+      try {
+        e = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const ts = Date.parse(e?.timestamp ?? '');
+      if (Number.isFinite(ts) && ts > lastTs) lastTs = ts;
+      if (e?.type !== 'message' || !e.message) continue;
+      if (e.message.role === 'user' && Number.isFinite(ts)) lastUserTs = Math.max(lastUserTs, ts);
+      if (e.message.role === 'assistant' && Number.isFinite(ts)) {
+        lastAssistant = { ts, stopReason: e.message.stopReason ?? '' };
+      }
+    }
+    return { lastTs, lastUserTs, lastAssistant };
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {}
+    }
+  }
+}
+
+function classifyResume(row, tail, resumeMode) {
+  if (resumeMode === 'skip') return { kind: 'skip', reason: 'resume disabled' };
+  if (row.status === 'queued') return { kind: 'replay' };
+  const startedAt = row.startedAt ?? 0;
+  if (!startedAt) return { kind: 'replay' };
+  if (resumeMode === 'replay') return { kind: 'replay' };
+  if (!tail) return { kind: 'replay' };
+  if (tail.lastUserTs > startedAt + RESUME_SLACK_MS) {
+    return { kind: 'skip', reason: 'session advanced while the gateway was down' };
+  }
+  const userPresent = tail.lastUserTs >= startedAt - RESUME_SLACK_MS;
+  if (!userPresent) return { kind: 'replay' };
+  const assistantOnDisk = !!tail.lastAssistant && tail.lastAssistant.ts >= startedAt - RESUME_SLACK_MS;
+  if (row.partialText && !assistantOnDisk) return { kind: 'nudge', text: nudgeEmbedded(row.partialText) };
+  if (assistantOnDisk) return { kind: 'nudge', text: NUDGE_SHORT };
+  return { kind: 'nudge', text: NUDGE_NONE };
+}
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export class AgentRegistry extends EventEmitter {
   #live = new Map();
   #pending = new Map();
+  #journal;
+
+  constructor({ journal = null } = {}) {
+    super();
+    this.#journal = journal;
+  }
 
   createSession(cwd) {
     const file = newSessionPath(cwd);
     this.#pending.set(file, { cwd, dir: path.dirname(file), model: null, thinkLevel: null });
+    this.#journal?.ensureSession(file, cwd);
     return { file };
   }
 
@@ -36,6 +116,7 @@ export class AgentRegistry extends EventEmitter {
     if (!p) return null;
     p.model = model;
     p.thinkLevel = thinkLevel ?? null;
+    this.#journal?.setSessionPrefs(agentId, { model, thinkLevel: thinkLevel ?? null });
     return p;
   }
 
@@ -68,6 +149,7 @@ export class AgentRegistry extends EventEmitter {
           );
         }
       }
+      this.#journal?.clearSessionPrefs(agentId);
       return this.#register(agentId, session);
     }
     const { session } = await sdk.createAgentSession({
@@ -85,6 +167,7 @@ export class AgentRegistry extends EventEmitter {
       } catch {}
     }
     this.#pending.delete(agentId);
+    this.#journal?.clearSessionPrefs(agentId);
     return { ok: true };
   }
 
@@ -102,6 +185,7 @@ export class AgentRegistry extends EventEmitter {
       queue: [],
       pumping: false,
       drained: false,
+      current: null,
     };
     this.#live.set(agentId, live);
     this.#attach(agentId, live);
@@ -114,6 +198,9 @@ export class AgentRegistry extends EventEmitter {
       done = resolve;
     });
     item.done = done;
+    if (item.id === undefined) {
+      item.id = this.#journal?.enqueue(agentId, item) ?? null;
+    }
     live.queue.push(item);
     this.#pump(agentId, live);
     return completion;
@@ -126,6 +213,9 @@ export class AgentRegistry extends EventEmitter {
       while (!live.drained) {
         const item = live.queue.shift();
         if (!item) break;
+        live.current = item;
+        item.startedAt = Date.now();
+        this.#journal?.markInflight(item.id, item.startedAt);
         try {
           const ts = Date.now();
           const row = { id: `pending-${ts}`, role: 'user', text: item.message, ts };
@@ -142,11 +232,23 @@ export class AgentRegistry extends EventEmitter {
         } catch (e) {
           console.error(`[pi-nest] prompt failed (${agentId.split('/').pop()}):`, e?.message ?? e);
         } finally {
+          if (!item.keepRow) this.#journal?.remove(item.id);
+          live.current = null;
           item.done?.();
         }
       }
       live.pumping = false;
     })();
+  }
+
+  #maybeSnapshot(live, dm, force) {
+    const cur = live.current;
+    if (!cur || cur.id === null || dm.role !== 'assistant' || !dm.text) return;
+    cur.partialText = dm.text;
+    const now = Date.now();
+    if (!force && now - (cur.partialAt ?? 0) < PARTIAL_SNAPSHOT_MS) return;
+    cur.partialAt = now;
+    this.#journal?.snapshotPartial(cur.id, dm.text);
   }
 
   async prompt(agentId, message, { interrupt = true, images = [] } = {}) {
@@ -170,7 +272,7 @@ export class AgentRegistry extends EventEmitter {
   }
 
   async drain({ timeoutMs = 45000 } = {}) {
-    const spilled = [];
+    let aborted = 0;
     for (const [agentId, live] of this.#live) {
       live.drained = true;
       if (live.pumping) {
@@ -178,43 +280,98 @@ export class AgentRegistry extends EventEmitter {
         while (live.pumping && Date.now() < deadline) await delay(200);
         if (live.pumping) {
           console.log(`[pi-nest][drain] aborting still-running ${agentId.split('/').pop()}`);
+          if (live.current) live.current.keepRow = true;
           try {
             await live.session.abort();
           } catch {}
           const hardDeadline = Date.now() + 10000;
           while (live.pumping && Date.now() < hardDeadline) await delay(100);
+          if (live.pumping) aborted += 1;
         }
       }
-      if (live.queue.length > 0) {
-        const items = live.queue.splice(0);
-        for (const item of items) item.done?.();
-        spilled.push({ agentId, items: items.map(({ message, images }) => ({ message, images })) });
-        console.log(
-          `[pi-nest][drain] spilled ${items.length} queued message(s) for ${agentId.split('/').pop()}`,
-        );
+    }
+    let queued = 0;
+    let interrupted = 0;
+    if (this.#journal) {
+      for (const r of this.#journal.pendingItems()) {
+        if (r.status === 'queued') queued += 1;
+        else interrupted += 1;
+      }
+    } else {
+      for (const live of this.#live.values()) {
+        queued += live.queue.length;
+        if (live.pumping) interrupted += 1;
       }
     }
-    return spilled;
+    if (queued + interrupted > 0) {
+      console.log(
+        `[pi-nest][drain] ${queued} queued + ${interrupted} interrupted prompt(s) left durable in the journal`,
+      );
+    }
+    return { aborted, queued, interrupted };
   }
 
-  async restore(entries) {
-    let restored = 0;
-    for (const { agentId, items } of entries ?? []) {
-      if (typeof agentId !== 'string' || !existsSync(agentId)) continue;
-      try {
-        const live = await this.open(agentId);
-        live.drained = false;
-        for (const item of items ?? []) {
-          if (typeof item?.message !== 'string') continue;
-          live.queue.push({ message: item.message, images: Array.isArray(item.images) ? item.images : [] });
-          restored += 1;
+  async recover({ resumeMode = 'nudge' } = {}) {
+    const journal = this.#journal;
+    if (!journal) return null;
+    const counts = { prefs: 0, replayed: 0, resumed: 0, skipped: 0 };
+    for (const p of journal.sessionsWithPrefs()) {
+      if (!existsSync(p.file)) {
+        journal.removeSession(p.file);
+        continue;
+      }
+      this.#pending.set(p.file, {
+        cwd: p.cwd || path.dirname(p.file),
+        dir: path.dirname(p.file),
+        model: p.model,
+        thinkLevel: p.thinkLevel,
+      });
+      counts.prefs += 1;
+    }
+    const bySession = new Map();
+    for (const r of journal.pendingItems()) {
+      if (!bySession.has(r.sessionFile)) bySession.set(r.sessionFile, []);
+      bySession.get(r.sessionFile).push(r);
+    }
+    for (const [file, rows] of bySession) {
+      if (!existsSync(file)) {
+        journal.removeSession(file);
+        counts.skipped += rows.length;
+        console.log(`[pi-nest][recover] session gone — dropped ${rows.length} journal row(s)`);
+        continue;
+      }
+      let live = this.#live.get(file);
+      const tail = readTranscriptTail(file);
+      const planned = rows.map((r) => ({ r, plan: classifyResume(r, tail, resumeMode) }));
+      const actionable = planned.filter((p) => p.plan.kind !== 'skip');
+      for (const p of planned) {
+        if (p.plan.kind === 'skip') {
+          journal.remove(p.r.id);
+          counts.skipped += 1;
+          console.log(`[pi-nest][recover] skipping prompt for ${path.basename(file)}: ${p.plan.reason}`);
         }
-        this.#pump(agentId, live);
-      } catch (e) {
-        console.error(`[pi-nest][restore] failed for ${String(agentId).split('/').pop()}:`, e?.message ?? e);
+      }
+      if (actionable.length === 0) continue;
+      if (!live) {
+        try {
+          live = await this.open(file);
+        } catch (e) {
+          console.error(`[pi-nest][recover] open failed (${path.basename(file)}):`, e?.message ?? e);
+          counts.skipped += actionable.length;
+          continue;
+        }
+      }
+      for (const { r, plan } of actionable) {
+        const message = plan.kind === 'replay' ? r.message : plan.text;
+        const images = plan.kind === 'replay' ? r.images : [];
+        journal.requeue(r.id, { message, images });
+        this.#submit(live, file, { message, images, id: r.id });
+        if (plan.kind === 'replay') counts.replayed += 1;
+        else counts.resumed += 1;
       }
     }
-    return restored;
+    journal.checkpoint();
+    return counts;
   }
 
   state(agentId) {
@@ -345,6 +502,7 @@ export class AgentRegistry extends EventEmitter {
             dm.id = messageId(ev.message);
             dm.thinkingLevel = live.session.thinkingLevel ?? null;
             this.broadcast('message', agentId, dm);
+            this.#maybeSnapshot(live, dm, ev.type !== 'message_update');
             break;
           }
           case 'turn_end': {
@@ -352,6 +510,7 @@ export class AgentRegistry extends EventEmitter {
             dm.id = messageId(ev.message);
             dm.thinkingLevel = live.session.thinkingLevel ?? null;
             this.broadcast('message', agentId, dm);
+            this.#maybeSnapshot(live, dm, true);
             for (const tr of ev.toolResults ?? []) {
               this.broadcast('tool_result', agentId, {
                 toolCallId: tr.toolCallId,

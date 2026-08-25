@@ -475,8 +475,9 @@ export async function cmdDoctor(out, opts = {}) {
   const ids = opts.instance ? [opts.instance] : listInstances();
   const insts = ids.map((id) => loadInstance(id)).filter(Boolean);
   for (const inst of insts) await doctorInstance(inst, results);
-  const attributed = attributeProcesses(insts);
+  const attributed = attributeProcesses();
   const unattributed = attributed.rows.filter((r) => !r.instanceId);
+  const scopedRoot = opts.instance && insts[0]?.pairRoot ? path.resolve(insts[0].pairRoot) : null;
   for (const u of unattributed) {
     results.push({
       scope: 'orphans',
@@ -540,6 +541,12 @@ export async function cmdDoctor(out, opts = {}) {
       if (isolatedRegistry) {
         out.line(
           `${warnSym} orphan ${u.service} pid ${u.pid} left alone (isolated registry — belongs to another instance set)`,
+        );
+        continue;
+      }
+      if (scopedRoot && !(u.cwd && (u.cwd === scopedRoot || u.cwd.startsWith(`${scopedRoot}${path.sep}`)))) {
+        out.line(
+          `${warnSym} orphan ${u.service} pid ${u.pid} left alone (outside ${opts.instance} — run doctor without -i to sweep)`,
         );
         continue;
       }

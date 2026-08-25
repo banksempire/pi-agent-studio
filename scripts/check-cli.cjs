@@ -1,4 +1,4 @@
-const { spawnSync } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
 const net = require('node:net');
@@ -272,6 +272,53 @@ async function main() {
       typeof chat?.file === 'string' && !chat.file.includes(`${path.sep}.pi${path.sep}`),
       '',
     );
+
+    const otherPair = path.join(BASE, 'other-pair');
+    const otherSrv = path.join(otherPair, 'pi-agent-studio', 'src', 'pi-studio', 'server');
+    fs.mkdirSync(otherSrv, { recursive: true });
+    fs.writeFileSync(path.join(otherSrv, 'index.mjs'), 'setInterval(() => {}, 60000);\n');
+    const fakeOther = spawn('node', [path.join(otherSrv, 'index.mjs')], {
+      cwd: otherSrv,
+      stdio: 'ignore',
+      detached: true,
+    });
+    fakeOther.unref();
+    fs.writeFileSync(
+      path.join(CFG, 'instances', 'other.json'),
+      JSON.stringify(
+        {
+          createdAt: Date.now(),
+          id: 'other',
+          pairRoot: otherPair,
+          branch: 'other',
+          webPort: webPort + 1,
+          host: '127.0.0.1',
+          sessionsDir: path.join(otherPair, '.studio', 'sessions'),
+        },
+        null,
+        2,
+      ),
+    );
+    await delay(600);
+    const docRes = studio(['-i', ID, 'doctor', '--json'], { label: 'doctor scoped' });
+    let orphanRows = null;
+    try {
+      orphanRows = JSON.parse(docRes.stdout).results.filter((r) => r.scope === 'orphans');
+    } catch {}
+    report(
+      'scoped doctor never classifies another instance service as an orphan (kill-sweep guard)',
+      Array.isArray(orphanRows) && !orphanRows.some((r) => (r.detail ?? '').includes(`pid ${fakeOther.pid}`)),
+      orphanRows === null
+        ? docRes.stdout.slice(0, 100)
+        : orphanRows
+            .map((r) => r.detail)
+            .join(' | ')
+            .slice(0, 120),
+    );
+    try {
+      process.kill(fakeOther.pid, 'SIGKILL');
+    } catch {}
+    fs.rmSync(path.join(CFG, 'instances', 'other.json'), { force: true });
 
     const guardRes = studio(['-i', ID, 'restart', 'backend'], { expect: 5, label: 'guard' });
     report(

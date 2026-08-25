@@ -688,6 +688,7 @@
   color: var(--sf-text-on-accent);
   font-family: var(--sf-font);
   font-size: 16px;
+  min-width: calc(2.5em + 32px);
   padding: 7px 16px;
   cursor: pointer;
   flex-shrink: 0;

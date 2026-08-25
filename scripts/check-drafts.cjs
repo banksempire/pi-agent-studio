@@ -131,6 +131,7 @@ function writeSession() {
         {
           PI_STUDIO_PORT: String(backend),
           PI_STUDIO_SESSIONS: ISOLATED_ROOT,
+          PI_STUDIO_DB_PATH: path.join(ISOLATED_ROOT, 'studio.db'),
           PI_STUDIO_STATES_PATH: TEST_STATES_PATH,
           PI_STUDIO_CWD: TEST_CWD,
         },

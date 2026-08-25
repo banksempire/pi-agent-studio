@@ -178,7 +178,8 @@ function captureAnchor() {
   const el = listEl.value;
   if (!el) return;
   const elTop = el.getBoundingClientRect().top;
-  const rows = el.querySelectorAll<HTMLElement>('.chat-group, .chat-load-older');
+  let rows = el.querySelectorAll<HTMLElement>('.chat-group');
+  if (rows.length === 0) rows = el.querySelectorAll<HTMLElement>('.chat-load-older');
   for (const row of rows) {
     const r = row.getBoundingClientRect();
     if (r.bottom > elTop + 1) {

@@ -806,8 +806,14 @@ function makeReporter() {
         .locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " sf-tile ")][1]')
         .locator('.chat-input');
       const prime = async (sendKey) => {
-        await page.evaluate((k) => {
-          localStorage.setItem('sf-chat:prefs', JSON.stringify({ sendKey: k, renderMarkdown: true }));
+        await page.addInitScript((k) => {
+          try {
+            const raw = localStorage.getItem('sf.ui.state');
+            const j = raw ? JSON.parse(raw) : null;
+            const values = j && typeof j.values === 'object' && j.values ? { ...j.values } : {};
+            values['app.chat.prefs'] = { sendKey: k, renderMarkdown: true };
+            localStorage.setItem('sf.ui.state', JSON.stringify({ version: 1, values }));
+          } catch {}
         }, sendKey);
         await page.reload({ waitUntil: 'domcontentloaded' });
         await page.waitForSelector('.sf-tab-label:has-text("XWin-B:")', { timeout: 30000 });
@@ -1396,8 +1402,6 @@ function makeReporter() {
       await openList();
       await page.locator(`.chat-list-item:has-text("${marker}")`).first().click({ force: true });
       await delay(2500);
-      await page.locator('.sf-panel-close-btn').click();
-      await delay(400);
       const label = page.locator('.sf-mobile-tab-label');
       await label.waitFor({ state: 'visible', timeout: 10000 });
       const reviewOn = () => label.evaluate((el) => el.classList.contains('sf-tab--review'));
@@ -1413,8 +1417,6 @@ function makeReporter() {
       await openList();
       await page.locator('.chat-list-item:has-text("XWin-C:")').first().click({ force: true });
       await delay(2500);
-      await page.locator('.sf-panel-close-btn').click();
-      await delay(400);
       await label.click();
       await delay(300);
       const rows = await page.locator('.sf-tab-dropdown .sf-tab-dropdown-label').allInnerTexts();

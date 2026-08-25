@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import {
+  appendAudit,
   instanceRepoRoot,
   instanceSessionsDir,
   instanceStateDir,
@@ -91,11 +92,12 @@ function copyModulesFrom(srcRepo, dstRepo) {
   const dst = path.join(dstRepo, 'node_modules');
   if (fs.existsSync(dst) || !fs.existsSync(src)) return false;
   try {
-    execFileSync('cp', ['-al', src, dst]);
+    execFileSync('cp', ['-al', src, dst], { stdio: 'ignore' });
     return true;
   } catch {
+    fs.rmSync(dst, { recursive: true, force: true });
     try {
-      fs.cpSync(src, dst, { recursive: true });
+      fs.cpSync(src, dst, { recursive: true, verbatimSymlinks: true });
       return true;
     } catch {
       return false;

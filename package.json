@@ -19,7 +19,8 @@
     "check:sync": "node scripts/check-session-sync.cjs",
     "check:restart": "node scripts/check-gateway-restart.cjs",
     "check:cli": "node scripts/check-cli.cjs",
-    "check:registry": "node scripts/check-registry-drain.cjs"
+    "check:registry": "node scripts/check-registry-drain.cjs",
+    "check:backend-restart": "node scripts/check-backend-restart.cjs"
   },
   "dependencies": {
     "dompurify": "^3.4.13",

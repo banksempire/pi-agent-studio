@@ -9,6 +9,7 @@ import ChatHistory from './components/ChatHistory.vue';
 import ChatSessions from './components/ChatSessions.vue';
 import ChatWindow from './components/ChatWindow.vue';
 import DirectoryTree from './components/DirectoryTree.vue';
+import JobEditor from './components/JobEditor.vue';
 import JobsPanel from './components/JobsPanel.vue';
 import ModelPicker from './components/ModelPicker.vue';
 import PrefsPanel from './components/PrefsPanel.vue';
@@ -18,6 +19,7 @@ import StudioShell from './shell/StudioShell.vue';
 
 registerTabContent('welcome', WelcomeContent);
 registerTabContent('chat-window', ChatWindow);
+registerTabContent('job-editor', JobEditor);
 
 registerPanelComponent('chat-history', ChatHistory);
 registerPanelComponent('chat-sessions', ChatSessions);

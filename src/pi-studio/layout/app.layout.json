@@ -181,6 +181,19 @@
                     "type": "component",
                     "key": "jobs-panel"
                   }
+                ],
+                "utilities": [
+                  {
+                    "id": "jobs-sort",
+                    "icon": "sort",
+                    "tooltip": "Sort jobs"
+                  },
+                  {
+                    "id": "new-job",
+                    "icon": "➕",
+                    "tooltip": "New Job",
+                    "closeMobilePanel": true
+                  }
                 ]
               }
             ]

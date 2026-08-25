@@ -153,6 +153,24 @@ export interface JobInput {
   createdBy?: string;
 }
 
+export type JobsSort = 'created' | 'next' | 'name';
+
+const JOB_EDITOR_CONTENT = 'job-editor';
+const JOB_TAB_PREFIX = 'job-editor:';
+
+function jobEditorTabId(jobId: string | null): string {
+  return JOB_TAB_PREFIX + (jobId ?? 'new');
+}
+
+function loadJobsSort(): JobsSort {
+  const v = readUiValue('app.chat.jobsSort');
+  return v === 'next' || v === 'name' ? v : 'created';
+}
+
+function saveJobsSort() {
+  writeUiValue('app.chat.jobsSort', state.jobsSort);
+}
+
 interface ChatState {
   sessions: ChatSession[];
   activeChatId: string | null;
@@ -176,6 +194,7 @@ interface ChatState {
   };
   jobs: JobInfo[];
   jobsLoaded: boolean;
+  jobsSort: JobsSort;
 }
 
 const PREFS_KEY = 'sf-chat:prefs';
@@ -380,6 +399,7 @@ const state = reactive<ChatState>({
   sessions: [],
   jobs: [],
   jobsLoaded: false,
+  jobsSort: loadJobsSort(),
   activeChatId: null,
   openViewTabIds: new Set(),
   reviewTabId: null,
@@ -401,6 +421,7 @@ const state = reactive<ChatState>({
 watch(uiEpoch, () => {
   state.stateFilter = loadStateFilter();
   state.prefs = loadPrefs();
+  state.jobsSort = loadJobsSort();
 });
 
 if (readUiValue('app.chat.stateFilter') === undefined)
@@ -709,6 +730,41 @@ async function runJobNow(id: string): Promise<void> {
 async function fetchJobRuns(id: string): Promise<JobRunInfo[]> {
   const { runs } = await api<{ runs: JobRunInfo[] }>(`/api/jobs/${encodeURIComponent(id)}/runs?limit=50`);
   return runs;
+}
+
+function setJobsSort(sort: JobsSort) {
+  state.jobsSort = sort;
+  saveJobsSort();
+}
+
+function openJobEditor(jobId: string | null) {
+  if (!ws) return;
+  const tabId = jobEditorTabId(jobId);
+  const existing = ws.findTabGlobal(tabId);
+  if (existing) {
+    ws.ops.activateTab(existing.id, tabId);
+    return;
+  }
+  const tileId = targetTileId();
+  if (!tileId) return;
+  const job = jobId ? state.jobs.find((j) => j.id === jobId) : null;
+  ws.ops.openTab(tileId, {
+    id: tabId,
+    label: job ? job.name : 'New Job',
+    icon: '⏰',
+    content: JOB_EDITOR_CONTENT,
+    props: { jobId },
+  });
+}
+
+function closeJobEditor(jobId: string | null) {
+  ws?.ops.closeTab(jobEditorTabId(jobId));
+}
+
+function renameJobEditorTab(jobId: string, name: string) {
+  if (!ws) return;
+  const tab = ws.tabDefs[jobEditorTabId(jobId)];
+  if (tab) tab.label = name;
 }
 
 async function fetchList() {
@@ -1891,6 +1947,10 @@ export const store = {
   deleteJob,
   runJobNow,
   fetchJobRuns,
+  setJobsSort,
+  openJobEditor,
+  closeJobEditor,
+  renameJobEditorTab,
   markCompactFailed,
   stopSession,
   closeChatView,
@@ -1904,6 +1964,9 @@ export const store = {
   },
   get jobsLoaded() {
     return state.jobsLoaded;
+  },
+  get jobsSort() {
+    return state.jobsSort;
   },
   get stateFilter() {
     return state.stateFilter;

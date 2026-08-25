@@ -1,10 +1,11 @@
-const { chromium } = require('playwright');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
 const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
+const { createRequire } = require('node:module');
+const { chromium } = createRequire(path.join(__dirname, '..', 'package.json'))('playwright');
 const { writeStubClient } = require('./lib/stub-backend.cjs');
 
 const PRODUCT_ROOT = path.join(__dirname, '..');
@@ -164,86 +165,118 @@ function writeSessionFile(name) {
     await waitHttp(`http://127.0.0.1:${vitePort}/`, 'vite');
 
     browser = await chromium.launch();
-    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     const errors = [];
-    page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
-    page.on('console', (m) => {
-      if (m.type() === 'error') errors.push(`console: ${m.text()}`);
-    });
-    await page.goto(`http://127.0.0.1:${vitePort}/`, { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('.chat-list-item:has-text("send-stop-check")', { timeout: 60000 });
-    await page.locator('.chat-list-item:has-text("send-stop-check")').first().click({ force: true });
-    await page.waitForSelector('.chat-window', { timeout: 20000 });
-    await delay(1500);
 
-    const stopBtn = page.locator('.chat-send-btn--stop');
-    const sendBtn = page.locator('.chat-send-btn:not(.chat-send-btn--stop)');
-
-    const t1 = await (async () => {
-      const idleEmptyDisabled = await sendBtn.isDisabled();
-      return { ok: idleEmptyDisabled, why: `idle-empty-send-disabled:${idleEmptyDisabled}` };
-    })();
-    report('idle + empty input → Send disabled, no Stop', t1.ok, t1.why);
-
-    const t2 = await (async () => {
-      stub.emit('session_status', F, { status: 'running' });
-      for (let i = 0; i < 40; i++) {
-        if ((await stopBtn.count()) === 1) break;
-        await delay(250);
+    for (const vp of [
+      { name: 'desktop', width: 1440, height: 900 },
+      { name: 'mobile', width: 390, height: 844 },
+    ]) {
+      const page = await browser.newPage({ viewport: { width: vp.width, height: vp.height } });
+      page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+      page.on('console', (m) => {
+        if (m.type() === 'error') errors.push(`console: ${m.text()}`);
+      });
+      await page.goto(`http://127.0.0.1:${vitePort}/`, { waitUntil: 'domcontentloaded' });
+      let itemSel = '.chat-list-item:has-text("send-stop-check")';
+      if (vp.width < 500) {
+        await page.waitForSelector('.sf-root--mobile', { timeout: 60000 });
+        await page.locator('.sf-docker-app[title="Chat"]').click();
+        itemSel = '[data-sub-body="history"] .chat-list-item:has-text("send-stop-check")';
       }
-      const visible = (await stopBtn.count()) === 1;
-      const label = visible ? ((await stopBtn.innerText()) || '').trim() : '';
-      const enabled = visible ? !(await stopBtn.isDisabled()) : false;
-      const sendGone = (await sendBtn.count()) === 0;
-      return {
-        ok: visible && /Stop/.test(label) && enabled && sendGone,
-        why: `visible:${visible} label:"${label}" enabled:${enabled} send-hidden:${sendGone}`,
-      };
-    })();
-    report('running + empty input → Send becomes enabled Stop', t2.ok, t2.why);
+      await page.waitForSelector(itemSel, { timeout: 60000 });
+      await delay(2000);
+      await page.locator(itemSel).first().click({ force: true });
+      await page.waitForSelector('.chat-window', { timeout: 20000 });
+      await delay(1500);
 
-    const t3 = await (async () => {
-      await page.locator('.chat-input').fill('queued message while running');
-      await delay(400);
-      const stopGone = (await stopBtn.count()) === 0;
-      const sendBack = (await sendBtn.count()) === 1 && !(await sendBtn.isDisabled());
-      return { ok: stopGone && sendBack, why: `stop-hidden:${stopGone} send-back-enabled:${sendBack}` };
-    })();
-    report('running + typed text → Send returns (queueing)', t3.ok, t3.why);
+      const stopBtn = page.locator('.chat-send-btn--stop');
+      const sendBtn = page.locator('.chat-send-btn:not(.chat-send-btn--stop)');
+      const tag = `[${vp.name}]`;
 
-    const t4 = await (async () => {
-      await page.locator('.chat-input').fill('');
-      for (let i = 0; i < 40; i++) {
-        if ((await stopBtn.count()) === 1) break;
-        await delay(250);
-      }
-      const back = (await stopBtn.count()) === 1;
-      if (!back) return { ok: false, why: 'stop did not come back after clearing input' };
-      await stopBtn.click();
-      let logged = null;
-      for (let i = 0; i < 40; i++) {
-        try {
-          const lines = fs.readFileSync(ABORT_LOG, 'utf8').split('\n').filter(Boolean);
-          logged = lines.map((l) => JSON.parse(l)).find((e) => e.agentId === F);
-        } catch {}
-        if (logged) break;
-        await delay(250);
-      }
-      return { ok: !!logged, why: `abort-logged:${!!logged}` };
-    })();
-    report('clicking Stop interrupts generation (abort reaches agent)', t4.ok, t4.why);
+      const btnRect = () =>
+        page.evaluate(() => {
+          const el = document.querySelector('.chat-send-btn');
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          return { w: +r.width.toFixed(1), h: +r.height.toFixed(1) };
+        });
 
-    const t5 = await (async () => {
-      stub.emit('session_status', F, { status: 'idle' });
-      for (let i = 0; i < 40; i++) {
-        if ((await stopBtn.count()) === 0) break;
-        await delay(250);
-      }
-      const stopGone = (await stopBtn.count()) === 0;
-      const sendBack = (await sendBtn.count()) === 1 && (await sendBtn.isDisabled());
-      return { ok: stopGone && sendBack, why: `stop-gone:${stopGone} send-disabled-again:${sendBack}` };
-    })();
-    report('back to idle → Stop reverts to disabled Send', t5.ok, t5.why);
+      const t1 = await (async () => {
+        const idleEmptyDisabled = await sendBtn.isDisabled();
+        return { ok: idleEmptyDisabled, why: `idle-empty-send-disabled:${idleEmptyDisabled}` };
+      })();
+      report(`${tag} idle + empty input → Send disabled, no Stop`, t1.ok, t1.why);
+      const sendRect = await btnRect();
+
+      const t2 = await (async () => {
+        stub.emit('session_status', F, { status: 'running' });
+        for (let i = 0; i < 40; i++) {
+          if ((await stopBtn.count()) === 1) break;
+          await delay(250);
+        }
+        const visible = (await stopBtn.count()) === 1;
+        const label = visible ? ((await stopBtn.innerText()) || '').trim() : '';
+        const enabled = visible ? !(await stopBtn.isDisabled()) : false;
+        const sendGone = (await sendBtn.count()) === 0;
+        return {
+          ok: visible && /Stop/.test(label) && enabled && sendGone,
+          why: `visible:${visible} label:"${label}" enabled:${enabled} send-hidden:${sendGone}`,
+        };
+      })();
+      report(`${tag} running + empty input → Send becomes enabled Stop`, t2.ok, t2.why);
+
+      const t3 = await (async () => {
+        const stopRect = await btnRect();
+        const same = !!stopRect && !!sendRect && stopRect.w === sendRect.w && stopRect.h === sendRect.h;
+        return { ok: same, why: `send:${JSON.stringify(sendRect)} stop:${JSON.stringify(stopRect)}` };
+      })();
+      report(`${tag} Stop button is exactly the same size as Send`, t3.ok, t3.why);
+
+      const t4 = await (async () => {
+        await page.locator('.chat-input').fill('queued message while running');
+        await delay(400);
+        const stopGone = (await stopBtn.count()) === 0;
+        const sendBack = (await sendBtn.count()) === 1 && !(await sendBtn.isDisabled());
+        return { ok: stopGone && sendBack, why: `stop-hidden:${stopGone} send-back-enabled:${sendBack}` };
+      })();
+      report(`${tag} running + typed text → Send returns (queueing)`, t4.ok, t4.why);
+
+      const t5 = await (async () => {
+        await page.locator('.chat-input').fill('');
+        for (let i = 0; i < 40; i++) {
+          if ((await stopBtn.count()) === 1) break;
+          await delay(250);
+        }
+        const back = (await stopBtn.count()) === 1;
+        if (!back) return { ok: false, why: 'stop did not come back after clearing input' };
+        await stopBtn.click({ force: true });
+        let logged = null;
+        for (let i = 0; i < 40; i++) {
+          try {
+            const lines = fs.readFileSync(ABORT_LOG, 'utf8').split('\n').filter(Boolean);
+            logged = lines.map((l) => JSON.parse(l)).find((e) => e.agentId === F);
+          } catch {}
+          if (logged) break;
+          await delay(250);
+        }
+        return { ok: !!logged, why: `abort-logged:${!!logged}` };
+      })();
+      report(`${tag} clicking Stop interrupts generation (abort reaches agent)`, t5.ok, t5.why);
+
+      const t6 = await (async () => {
+        stub.emit('session_status', F, { status: 'idle' });
+        for (let i = 0; i < 40; i++) {
+          if ((await stopBtn.count()) === 0) break;
+          await delay(250);
+        }
+        const stopGone = (await stopBtn.count()) === 0;
+        const sendBack = (await sendBtn.count()) === 1 && (await sendBtn.isDisabled());
+        return { ok: stopGone && sendBack, why: `stop-gone:${stopGone} send-disabled-again:${sendBack}` };
+      })();
+      report(`${tag} back to idle → Stop reverts to disabled Send`, t6.ok, t6.why);
+
+      await page.close();
+    }
 
     report('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   } catch (e) {

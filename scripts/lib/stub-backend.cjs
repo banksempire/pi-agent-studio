@@ -63,7 +63,10 @@ export async function createClient() {
     async prompt() {
       return { ok: true };
     },
-    async abort() {
+    async abort(evt) {
+      if (process.env.STUB_ABORT_LOG) {
+        fs.appendFileSync(process.env.STUB_ABORT_LOG, JSON.stringify({ agentId: evt && evt.agentId }) + '\\n');
+      }
       return { ok: true };
     },
     async slash({ agentId, command }) {

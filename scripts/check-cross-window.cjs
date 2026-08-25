@@ -48,7 +48,7 @@ function writeSessions() {
   fs.rmSync(TEST_SESSIONS_DIR, { recursive: true, force: true });
   fs.mkdirSync(TEST_SESSIONS_DIR, { recursive: true });
   const uid = () => `019f${Math.random().toString(16).slice(2, 14)}`;
-  const sessionFile = (name, turns, { withImage = false, withTool = false } = {}) => {
+  const sessionFile = (name, turns, { withImage = false, withTool = false, withError = false } = {}) => {
     const lines = [];
     const id = uid();
     const base = 1786342000000;
@@ -112,7 +112,11 @@ function writeSessions() {
             role: 'assistant',
             content,
             timestamp: base + n * 60000 + 1000,
-            ...(t === turns - 1 ? { stopReason: 'stop' } : {}),
+            ...(t === turns - 1
+              ? withError
+                ? { stopReason: 'error', errorMessage: `${name}: assistant error row probe — provider 502` }
+                : { stopReason: 'stop' }
+              : {}),
           },
         }),
       );
@@ -131,6 +135,7 @@ function writeSessions() {
   sessionFile('XWin-C', 10, { withImage: true });
   sessionFile('XWin-D', 20, { withTool: true });
   sessionFile('XWin-E', 20, { withTool: true });
+  sessionFile('XWin-F', 4, { withError: true });
 }
 
 function writeTestImages() {
@@ -1435,6 +1440,50 @@ function makeReporter() {
       'T21 mobile: long-press on the tab selection bar makes a window out of review mode',
       t21.ok,
       t21.why,
+    );
+
+    const t22 = await (async () => {
+      const rowProbe = () => {
+        const el =
+          document.querySelector('.chat-aborted--error') ?? document.querySelector('.chat-banner--error');
+        if (!el) return { ok: false, why: `no error row rendered (${location.hash || 'root'})` };
+        const icon = el.querySelector('.sf-icon');
+        const textNode = Array.from(el.childNodes).find(
+          (n) => n.nodeType === Node.TEXT_NODE && n.textContent.trim(),
+        );
+        if (!icon || !textNode) return { ok: false, why: `icon:${!!icon} text:${!!textNode}` };
+        const range = document.createRange();
+        range.selectNodeContents(textNode);
+        const tr = range.getBoundingClientRect();
+        const ir = icon.getBoundingClientRect();
+        const overlap = Math.min(ir.bottom, tr.bottom) - Math.max(ir.top, tr.top);
+        return {
+          ok: overlap > 2,
+          why: `icon y ${ir.top.toFixed(1)}–${ir.bottom.toFixed(1)} vs text y ${tr.top.toFixed(1)}–${tr.bottom.toFixed(1)}`,
+        };
+      };
+      await openSession('XWin-F:');
+      const msgRow = await page.evaluate(rowProbe);
+      await page.setInputFiles('input.chat-image-input[type=file]', [
+        path.join(IMG_DIR, 'img0.png'),
+        path.join(IMG_DIR, 'img1.png'),
+        path.join(IMG_DIR, 'img2.png'),
+        path.join(IMG_DIR, 'img3.png'),
+        path.join(IMG_DIR, 'img4.png'),
+      ]);
+      await delay(1200);
+      const bannerRow = await page.evaluate(rowProbe);
+      await page.evaluate(() => document.querySelector('.chat-banner--error')?.click());
+      await delay(300);
+      return {
+        ok: msgRow.ok && bannerRow.ok,
+        why: `msg ${msgRow.why} | banner ${bannerRow.why}`,
+      };
+    })();
+    report(
+      'T22 error rows: warning icon and message share one row (assistant error + composer banner)',
+      t22.ok,
+      t22.why,
     );
 
     if (errors.length) console.log(`page errors: ${errors.join(' | ')}`);

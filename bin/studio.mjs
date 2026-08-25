@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureMain, instanceForCwd, listInstances, loadInstance } from './lib/instances.mjs';
+import { cmdJobs } from './lib/jobs.mjs';
 import * as manage from './lib/manage.mjs';
 import {
   CliError,
@@ -40,6 +41,15 @@ commands:
   logs [service] [-f] [-n N]  tail managed service logs
   agents                    live agents on this instance's backend
   abort <agent-id>          abort one agent
+  jobs list                 scheduled jobs on this instance's backend
+  jobs add <name> …         add a job (--at <time> | --cron <expr>, --message,
+                            --session <file> | --cwd <dir> [--mode new|reuse],
+                            --model, --think, --missed coalesce|skip)
+  jobs edit <id> …          update a job (--name/--message/--at/--cron/--cwd/…)
+  jobs rm <id>              delete a job and its run history
+  jobs run <id>             fire a job now (manual run, schedule untouched)
+  jobs enable|disable <id>  toggle a job
+  jobs runs <id> [-n N]     run history for a job
   doctor [--fix]            diagnostics; --fix clears stale pidfiles + orphans,
                             installs the git guard hooks when missing
   guard [install|status]    install/inspect core.hooksPath on both repos
@@ -215,6 +225,11 @@ async function main() {
       const inst = resolveInstance(instanceId);
       if (!positional[0]) throw new CliError('abort requires an agent id', 2);
       await cmdAbort(out, inst, positional[0]);
+      return 0;
+    }
+    case 'jobs': {
+      const inst = resolveInstance(instanceId);
+      await cmdJobs(out, inst, args);
       return 0;
     }
     case 'guard': {

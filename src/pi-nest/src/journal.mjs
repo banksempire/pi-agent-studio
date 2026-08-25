@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync } from 'nod
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const UI_STATES = new Set(['working', 'unread', 'error']);
 
 function warn(op, e) {
@@ -68,7 +68,75 @@ function applySchema(db) {
     );
   `);
   db.exec('CREATE INDEX IF NOT EXISTS queue_items_session ON queue_items(session_file, id)');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS jobs (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      kind TEXT NOT NULL DEFAULT 'message',
+      schedule_type TEXT NOT NULL,
+      run_at INTEGER,
+      cron TEXT,
+      payload TEXT NOT NULL,
+      next_due INTEGER NOT NULL,
+      missed_policy TEXT NOT NULL DEFAULT 'coalesce',
+      created_by TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS jobs_next_due ON jobs(next_due)');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS job_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      job_id TEXT NOT NULL,
+      queued_at INTEGER NOT NULL,
+      started_at INTEGER,
+      finished_at INTEGER,
+      status TEXT NOT NULL,
+      error TEXT NOT NULL DEFAULT '',
+      session_file TEXT NOT NULL DEFAULT '',
+      queue_item_id INTEGER
+    );
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS job_runs_job ON job_runs(job_id, id)');
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+}
+
+function rowToJob(r) {
+  let payload = {};
+  try {
+    payload = JSON.parse(r.payload ?? '{}');
+  } catch {}
+  return {
+    id: r.id,
+    name: r.name,
+    enabled: !!r.enabled,
+    kind: r.kind,
+    scheduleType: r.schedule_type,
+    runAt: r.run_at ?? null,
+    cron: r.cron ?? null,
+    payload,
+    nextDue: r.next_due,
+    missedPolicy: r.missed_policy,
+    createdBy: r.created_by,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+function rowToRun(r) {
+  return {
+    id: Number(r.id),
+    jobId: r.job_id,
+    queuedAt: r.queued_at,
+    startedAt: r.started_at ?? null,
+    finishedAt: r.finished_at ?? null,
+    status: r.status,
+    error: r.error ?? '',
+    sessionFile: r.session_file ?? '',
+    queueItemId: r.queue_item_id ?? null,
+  };
 }
 
 export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null } = {}) {
@@ -105,6 +173,35 @@ export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null 
     ),
     loadUi: db.prepare(
       "SELECT file, ui_state, ui_error FROM sessions WHERE ui_state IN ('working','unread','error')",
+    ),
+    jobInsert: db.prepare(`
+      INSERT INTO jobs (id, name, enabled, kind, schedule_type, run_at, cron, payload, next_due, missed_policy, created_by, created_at, updated_at)
+      VALUES (@id, @name, @enabled, @kind, @schedule_type, @run_at, @cron, @payload, @next_due, @missed_policy, @created_by, @created_at, @updated_at)
+    `),
+    jobUpdate: db.prepare(`
+      UPDATE jobs SET name = @name, enabled = @enabled, kind = @kind, schedule_type = @schedule_type,
+        run_at = @run_at, cron = @cron, payload = @payload, next_due = @next_due,
+        missed_policy = @missed_policy, updated_at = @updated_at
+      WHERE id = @id
+    `),
+    jobDelete: db.prepare('DELETE FROM jobs WHERE id = ?'),
+    jobGet: db.prepare('SELECT * FROM jobs WHERE id = ?'),
+    jobList: db.prepare('SELECT * FROM jobs ORDER BY next_due'),
+    jobDue: db.prepare('SELECT * FROM jobs WHERE enabled = 1 AND next_due <= ? ORDER BY next_due'),
+    runInsert: db.prepare(`
+      INSERT INTO job_runs (job_id, queued_at, status) VALUES (?, ?, 'queued')
+    `),
+    runSetStarted: db.prepare(
+      'UPDATE job_runs SET started_at = ?, session_file = ?, queue_item_id = ? WHERE id = ?',
+    ),
+    runFinish: db.prepare('UPDATE job_runs SET status = ?, error = ?, finished_at = ? WHERE id = ?'),
+    runSweepQueued: db.prepare(
+      "UPDATE job_runs SET status = 'interrupted', error = ?, finished_at = ? WHERE status = 'queued'",
+    ),
+    runList: db.prepare('SELECT * FROM job_runs WHERE job_id = ? ORDER BY id DESC LIMIT ?'),
+    runsDeleteJob: db.prepare('DELETE FROM job_runs WHERE job_id = ?'),
+    lastRunByJob: db.prepare(
+      'SELECT * FROM job_runs WHERE id = (SELECT MAX(id) FROM job_runs WHERE job_id = ?)',
     ),
   };
 
@@ -298,6 +395,139 @@ export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null 
       } catch (e) {
         warn('loadUiStates', e);
         return [];
+      }
+    },
+    insertJob(job) {
+      try {
+        stmt.jobInsert.run({
+          id: job.id,
+          name: job.name,
+          enabled: job.enabled ? 1 : 0,
+          kind: job.kind ?? 'message',
+          schedule_type: job.scheduleType,
+          run_at: job.runAt ?? null,
+          cron: job.cron ?? null,
+          payload: JSON.stringify(job.payload ?? {}),
+          next_due: job.nextDue,
+          missed_policy: job.missedPolicy ?? 'coalesce',
+          created_by: job.createdBy ?? '',
+          created_at: job.createdAt,
+          updated_at: job.updatedAt,
+        });
+        return this.getJob(job.id);
+      } catch (e) {
+        warn('insertJob', e);
+        return null;
+      }
+    },
+    updateJob(job) {
+      try {
+        stmt.jobUpdate.run({
+          id: job.id,
+          name: job.name,
+          enabled: job.enabled ? 1 : 0,
+          kind: job.kind ?? 'message',
+          schedule_type: job.scheduleType,
+          run_at: job.runAt ?? null,
+          cron: job.cron ?? null,
+          payload: JSON.stringify(job.payload ?? {}),
+          next_due: job.nextDue,
+          missed_policy: job.missedPolicy ?? 'coalesce',
+          updated_at: Date.now(),
+        });
+        return this.getJob(job.id);
+      } catch (e) {
+        warn('updateJob', e);
+        return null;
+      }
+    },
+    deleteJob(id) {
+      try {
+        db.exec('BEGIN IMMEDIATE');
+        stmt.runsDeleteJob.run(id);
+        stmt.jobDelete.run(id);
+        db.exec('COMMIT');
+        return true;
+      } catch (e) {
+        try {
+          db.exec('ROLLBACK');
+        } catch {}
+        warn('deleteJob', e);
+        return false;
+      }
+    },
+    getJob(id) {
+      try {
+        const r = stmt.jobGet.get(id);
+        return r ? rowToJob(r) : null;
+      } catch (e) {
+        warn('getJob', e);
+        return null;
+      }
+    },
+    listJobs() {
+      try {
+        return stmt.jobList.all().map(rowToJob);
+      } catch (e) {
+        warn('listJobs', e);
+        return [];
+      }
+    },
+    dueJobs(now) {
+      try {
+        return stmt.jobDue.all(now).map(rowToJob);
+      } catch (e) {
+        warn('dueJobs', e);
+        return [];
+      }
+    },
+    insertRun(jobId) {
+      try {
+        const r = stmt.runInsert.run(jobId, Date.now());
+        return Number(r.lastInsertRowid);
+      } catch (e) {
+        warn('insertRun', e);
+        return null;
+      }
+    },
+    markRunStarted(runId, { startedAt, sessionFile, queueItemId }) {
+      try {
+        stmt.runSetStarted.run(startedAt, sessionFile ?? '', queueItemId ?? null, runId);
+      } catch (e) {
+        warn('markRunStarted', e);
+      }
+    },
+    finishRun(runId, status, error = '') {
+      try {
+        stmt.runFinish.run(status, error, Date.now(), runId);
+      } catch (e) {
+        warn('finishRun', e);
+      }
+    },
+    sweepInterruptedRuns(reason) {
+      try {
+        const r = stmt.runSweepQueued.run(reason, Date.now());
+        return Number(r.changes);
+      } catch (e) {
+        warn('sweepInterruptedRuns', e);
+        return 0;
+      }
+    },
+    listRuns(jobId, limit = 50) {
+      try {
+        return stmt.runList.all(jobId, limit).map(rowToRun);
+      } catch (e) {
+        warn('listRuns', e);
+        return [];
+      }
+    },
+    lastRun(jobId) {
+      try {
+        const r = stmt.lastRunByJob.get(jobId);
+        return r ? rowToRun(r) : null;
+      } catch (e) {
+        warn('lastRun', e);
+        return null;
       }
     },
     saveUiStates,

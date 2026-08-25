@@ -201,6 +201,11 @@ export class AgentRegistry extends EventEmitter {
     if (item.id === undefined) {
       item.id = this.#journal?.enqueue(agentId, item) ?? null;
     }
+    if (item.onQueued) {
+      try {
+        item.onQueued(item.id);
+      } catch {}
+    }
     live.queue.push(item);
     this.#pump(agentId, live);
     return completion;
@@ -251,14 +256,14 @@ export class AgentRegistry extends EventEmitter {
     this.#journal?.snapshotPartial(cur.id, dm.text);
   }
 
-  async prompt(agentId, message, { interrupt = true, images = [] } = {}) {
+  async prompt(agentId, message, { interrupt = true, images = [], onQueued = null } = {}) {
     const live = await this.open(agentId);
     if (interrupt && live.status === 'running') {
       try {
         await live.session.abort();
       } catch {}
     }
-    return this.#submit(live, agentId, { message, images });
+    return this.#submit(live, agentId, { message, images, onQueued });
   }
 
   async abort(agentId) {

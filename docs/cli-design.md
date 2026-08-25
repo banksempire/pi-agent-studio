@@ -235,6 +235,15 @@ studio [-i <instance>] <command> …        # auto-detects instance from CWD's p
                                     so no --since filtering; -f follows)
   agents                      live agents via /api/agent-states: id, state, queue, activity
   abort <agent-id>            wraps POST /api/abort
+  jobs list                   scheduled jobs (id, schedule, target, next run, last status)
+  jobs add <name> …           create a job: --at <time> (once) | --cron <expr> (periodic),
+                              -m/--message, --session <file> | --cwd <dir> [--mode new|reuse],
+                              --model, --think, --missed coalesce|skip, --by, --disabled
+  jobs edit <id> …            update (--name/--message/--at/--cron/--session/--cwd/--model/--think/--missed)
+  jobs rm <id>                delete job + run history
+  jobs run <id>               fire now (manual run; schedule untouched)
+  jobs enable|disable <id>    toggle without editing
+  jobs runs <id> [-n N]       run history
   doctor [--fix]              diagnostics per §11; --fix auto-applies safe fixes
                               (stale pidfiles, orphans, git guard hooks)
   guard [install|status]      install/inspect core.hooksPath on both repos
@@ -429,3 +438,39 @@ $ studio -i main restart nest
 Pipeline mapping: `main` = product (TUI-shared sessions, fallback UI intact);
 `test` = stable-URL stack a human reviews before pushing test → main;
 `dev-*` = one pair per agent/dev branch, sessions isolated under the pair.
+
+## 14. Scheduler (`jobs`)
+
+General-purpose job scheduler, backend-owned. Jobs live in the journal
+(`studio.db`: `jobs` + `job_runs` tables), so they survive graceful and
+SIGKILL restarts identically — same covenant as the prompt queue.
+
+- **Schedule types**: `once` (absolute `runAt` epoch-ms — e.g. "send this
+  off-peak tonight") and `cron` (5-field, server-local time — e.g. nightly
+  maintenance). Hand-rolled parser, no new dependencies.
+- **Trigger**: 30s stateless tick + an armed `setTimeout` to the earliest
+  `next_due` (`.unref()`'d) + boot catch-up. The tick re-derives everything
+  from the clock and the journal, so restarts, clock jumps and lost timers
+  self-heal; the timer only adds promptness.
+- **Delivery**: a fired job resolves its target session and calls
+  `registry.prompt()` — the fired prompt becomes a normal `queue_items` row
+  and inherits drain/recover/watchdog semantics. `job_runs.queue_item_id`
+  links the history row to the queue item.
+- **Targets**: existing session file, fresh session per run (`new`), or one
+  session per cwd (`reuse`). `--model/--think` apply prefs to freshly
+  created sessions.
+- **Missed periodic runs** (backend down across occurrences): per-job
+  `--missed coalesce` (run once on catch-up, default) or `skip` (advance to
+  the next occurrence, record a `skipped` run).
+- **Manual `jobs run <id>`** fires immediately without touching the schedule.
+- **Once jobs** auto-disable after firing (kept for history); re-enabling
+  recomputes `next_due` (a past `runAt` means "next tick").
+- **Boot sweep**: run rows stuck `queued` from a previous boot are marked
+  `interrupted` (their prompt may still have been replayed by journal
+  recovery via the queue item).
+- **Surfaces**: `studio jobs …` CLI (humans + agents), the Scheduler docker
+  app in the web UI (JobsPanel: CRUD, enable toggle, run-now, history), SSE
+  `job_event` for live updates, REST under `/api/jobs`.
+
+Check suite: `npm run check:scheduler` (cron math, fire/advance, missed
+policies, run-now, restart catch-up, boot sweep, timer).

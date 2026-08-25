@@ -24,7 +24,8 @@
     "check:cli": "node scripts/check-cli.cjs",
     "check:registry": "node scripts/check-registry-drain.cjs",
     "check:stream-scroll": "node scripts/check-stream-scroll.cjs",
-    "check:backend-restart": "node scripts/check-backend-restart.cjs"
+    "check:backend-restart": "node scripts/check-backend-restart.cjs",
+    "check:scheduler": "node scripts/check-scheduler.cjs"
   },
   "dependencies": {
     "dompurify": "^3.4.13",

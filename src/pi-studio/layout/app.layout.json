@@ -159,6 +159,34 @@
           }
         ]
       }
+    },
+    {
+      "id": "jobs",
+      "displayName": "Scheduler",
+      "icon": "⏰",
+      "panel": {
+        "title": "Scheduler",
+        "sections": [
+          {
+            "id": "jobs",
+            "label": "Jobs",
+            "subSections": [
+              {
+                "id": "jobs",
+                "label": "Scheduled Jobs",
+                "height": "variable",
+                "minHeight": 120,
+                "components": [
+                  {
+                    "type": "component",
+                    "key": "jobs-panel"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
     }
   ],
   "right": {

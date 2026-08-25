@@ -9,6 +9,7 @@ import ChatHistory from './components/ChatHistory.vue';
 import ChatSessions from './components/ChatSessions.vue';
 import ChatWindow from './components/ChatWindow.vue';
 import DirectoryTree from './components/DirectoryTree.vue';
+import JobsPanel from './components/JobsPanel.vue';
 import ModelPicker from './components/ModelPicker.vue';
 import PrefsPanel from './components/PrefsPanel.vue';
 import SessionStats from './components/SessionStats.vue';
@@ -25,6 +26,7 @@ registerPanelComponent('session-stats', SessionStats);
 registerStatusComponent('backend-status', BackendStatus);
 registerPanelComponent('model-picker', ModelPicker);
 registerPanelComponent('prefs', PrefsPanel);
+registerPanelComponent('jobs-panel', JobsPanel);
 
 registerPanelComponent('workspace-panel', WorkspacePanel);
 

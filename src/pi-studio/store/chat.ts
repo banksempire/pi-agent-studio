@@ -102,6 +102,57 @@ export type PingSample = { t: number; ms: number | null };
 
 export type SendKeyMode = 'enter' | 'shiftEnter';
 
+export interface JobRunInfo {
+  id: number;
+  jobId: string;
+  queuedAt: number;
+  startedAt: number | null;
+  finishedAt: number | null;
+  status: string;
+  error: string;
+  sessionFile: string;
+  queueItemId: number | null;
+}
+
+export interface JobTarget {
+  mode: 'file' | 'new' | 'reuse';
+  sessionFile?: string;
+  cwd?: string;
+}
+
+export interface JobInfo {
+  id: string;
+  name: string;
+  enabled: boolean;
+  kind: string;
+  scheduleType: 'once' | 'cron';
+  runAt: number | null;
+  cron: string | null;
+  payload: { message: string; target: JobTarget; model?: string | null; thinkLevel?: string | null };
+  nextDue: number;
+  missedPolicy: 'coalesce' | 'skip';
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+  lastRun: JobRunInfo | null;
+}
+
+export interface JobInput {
+  name?: string;
+  enabled?: boolean;
+  scheduleType?: 'once' | 'cron';
+  runAt?: number;
+  cron?: string;
+  message?: string;
+  targetMode?: 'file' | 'new' | 'reuse';
+  sessionFile?: string;
+  cwd?: string;
+  model?: string | null;
+  thinkLevel?: string | null;
+  missedPolicy?: 'coalesce' | 'skip';
+  createdBy?: string;
+}
+
 interface ChatState {
   sessions: ChatSession[];
   activeChatId: string | null;
@@ -123,6 +174,8 @@ interface ChatState {
     sendKey: SendKeyMode;
     renderMarkdown: boolean;
   };
+  jobs: JobInfo[];
+  jobsLoaded: boolean;
 }
 
 const PREFS_KEY = 'sf-chat:prefs';
@@ -325,6 +378,8 @@ export function setComposerHeight(sessionId: string, height: number | null) {
 
 const state = reactive<ChatState>({
   sessions: [],
+  jobs: [],
+  jobsLoaded: false,
   activeChatId: null,
   openViewTabIds: new Set(),
   reviewTabId: null,
@@ -601,6 +656,59 @@ function sameSessionStates(
     if (!y || a[k].state !== y.state || a[k].error !== y.error) return false;
   }
   return true;
+}
+
+let jobsRefreshTimer: number | null = null;
+
+async function refreshJobs() {
+  try {
+    const { jobs } = await api<{ jobs: JobInfo[] }>('/api/jobs');
+    state.jobs = jobs;
+    state.jobsLoaded = true;
+  } catch {}
+}
+
+function scheduleJobsRefresh() {
+  if (jobsRefreshTimer !== null) return;
+  jobsRefreshTimer = window.setTimeout(() => {
+    jobsRefreshTimer = null;
+    void refreshJobs();
+  }, 300);
+}
+
+async function createJob(input: JobInput): Promise<JobInfo> {
+  const { job } = await api<{ job: JobInfo }>('/api/jobs', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  await refreshJobs();
+  return job;
+}
+
+async function updateJob(id: string, input: JobInput): Promise<JobInfo> {
+  const { job } = await api<{ job: JobInfo }>(`/api/jobs/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  await refreshJobs();
+  return job;
+}
+
+async function deleteJob(id: string): Promise<void> {
+  await api(`/api/jobs/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  await refreshJobs();
+}
+
+async function runJobNow(id: string): Promise<void> {
+  await api(`/api/jobs/${encodeURIComponent(id)}/run`, { method: 'POST' });
+  await refreshJobs();
+}
+
+async function fetchJobRuns(id: string): Promise<JobRunInfo[]> {
+  const { runs } = await api<{ runs: JobRunInfo[] }>(`/api/jobs/${encodeURIComponent(id)}/runs?limit=50`);
+  return runs;
 }
 
 async function fetchList() {
@@ -884,6 +992,10 @@ function handleEvent(ev: any) {
     }
     case 'tree': {
       if (ev.tree && typeof ev.tree.name === 'string') applyTree(ev.tree);
+      break;
+    }
+    case 'job_event': {
+      scheduleJobsRefresh();
       break;
     }
   }
@@ -1773,6 +1885,12 @@ export const store = {
   noteChatInteraction,
   sendMessage,
   resendMessage,
+  refreshJobs,
+  createJob,
+  updateJob,
+  deleteJob,
+  runJobNow,
+  fetchJobRuns,
   markCompactFailed,
   stopSession,
   closeChatView,
@@ -1780,6 +1898,12 @@ export const store = {
   deleteSession,
   get prefs() {
     return state.prefs;
+  },
+  get jobs() {
+    return state.jobs;
+  },
+  get jobsLoaded() {
+    return state.jobsLoaded;
   },
   get stateFilter() {
     return state.stateFilter;

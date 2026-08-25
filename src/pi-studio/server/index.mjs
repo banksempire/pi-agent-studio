@@ -1,13 +1,16 @@
-import { createReadStream, existsSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { createReadStream, existsSync, statSync } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { getHeapStatistics } from 'node:v8';
+import { cronError } from '../../pi-nest/src/cron.mjs';
 import { openJournal } from '../../pi-nest/src/journal.mjs';
 import { createLocalClient } from '../../pi-nest/src/local-client.mjs';
 import { AgentRegistry, WATCHDOG_INTERVAL_MS } from '../../pi-nest/src/registry.mjs';
+import { computeNextDue, Scheduler } from '../../pi-nest/src/scheduler.mjs';
 import { createSessionStates } from './session-states.mjs';
 
 const PORT = Number(process.env.PI_STUDIO_PORT ?? 7494);
@@ -1068,6 +1071,109 @@ function readBody(req) {
   });
 }
 
+function normalizeJobInput(body) {
+  const out = {};
+  if (body.name !== undefined) {
+    const name = String(body.name).trim();
+    if (!name || name.length > 200) return { error: 'name must be 1-200 characters' };
+    out.name = name;
+  }
+  if (body.enabled !== undefined) out.enabled = !!body.enabled;
+  if (body.scheduleType !== undefined) {
+    if (body.scheduleType !== 'once' && body.scheduleType !== 'cron') {
+      return { error: "scheduleType must be 'once' or 'cron'" };
+    }
+    out.scheduleType = body.scheduleType;
+  }
+  if (body.runAt !== undefined) {
+    const runAt = Number(body.runAt);
+    if (!Number.isFinite(runAt) || runAt <= 0)
+      return { error: 'runAt must be a positive epoch-ms timestamp' };
+    out.runAt = Math.round(runAt);
+  }
+  if (body.cron !== undefined) {
+    const cron = String(body.cron).trim();
+    const err = cronError(cron);
+    if (err) return { error: `invalid cron expression: ${err}` };
+    out.cron = cron;
+  }
+  if (body.message !== undefined) {
+    const message = String(body.message);
+    if (!message.trim() || message.length > 100_000) return { error: 'message must be 1-100000 characters' };
+    out.message = message;
+  }
+  if (body.targetMode !== undefined) {
+    if (!['file', 'new', 'reuse'].includes(body.targetMode)) {
+      return { error: "targetMode must be 'file', 'new' or 'reuse'" };
+    }
+    out.targetMode = body.targetMode;
+  }
+  if (body.sessionFile !== undefined) {
+    if (typeof body.sessionFile !== 'string' || !body.sessionFile)
+      return { error: 'sessionFile must be a path' };
+    out.sessionFile = body.sessionFile;
+  }
+  if (body.cwd !== undefined) {
+    if (typeof body.cwd !== 'string' || !body.cwd) return { error: 'cwd must be a path' };
+    out.cwd = body.cwd;
+  }
+  if (body.model !== undefined) out.model = body.model === null ? null : String(body.model);
+  if (body.thinkLevel !== undefined)
+    out.thinkLevel = body.thinkLevel === null ? null : String(body.thinkLevel);
+  if (body.missedPolicy !== undefined) {
+    if (body.missedPolicy !== 'coalesce' && body.missedPolicy !== 'skip') {
+      return { error: "missedPolicy must be 'coalesce' or 'skip'" };
+    }
+    out.missedPolicy = body.missedPolicy;
+  }
+  if (body.createdBy !== undefined) out.createdBy = String(body.createdBy).slice(0, 100);
+  return { value: out };
+}
+
+function validateJob(job) {
+  if (!job.name) return 'name is required';
+  if (job.scheduleType === 'once') {
+    if (!job.runAt) return 'runAt is required for once jobs';
+  } else if (job.scheduleType === 'cron') {
+    if (!job.cron) return 'cron is required for cron jobs';
+  } else {
+    return 'scheduleType is required';
+  }
+  const payload = job.payload ?? {};
+  if (!payload.message || !String(payload.message).trim()) return 'message is required';
+  const target = payload.target ?? {};
+  if (target.mode === 'file') {
+    if (!target.sessionFile || !existsSync(target.sessionFile)) {
+      return 'target session file not found';
+    }
+  } else if (target.mode === 'new' || target.mode === 'reuse') {
+    if (!target.cwd) return 'target cwd is required';
+    let st = null;
+    try {
+      st = statSync(target.cwd);
+    } catch {}
+    if (!st?.isDirectory()) return 'target cwd is not a directory';
+  } else {
+    return 'target mode is required';
+  }
+  return null;
+}
+
+function payloadFromInput(input) {
+  const payload = {};
+  if (input.message !== undefined) payload.message = input.message;
+  if (input.targetMode !== undefined || input.sessionFile !== undefined || input.cwd !== undefined) {
+    const target = {};
+    if (input.targetMode !== undefined) target.mode = input.targetMode;
+    if (input.sessionFile !== undefined) target.sessionFile = input.sessionFile;
+    if (input.cwd !== undefined) target.cwd = input.cwd;
+    payload.target = target;
+  }
+  if (input.model !== undefined) payload.model = input.model;
+  if (input.thinkLevel !== undefined) payload.thinkLevel = input.thinkLevel;
+  return payload;
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const p = url.pathname;
@@ -1314,6 +1420,147 @@ const server = createServer(async (req, res) => {
       const { file } = await readBody(req);
       await client.abort({ agentId: file });
       sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    if (p === '/api/jobs' && req.method === 'GET') {
+      if (!journal) return sendJson(res, 503, { error: 'scheduler unavailable (stub client mode)' });
+      sendJson(res, 200, { jobs: journal.listJobs().map((j) => ({ ...j, lastRun: journal.lastRun(j.id) })) });
+      return;
+    }
+
+    if (p === '/api/jobs' && req.method === 'POST') {
+      if (!journal || !scheduler)
+        return sendJson(res, 503, { error: 'scheduler unavailable (stub client mode)' });
+      const body = await readBody(req);
+      const { value: input, error: normErr } = normalizeJobInput(body);
+      if (normErr) return sendJson(res, 400, { error: normErr });
+      const now = Date.now();
+      const payload = payloadFromInput(input);
+      const job = {
+        id: randomUUID().slice(0, 8),
+        name: input.name,
+        enabled: input.enabled ?? true,
+        kind: 'message',
+        scheduleType: input.scheduleType,
+        runAt: input.runAt ?? null,
+        cron: input.cron ?? null,
+        payload,
+        nextDue: 0,
+        missedPolicy: input.missedPolicy ?? 'coalesce',
+        createdBy: input.createdBy ?? '',
+        createdAt: now,
+        updatedAt: now,
+      };
+      const invalid = validateJob(job);
+      if (invalid) return sendJson(res, 400, { error: invalid });
+      const nextDue = computeNextDue(job, now);
+      if (nextDue === null) return sendJson(res, 400, { error: 'schedule never matches within a year' });
+      job.nextDue = nextDue;
+      const stored = journal.insertJob(job);
+      if (!stored) return sendJson(res, 500, { error: 'failed to persist job' });
+      scheduler.reschedule();
+      emit({
+        type: 'job_event',
+        action: 'created',
+        jobId: stored.id,
+        runId: null,
+        error: '',
+        sessionFile: '',
+      });
+      sendJson(res, 201, { job: { ...stored, lastRun: null } });
+      return;
+    }
+
+    if (p.startsWith('/api/jobs/') && req.method === 'PATCH') {
+      if (!journal || !scheduler)
+        return sendJson(res, 503, { error: 'scheduler unavailable (stub client mode)' });
+      const jobId = decodeURIComponent(p.slice('/api/jobs/'.length));
+      const existing = journal.getJob(jobId);
+      if (!existing) return sendJson(res, 404, { error: 'job not found' });
+      const body = await readBody(req);
+      const { value: input, error: normErr } = normalizeJobInput(body);
+      if (normErr) return sendJson(res, 400, { error: normErr });
+      const mergedPayload = payloadFromInput(input);
+      const payload = { ...existing.payload };
+      if (mergedPayload.target) payload.target = { ...existing.payload?.target, ...mergedPayload.target };
+      for (const key of ['message', 'model', 'thinkLevel']) {
+        if (mergedPayload[key] !== undefined) payload[key] = mergedPayload[key];
+      }
+      const job = {
+        ...existing,
+        name: input.name ?? existing.name,
+        enabled: input.enabled ?? existing.enabled,
+        scheduleType: input.scheduleType ?? existing.scheduleType,
+        runAt: input.runAt ?? existing.runAt,
+        cron: input.cron ?? existing.cron,
+        payload,
+        missedPolicy: input.missedPolicy ?? existing.missedPolicy,
+      };
+      const invalid = validateJob(job);
+      if (invalid) return sendJson(res, 400, { error: invalid });
+      const scheduleChanged =
+        job.scheduleType !== existing.scheduleType ||
+        job.runAt !== existing.runAt ||
+        job.cron !== existing.cron ||
+        job.enabled !== existing.enabled;
+      if (scheduleChanged) {
+        const nextDue = computeNextDue(job, Date.now());
+        if (nextDue === null) return sendJson(res, 400, { error: 'schedule never matches within a year' });
+        job.nextDue = nextDue;
+      }
+      const stored = journal.updateJob(job);
+      if (!stored) return sendJson(res, 500, { error: 'failed to persist job' });
+      scheduler.reschedule();
+      emit({
+        type: 'job_event',
+        action: 'updated',
+        jobId: stored.id,
+        runId: null,
+        error: '',
+        sessionFile: '',
+      });
+      sendJson(res, 200, { job: { ...stored, lastRun: journal.lastRun(stored.id) } });
+      return;
+    }
+
+    if (p.startsWith('/api/jobs/') && req.method === 'DELETE') {
+      if (!journal) return sendJson(res, 503, { error: 'scheduler unavailable (stub client mode)' });
+      const jobId = decodeURIComponent(p.slice('/api/jobs/'.length));
+      const existing = journal.getJob(jobId);
+      if (!existing) return sendJson(res, 404, { error: 'job not found' });
+      journal.deleteJob(jobId);
+      scheduler?.reschedule();
+      emit({ type: 'job_event', action: 'deleted', jobId, runId: null, error: '', sessionFile: '' });
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    if (p.startsWith('/api/jobs/') && p.endsWith('/run') && req.method === 'POST') {
+      if (!journal || !scheduler)
+        return sendJson(res, 503, { error: 'scheduler unavailable (stub client mode)' });
+      const jobId = decodeURIComponent(p.slice('/api/jobs/'.length, p.length - '/run'.length));
+      const existing = journal.getJob(jobId);
+      if (!existing) return sendJson(res, 404, { error: 'job not found' });
+      const target = existing.payload?.target ?? {};
+      if (target.mode === 'file' && !existsSync(target.sessionFile)) {
+        return sendJson(res, 400, { error: 'target session file not found' });
+      }
+      const result = await scheduler.runNow(jobId);
+      sendJson(
+        res,
+        result.ok ? 200 : 500,
+        result.ok ? { ok: true, runId: result.runId } : { error: result.error },
+      );
+      return;
+    }
+
+    if (p.startsWith('/api/jobs/') && p.endsWith('/runs') && req.method === 'GET') {
+      if (!journal) return sendJson(res, 503, { error: 'scheduler unavailable (stub client mode)' });
+      const jobId = decodeURIComponent(p.slice('/api/jobs/'.length, p.length - '/runs'.length));
+      if (!journal.getJob(jobId)) return sendJson(res, 404, { error: 'job not found' });
+      const n = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') ?? 50) || 50));
+      sendJson(res, 200, { runs: journal.listRuns(jobId, n) });
       return;
     }
 
@@ -1566,6 +1813,18 @@ async function watchSessionFiles() {
 }
 
 if (registry) setInterval(() => registry.scanStaleRuns(), WATCHDOG_INTERVAL_MS).unref();
+
+let scheduler = null;
+if (journal && registry) {
+  scheduler = new Scheduler({
+    journal,
+    registry,
+    onEvent: ({ action, job, runId, error, sessionFile }) => {
+      emit({ type: 'job_event', action, jobId: job?.id ?? '', runId: runId ?? null, error, sessionFile });
+    },
+  });
+  scheduler.start();
+}
 
 void watchSessionFiles().then(() => {
   setInterval(watchSessionFiles, 2000);

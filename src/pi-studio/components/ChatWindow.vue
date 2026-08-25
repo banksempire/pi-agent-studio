@@ -1327,7 +1327,7 @@ watch(
             class="chat-send-btn chat-send-btn--stop"
             title="Interrupt generation"
             @click="stopGeneration"
-          ><SvgIcon name="■" /> Stop</button>
+          >Stop</button>
           <button
             v-else
             class="chat-send-btn"

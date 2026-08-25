@@ -1,0 +1,235 @@
+const { spawn } = require('node:child_process');
+const fs = require('node:fs');
+const http = require('node:http');
+const net = require('node:net');
+const os = require('node:os');
+const path = require('node:path');
+const { createRequire } = require('node:module');
+const { chromium } = createRequire(path.join(__dirname, '..', 'package.json'))('playwright');
+const { writeStubClient } = require('./lib/stub-backend.cjs');
+
+const PRODUCT_ROOT = path.join(__dirname, '..');
+const RUN_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'job-editor-font-'));
+const SESSIONS_ROOT = path.join(RUN_ROOT, 'sessions');
+const STATES_PATH = path.join(RUN_ROOT, 'states.json');
+fs.mkdirSync(SESSIONS_ROOT, { recursive: true });
+
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function makeReporter() {
+  let failed = false;
+  const report = (name, ok, extra = '') => {
+    console.log(`${ok ? '  ✓' : '  ✗ FAIL'} ${name}${extra ? ` — ${extra}` : ''}`);
+    if (!ok) failed = true;
+  };
+  return { report, isFailed: () => failed };
+}
+
+function killProc(child) {
+  if (!child || child.exitCode !== null) return;
+  try {
+    process.kill(-child.pid, 'SIGTERM');
+  } catch {}
+}
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.on('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const p = srv.address().port;
+      srv.close(() => resolve(p));
+    });
+  });
+}
+
+function waitHttp(url, label, tries = 40) {
+  return (async () => {
+    for (let i = 0; i < tries; i++) {
+      await delay(500);
+      try {
+        const res = await new Promise((resolve, reject) => {
+          const req = http.get(url, (r) => {
+            r.resume();
+            resolve(r.statusCode);
+          });
+          req.on('error', reject);
+          req.setTimeout(1500, () => {
+            req.destroy();
+            reject(new Error('timeout'));
+          });
+        });
+        if (res === 200) return true;
+      } catch {}
+    }
+    throw new Error(`${label} did not come up`);
+  })();
+}
+
+function writeSessionFile(name) {
+  const dir = path.join(SESSIONS_ROOT, '--tmp-job-font--');
+  fs.mkdirSync(dir, { recursive: true });
+  const id = `019f${Math.random().toString(16).slice(2, 14)}`;
+  const lines = [
+    JSON.stringify({
+      type: 'session',
+      version: 3,
+      id,
+      parentId: null,
+      timestamp: new Date().toISOString(),
+      cwd: RUN_ROOT,
+    }),
+    JSON.stringify({
+      type: 'message',
+      id: `${name}-u0`,
+      parentId: id,
+      timestamp: new Date().toISOString(),
+      message: { role: 'user', content: [{ type: 'text', text: `${name} q0` }], timestamp: Date.now() },
+    }),
+    JSON.stringify({
+      type: 'message',
+      id: `${name}-a0`,
+      parentId: `${name}-u0`,
+      timestamp: new Date().toISOString(),
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: `${name} answer text` }],
+        timestamp: Date.now(),
+        stopReason: 'stop',
+      },
+    }),
+  ];
+  const file = path.join(dir, `${name}.jsonl`);
+  fs.writeFileSync(file, `${lines.join('\n')}\n`);
+  return file;
+}
+
+(async () => {
+  const { report, isFailed } = makeReporter();
+  const procs = [];
+  let browser;
+  try {
+    const backendPort = await freePort();
+    const vitePort = await freePort();
+    console.log(`stack: backend :${backendPort} vite :${vitePort}`);
+    const stub = writeStubClient(RUN_ROOT);
+    writeSessionFile('job-font-check');
+
+    procs.push(
+      spawn('node', ['src/pi-studio/server/index.mjs'], {
+        cwd: PRODUCT_ROOT,
+        env: {
+          ...process.env,
+          PI_STUDIO_PORT: String(backendPort),
+          PI_STUDIO_CLIENT_MODULE: stub.stubPath,
+          STUB_CONTROL_FILE: stub.controlPath,
+          PI_STUDIO_SESSIONS: SESSIONS_ROOT,
+          PI_STUDIO_STATES_PATH: STATES_PATH,
+          PI_STUDIO_CWD: RUN_ROOT,
+        },
+        stdio: [
+          'ignore',
+          fs.openSync('/tmp/job-editor-font-backend.log', 'a'),
+          fs.openSync('/tmp/job-editor-font-backend.log', 'a'),
+        ],
+      }),
+    );
+    await waitHttp(`http://127.0.0.1:${backendPort}/api/health`, 'backend');
+    procs.push(
+      spawn(
+        'node',
+        [
+          'node_modules/.bin/vite',
+          '--config',
+          'vite.config.ts',
+          '--host',
+          '127.0.0.1',
+          '--port',
+          String(vitePort),
+        ],
+        {
+          cwd: PRODUCT_ROOT,
+          env: { ...process.env, PI_API_PROXY: `http://127.0.0.1:${backendPort}` },
+          stdio: [
+            'ignore',
+            fs.openSync('/tmp/job-editor-font-vite.log', 'a'),
+            fs.openSync('/tmp/job-editor-font-vite.log', 'a'),
+          ],
+        },
+      ),
+    );
+    await waitHttp(`http://127.0.0.1:${vitePort}/`, 'vite');
+
+    browser = await chromium.launch();
+    const errors = [];
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+    page.on('console', (m) => {
+      if (m.type() === 'error' && !m.text().includes('503')) errors.push(`console: ${m.text()}`);
+    });
+    await page.goto(`http://127.0.0.1:${vitePort}/`, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.sf-docker', { timeout: 60000 });
+
+    const itemSel = '.chat-list-item:has-text("job-font-check")';
+    await page.waitForSelector(itemSel, { timeout: 60000 });
+    await delay(1000);
+    await page.locator(itemSel).first().click({ force: true });
+    await page.waitForSelector('.chat-msg', { timeout: 20000 });
+    report('chat window opens with message content', true);
+
+    const chatRef = await page.evaluate(() => {
+      const px = (sel) => {
+        const el = document.querySelector(sel);
+        return el ? Number.parseFloat(getComputedStyle(el).fontSize) : null;
+      };
+      return { msg: px('.chat-msg'), input: px('.chat-input') };
+    });
+
+    await page.locator('.sf-docker-app[title="Scheduler"]').click();
+    await page.waitForSelector('.sf-subsection-util[title="New Job"]', { timeout: 10000 });
+    await page.locator('.sf-subsection-util[title="New Job"]').click();
+    await page.waitForSelector('.job-editor', { timeout: 20000 });
+    report('job editor opens in a workspace window', true);
+
+    await page.locator('.job-editor-seg-btn', { hasText: 'Periodic (cron)' }).click();
+    await page.waitForSelector('.job-editor-preset', { timeout: 5000 });
+
+    const sizes = await page.evaluate(() => {
+      const px = (sel) => {
+        const el = document.querySelector(sel);
+        return el ? Number.parseFloat(getComputedStyle(el).fontSize) : null;
+      };
+      return {
+        titleMain: px('.job-editor-title-main'),
+        label: px('.job-editor-field label'),
+        input: px('.job-editor-input'),
+        segBtn: px('.job-editor-seg-btn'),
+        preset: px('.job-editor-preset'),
+        save: px('.job-editor-save'),
+      };
+    });
+    const ref = chatRef.msg;
+    report('chat message content renders at 16px', ref === 16, `${ref}px`);
+    report(
+      'chat input also matches (same window convention)',
+      chatRef.input !== null && Math.abs(chatRef.input - ref) < 0.5,
+      `${chatRef.input}px`,
+    );
+    for (const [name, val] of Object.entries(sizes)) {
+      report(
+        `job editor ${name} matches chat content size (${ref}px)`,
+        val !== null && Math.abs(val - ref) < 0.5,
+        `${val}px`,
+      );
+    }
+
+    report('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
+  } catch (e) {
+    report('suite crashed', false, e.message);
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+    for (const p of procs) killProc(p);
+    fs.rmSync(RUN_ROOT, { recursive: true, force: true });
+  }
+  process.exit(isFailed() ? 1 : 0);
+})();

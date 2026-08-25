@@ -332,14 +332,14 @@ function fmtTime(ms: number | null): string {
   min-width: 0;
 }
 .job-editor-title-main {
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .job-editor-title-meta {
-  font-size: 11px;
+  font-size: 16px;
   opacity: 0.6;
 }
 .job-editor-head-actions {
@@ -348,7 +348,6 @@ function fmtTime(ms: number | null): string {
   flex-shrink: 0;
 }
 .job-editor-save {
-  font-size: 13px;
   min-width: calc(2.5em + 24px);
   padding: 5px 14px;
   border-radius: 6px;
@@ -360,14 +359,14 @@ function fmtTime(ms: number | null): string {
   margin: 10px 16px 0;
   padding: 6px 10px;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: 16px;
   background: rgba(255, 82, 82, 0.12);
   color: #ff6d6d;
   word-break: break-word;
 }
 .job-editor-missing {
   padding: 24px;
-  font-size: 13px;
+  font-size: 16px;
   opacity: 0.7;
 }
 .job-editor-body {
@@ -386,7 +385,7 @@ function fmtTime(ms: number | null): string {
   min-width: 0;
 }
 .job-editor-field label {
-  font-size: 11px;
+  font-size: 16px;
   opacity: 0.65;
 }
 .job-editor-field-row {
@@ -404,7 +403,7 @@ function fmtTime(ms: number | null): string {
   border: 1px solid rgba(128, 128, 128, 0.35);
   background: rgba(0, 0, 0, 0.15);
   color: inherit;
-  font-size: 13px;
+  font-size: 16px;
 }
 .job-editor-input--narrow {
   max-width: 280px;
@@ -427,7 +426,7 @@ function fmtTime(ms: number | null): string {
   border: 1px solid rgba(128, 128, 128, 0.35);
   background: transparent;
   color: inherit;
-  font-size: 12px;
+  font-size: 16px;
   cursor: pointer;
 }
 .job-editor-seg-btn--on {
@@ -446,7 +445,7 @@ function fmtTime(ms: number | null): string {
   border: 1px solid rgba(128, 128, 128, 0.3);
   background: transparent;
   color: inherit;
-  font-size: 11px;
+  font-size: 16px;
   cursor: pointer;
   opacity: 0.75;
 }
@@ -457,7 +456,7 @@ function fmtTime(ms: number | null): string {
 .job-editor-meta {
   display: flex;
   gap: 16px;
-  font-size: 11px;
+  font-size: 16px;
   opacity: 0.6;
   padding-top: 4px;
   border-top: 1px dashed rgba(128, 128, 128, 0.25);

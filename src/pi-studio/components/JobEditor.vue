@@ -170,11 +170,11 @@ function fmtTime(ms: number | null): string {
           </span>
         </div>
         <div class="job-editor-head-actions">
-          <button v-if="job" class="sf-panel-btn" :disabled="busy" @click="save">Save</button>
-          <button v-else class="sf-panel-btn job-editor-create" :disabled="busy" @click="save">
-            {{ busy ? 'Creating…' : 'Create Job' }}
-          </button>
-          <button class="sf-panel-btn" @click="store.closeJobEditor(props.jobId)">Close</button>
+          <button
+            class="chat-send-btn job-editor-save"
+            :disabled="busy"
+            @click="save"
+          >{{ props.jobId ? 'Save' : busy ? 'Creating…' : 'Create Job' }}</button>
           <button
             v-if="job"
             class="sf-panel-btn job-editor-danger"
@@ -347,8 +347,11 @@ function fmtTime(ms: number | null): string {
   gap: 8px;
   flex-shrink: 0;
 }
-.job-editor-create {
-  font-weight: 600;
+.job-editor-save {
+  font-size: 13px;
+  min-width: calc(2.5em + 24px);
+  padding: 5px 14px;
+  border-radius: 6px;
 }
 .job-editor-danger:hover {
   color: #ff6d6d;

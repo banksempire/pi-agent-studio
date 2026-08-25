@@ -728,14 +728,6 @@
 
 .chat-send-btn--stop {
   background: var(--sf-danger);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.chat-send-btn--stop .sf-icon {
-  width: 13px;
-  height: 13px;
 }
 
 .chat-system {

@@ -397,16 +397,27 @@ async function main() {
     });
     fakeForeign.unref();
     await delay(600);
-    const noRegEnv = {
-      PI_STUDIO_CONFIG_DIR: undefined,
-      PI_STUDIO_STATE_DIR: undefined,
-      PI_STUDIO_WORKTREES: undefined,
-    };
-    const branchDoc = studio(['doctor', '--fix'], {
-      env: noRegEnv,
-      expect: 0,
-      label: 'doctor --fix from branch registry (cwd-resolved)',
-    });
+    const branchCli = path.join(BASE, 'branchcli', 'pi-agent-studio');
+    fs.cpSync(path.join(PRODUCT_ROOT, 'bin'), path.join(branchCli, 'bin'), { recursive: true });
+    fs.copyFileSync(path.join(PRODUCT_ROOT, 'package.json'), path.join(branchCli, 'package.json'));
+    const cleanEnv = { ...process.env };
+    for (const k of Object.keys(cleanEnv)) {
+      if (k.startsWith('PI_STUDIO_') || k === 'PI_API_PROXY') delete cleanEnv[k];
+    }
+    const branchCliRun = (args) =>
+      spawnSync('node', [path.join(branchCli, 'bin', 'studio.mjs'), ...args], {
+        cwd: BASE,
+        encoding: 'utf8',
+        env: cleanEnv,
+      });
+    const strayMain = path.join(BASE, 'branchcli', '.studio', 'config', 'instances', 'main.json');
+    branchCliRun(['status']);
+    report(
+      'bare commands from a worktree-style checkout never create a stray main instance',
+      !fs.existsSync(strayMain),
+      fs.existsSync(strayMain) ? `unexpected ${strayMain}` : '',
+    );
+    const branchDoc = branchCliRun(['doctor', '--fix']);
     await delay(300);
     let foreignAlive = true;
     try {

@@ -547,8 +547,12 @@ export async function cmdDoctor(out, opts = {}) {
       );
     }
     if (guardMissing) {
-      await cmdGuard(out, { action: 'install' });
-      fixed += 1;
+      try {
+        await cmdGuard(out, { action: 'install' });
+        fixed += 1;
+      } catch (e) {
+        out.line(`${warnSym} guard install skipped: ${e?.message ?? e}`);
+      }
     }
     for (const svc of ['backend', 'web']) {
       for (const inst of insts) {

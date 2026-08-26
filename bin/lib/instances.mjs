@@ -168,6 +168,12 @@ export function ensureMain() {
   const pairRoot = path.dirname(PRODUCT_ROOT);
   if (!fs.existsSync(path.join(pairRoot, 'pi-agent-studio'))) return null;
   if (!fs.existsSync(path.join(pairRoot, 'StudioFramework'))) return null;
+  const gitPath = path.join(pairRoot, 'pi-agent-studio', '.git');
+  try {
+    if (!fs.statSync(gitPath).isDirectory()) return null;
+  } catch {
+    return null;
+  }
   const record = {
     id: 'main',
     pairRoot,

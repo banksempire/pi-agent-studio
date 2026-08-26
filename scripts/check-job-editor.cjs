@@ -389,25 +389,26 @@ function writeSessionFile(name) {
       const items = [...document.querySelectorAll('.je-ms-item')];
       const pick = (t) => items.find((b) => b.textContent === t);
       const geo = (el) => {
-        const cs = getComputedStyle(el);
+        const und = getComputedStyle(el, '::before');
         return {
           on: el.classList.contains('je-ms-item--on'),
-          left: cs.borderTopLeftRadius,
-          right: cs.borderTopRightRadius,
-          marginLeft: cs.marginLeft,
-          borderLeft: cs.borderLeftColor,
+          start: el.classList.contains('je-ms-item--start'),
+          cont: el.classList.contains('je-ms-item--cont'),
+          left: und.borderTopLeftRadius,
+          right: und.borderTopRightRadius,
+          borderLeft: und.borderLeftWidth,
+          borderRight: und.borderRightWidth,
+          rightEdge: und.right,
         };
       };
       const ts = document.querySelector('.je-ms-track')
         ? getComputedStyle(document.querySelector('.je-ms-track'))
         : null;
       const gap = ts ? Number.parseFloat(ts.gap) : NaN;
-      const bridge = getComputedStyle(pick('Mon'), '::after');
       return {
         trackBorder: ts?.borderTopWidth ?? '',
         trackRadius: ts?.borderTopLeftRadius ?? '',
         gap,
-        bridgeWidth: Number.parseFloat(bridge.width) || 0,
         mon: geo(pick('Mon')),
         wed: geo(pick('Wed')),
         fri: geo(pick('Fri')),
@@ -418,21 +419,44 @@ function writeSessionFile(name) {
       'consecutive weekdays merge into one rounded box inside the track',
       runGeometry.trackBorder === '1px' &&
         runGeometry.trackRadius === '8px' &&
-        runGeometry.bridgeWidth === runGeometry.gap + 2 &&
-        runGeometry.wed.marginLeft === '0px' &&
         runGeometry.mon.on &&
-        runGeometry.mon.left === '8px' &&
+        runGeometry.mon.start &&
         runGeometry.mon.right === '0px' &&
         runGeometry.wed.on &&
         runGeometry.wed.left === '0px' &&
         runGeometry.wed.right === '0px' &&
+        runGeometry.wed.borderLeft === '0px' &&
+        Number.isNaN(runGeometry.wed.rightEdge) === false &&
         runGeometry.fri.on &&
+        !runGeometry.fri.cont &&
         runGeometry.fri.left === '0px' &&
         runGeometry.fri.right === '8px' &&
         !runGeometry.sun.on &&
-        runGeometry.sun.left === '8px' &&
-        runGeometry.sun.right === '8px',
+        runGeometry.sun.left === '0px' &&
+        runGeometry.sun.right === '0px' &&
+        runGeometry.sun.rightEdge === 'auto',
       JSON.stringify(runGeometry),
+    );
+
+    const seamless = await page.evaluate(() => {
+      const items = [...document.querySelectorAll('.je-ms-item')];
+      const pick = (t) => items.find((b) => b.textContent === t);
+      const m = getComputedStyle(pick('Mon'), '::before');
+      const w = getComputedStyle(pick('Wed'), '::before');
+      const midJoin = Math.abs(
+        pick('Mon').getBoundingClientRect().bottom - pick('Wed').getBoundingClientRect().bottom,
+      );
+      return {
+        monTop: m.borderTopWidth,
+        wedTop: w.borderTopWidth,
+        wedExtendsRight: w.right.startsWith('calc') || w.right.includes('-'),
+        sameRow: midJoin === 0,
+      };
+    });
+    report(
+      'merged box has a single continuous border with no inner seams',
+      seamless.monTop === '1px' && seamless.wedTop === '1px' && seamless.wedExtendsRight && seamless.sameRow,
+      JSON.stringify(seamless),
     );
 
     await page.locator('.je-ms-item', { hasText: 'Wed' }).click();

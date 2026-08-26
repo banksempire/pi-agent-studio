@@ -251,6 +251,44 @@ function writeSessionFile(name) {
       JSON.stringify(onceDefaults),
     );
 
+    const pickerStyle = await page.evaluate(() => {
+      const el = document.querySelector('input[type="datetime-local"]');
+      if (!el) return null;
+      const cs = getComputedStyle(el);
+      return {
+        appearance: cs.appearance,
+        icon: cs.backgroundImage.includes('svg'),
+        padRight: cs.paddingRight,
+        stroke: cs.backgroundImage.includes('%23cccccc'),
+      };
+    });
+    await page.evaluate(() => {
+      window.__pickerCalls = 0;
+      HTMLInputElement.prototype.showPicker = () => {
+        window.__pickerCalls += 1;
+      };
+    });
+    const dtBox = await page.locator('input[type="datetime-local"]').boundingBox();
+    await page.mouse.click(dtBox.x + 12, dtBox.y + dtBox.height / 2);
+    const callsAfterText = await page.evaluate(() => window.__pickerCalls);
+    await page.mouse.click(dtBox.x + dtBox.width - 12, dtBox.y + dtBox.height / 2);
+    const callsAfterIcon = await page.evaluate(() => window.__pickerCalls);
+    await page.evaluate(() => {
+      window.__pickerCalls = 0;
+      delete HTMLInputElement.prototype.showPicker;
+    });
+    report(
+      'run-at uses a light themed calendar icon that opens the picker',
+      !!pickerStyle &&
+        pickerStyle.appearance === 'none' &&
+        pickerStyle.icon &&
+        pickerStyle.stroke &&
+        pickerStyle.padRight === '36px' &&
+        callsAfterText === 0 &&
+        callsAfterIcon >= 1,
+      JSON.stringify({ pickerStyle, callsAfterText, callsAfterIcon }),
+    );
+
     await modeBtn('Daily').click();
     await delay(150);
     let cronRef = await page.locator('.je-cron-ref code').textContent();

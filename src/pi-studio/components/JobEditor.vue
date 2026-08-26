@@ -1,7 +1,11 @@
 <script setup lang="ts">
+import Menu from '@sf/components/Menu.vue';
+import type { MenuNodeDef } from '@sf/types/layout';
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import type { PeriodicPatternState } from '../cronInfo';
 import { checkCron, cronToPattern, describeCron, nextCronRuns, patternToCron } from '../cronInfo';
+import type { ModelInfo } from '../modelInfo';
+import { getAvailableModels } from '../modelInfo';
 import type { JobInfo } from '../store/chat';
 import { useChatStore } from '../store/chat';
 
@@ -27,6 +31,15 @@ const MODE_OPTIONS: Array<{ id: SchedMode; title: string; hint: string }> = [
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const EVERY_MINUTE_OPTIONS = [1, 2, 3, 4, 5, 10, 15, 20, 30, 40, 50];
 const HOURLY_MINUTE_OPTIONS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
+const LEVEL_DESCRIPTIONS: Record<string, string> = {
+  off: 'No reasoning',
+  minimal: 'Very brief reasoning (~1k tokens)',
+  low: 'Light reasoning (~2k tokens)',
+  medium: 'Moderate reasoning (~8k tokens)',
+  high: 'Deep reasoning (~16k tokens)',
+  xhigh: 'Extra-high reasoning (~32k tokens)',
+  max: 'Maximum reasoning',
+};
 
 const TARGET_OPTIONS: Array<{ mode: 'file' | 'new' | 'reuse'; title: string; desc: string }> = [
   { mode: 'file', title: 'Existing session', desc: 'Deliver into a session you pick' },
@@ -48,6 +61,9 @@ const form = reactive({
 });
 
 const mode = ref<SchedMode>('once');
+const modelCatalog = ref<{ models: ModelInfo[]; default: ModelInfo | null } | null>(null);
+const modelError = ref('');
+const modelMenuOpen = ref(false);
 const periodic = reactive({
   everyMinutes: 30,
   atMinute: 0,
@@ -156,8 +172,69 @@ watch(
 
 onMounted(() => {
   void store.refreshJobs();
+  void loadModels();
   if (!initialized.value) initForm(job.value);
 });
+
+async function loadModels() {
+  try {
+    modelCatalog.value = await getAvailableModels();
+    modelError.value = '';
+  } catch (e) {
+    if (!(e instanceof TypeError)) modelError.value = String((e as Error)?.message ?? e);
+  }
+}
+
+const modelMenuItems = computed<MenuNodeDef[]>(() => {
+  const catalog = modelCatalog.value;
+  if (!catalog) return [];
+  const providers: string[] = [];
+  const seen = new Set<string>();
+  for (const m of catalog.models) {
+    if (!seen.has(m.provider)) {
+      seen.add(m.provider);
+      providers.push(m.provider);
+    }
+  }
+  return providers.map((p) => ({
+    id: p,
+    label: p,
+    items: catalog.models
+      .filter((m) => m.provider === p)
+      .map((m) => ({
+        id: m.id,
+        label: m.name || m.id,
+        detail: m.reasoning ? 'thinking' : 'plain',
+        items: m.thinkingLevels.map((l) => ({
+          id: l,
+          label: l === 'off' ? '(None)' : l,
+          detail: LEVEL_DESCRIPTIONS[l] ?? '',
+          data: { model: m, level: l },
+        })),
+      })),
+  }));
+});
+
+function onModelSelect(item: MenuNodeDef) {
+  const d = item.data as { model: ModelInfo; level: string } | undefined;
+  if (!d) return;
+  form.model = `${d.model.provider}/${d.model.id}`;
+  form.thinkLevel = d.level;
+}
+
+const modelButtonText = computed(() => {
+  if (!form.model) return 'Session default';
+  const hit = modelCatalog.value?.models.find(
+    (m) => `${m.provider}/${m.id}` === form.model || `${m.provider}/${m.name}` === form.model,
+  );
+  const label = hit ? `${hit.provider}/${hit.name || hit.id}` : form.model;
+  return form.thinkLevel ? `${label}·${form.thinkLevel}` : label;
+});
+
+function clearModel() {
+  form.model = '';
+  form.thinkLevel = '';
+}
 
 watch(sessionOptions, (opts) => {
   if (form.targetMode === 'file' && !form.sessionFile && opts.length > 0) form.sessionFile = opts[0].file;
@@ -577,21 +654,38 @@ function fmtRel(ms: number | null): string {
 
           <section class="je-section">
             <h3 class="je-section-title">Agent <span class="je-section-note">applies to newly created sessions</span></h3>
-            <div class="je-row">
-              <div class="job-editor-field je-grow">
-                <label>Model override</label>
-                <input v-model="form.model" class="job-editor-input" placeholder="session default" />
+            <div class="job-editor-field">
+              <label>Model override</label>
+              <div class="je-model-row">
+                <Menu
+                  :items="modelMenuItems"
+                  :open="modelMenuOpen"
+                  title="Change Model"
+                  @update:open="(v) => (modelMenuOpen = v)"
+                  @select="onModelSelect"
+                >
+                  <template #trigger="{ toggle }">
+                    <button
+                      class="je-model-btn"
+                      type="button"
+                      :disabled="!modelCatalog"
+                      :title="modelError || 'Pick the model and thinking level for sessions this job creates'"
+                      @click="toggle"
+                    >
+                      <span class="je-model-btn-text">{{
+                        modelCatalog ? modelButtonText : modelError ? 'model list unavailable' : 'loading models…'
+                      }}</span>
+                    </button>
+                  </template>
+                </Menu>
+                <button
+                  v-if="form.model"
+                  class="je-btn je-model-clear"
+                  title="Back to session default"
+                  @click="clearModel"
+                >✕</button>
               </div>
-              <div class="job-editor-field">
-                <label>Thinking</label>
-                <select v-model="form.thinkLevel" class="job-editor-input je-select">
-                  <option value="">default</option>
-                  <option value="off">off</option>
-                  <option value="low">low</option>
-                  <option value="medium">medium</option>
-                  <option value="high">high</option>
-                </select>
-              </div>
+              <span v-if="modelError" class="je-hint je-hint--warn">{{ modelError }}</span>
             </div>
           </section>
         </div>
@@ -1014,6 +1108,42 @@ function fmtRel(ms: number | null): string {
 }
 .je-session-filter {
   max-width: 320px;
+}
+
+.je-model-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.je-model-btn {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-width: 0;
+  padding: 7px 32px 7px 10px;
+  border-radius: var(--sf-radius-inner);
+  border: 1px solid var(--sf-border);
+  background: rgba(0, 0, 0, 0.15) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='%23858585' stroke-width='1.5' fill='none' stroke-linecap='round'/></svg>") no-repeat right 10px center;
+  color: inherit;
+  font-size: 16px;
+  font-family: var(--sf-font);
+  cursor: pointer;
+}
+.je-model-btn:hover:not(:disabled) {
+  border-color: var(--sf-accent-dim);
+}
+.je-model-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.je-model-btn-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.je-model-clear {
+  flex-shrink: 0;
 }
 
 .je-footer {

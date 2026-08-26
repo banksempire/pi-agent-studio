@@ -232,7 +232,8 @@ studio [-i <instance>] <command> …        # auto-detects instance from CWD's p
                               and refused (exit 5) when no backend code
                               changed since start — `--yes` overrides
   kill <service> [--force]    SIGTERM → grace (web 5s, backend drain+20s) → SIGKILL;
-                              guarded while agents are live
+                              guarded while agents are live; <service> may be
+                              omitted when --port <n> names the victim
   status [service]            per-instance table + all-instances view; --json
   logs [service] [-f] [-n N]        tail managed logs (services log without timestamps,
                                     so no --since filtering; -f follows)
@@ -268,6 +269,19 @@ studio [-i <instance>] <command> …        # auto-detects instance from CWD's p
 - `status` (no args) shows **all** instances: id, branch, pairRoot, webPort,
   stack state; `-i` filters.
 - `main` is never stopped or started implicitly by instance-scoped commands.
+- **`--port <n>` targeting** (`kill` | `restart` | `down`): a bare port number
+  resolves the instance *and* service listening on it — no `-i`, no cwd
+  detection. Refuses when nothing listens there (lists what does), when the
+  port is held by multiple/unattributed processes, or when `-i` disagrees.
+  This makes the victim explicit: an agent that knows a port (from `status`,
+  logs, a URL) can never hit main by resolver accident. The `--port web=7500`
+  key=value form on these commands is unchanged (spawn-time port override);
+  a bare integer is never a valid override, so the two cannot collide.
+- **`PI_STUDIO_STRICT=1`** (env): `up`/`down`/`restart`/`kill` refuse to run
+  on defaults — cwd auto-detection and the main fallback are disabled until
+  an explicit `-i <id>` (or `--port <n>`) names the target. Opt-in guard for
+  agent shells / dev containers where a bare `studio up` must not be able to
+  touch the product stack. Read-only commands stay permissive.
 
 ## 8. Backend safety guards
 

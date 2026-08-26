@@ -14,6 +14,7 @@ import {
   cmdRestart,
   cmdStatus,
   cmdUp,
+  instanceByPort,
 } from './lib/stack.mjs';
 import { makeOut } from './lib/ui.mjs';
 
@@ -38,7 +39,8 @@ commands:
                             restored on boot; refused without --yes when no
                             backend code changed since start
   kill <service> [--force]  hard stop (SIGTERM → short grace → SIGKILL);
-                            guarded while agents are live
+                            guarded while agents are live; <service> may be
+                            omitted when --port <n> names the victim
   status                    stack overview for all instances (or -i <id>)
   logs [service] [-f] [-n N]  tail managed service logs
   agents                    live agents on this instance's backend
@@ -66,6 +68,14 @@ commands:
 
 options:
   -i, --instance <id>       select instance (default: detected from cwd, else main)
+  --port <n>                target the instance+service listening on port <n>
+                            (kill | restart | down; bare number = targeting,
+                            'web=7500' pairs stay port overrides; must agree
+                            with -i when both are given)
+  PI_STUDIO_STRICT=1        env flag: up/down/restart/kill refuse to run on
+                            defaults — an explicit -i <id> or --port <n> is
+                            required (agent/dev-mode guard against touching
+                            main by accident)
   --port web=7500           ephemeral port override (web|backend)
   --sessions <dir>          sessions dir override
   --host <host>             web bind host override
@@ -109,6 +119,28 @@ function portSpec(value) {
     if (k && p && Number.isFinite(Number(p))) out[k.trim()] = Number(p);
   }
   return out;
+}
+
+const STRICT = /^(1|true|yes)$/.test(String(process.env.PI_STUDIO_STRICT ?? '').toLowerCase());
+
+function strictRefuse(command) {
+  throw new CliError(
+    `strict mode is on (PI_STUDIO_STRICT=1): '${command}' needs an explicit target — pass -i <instance> or --port <n>`,
+    2,
+  );
+}
+
+function portTarget(portValue, instanceId) {
+  if (!portValue || !/^\d+$/.test(String(portValue))) return null;
+  const r = instanceByPort(portValue);
+  if (r.error) throw new CliError(r.error, 2);
+  if (instanceId && instanceId !== r.instance.id) {
+    throw new CliError(
+      `-i ${instanceId} disagrees with --port ${portValue} (that port serves instance '${r.instance.id}')`,
+      2,
+    );
+  }
+  return r;
 }
 
 function resolveInstance(id) {
@@ -155,6 +187,7 @@ async function main() {
   switch (command) {
     case 'up': {
       const { positional, flags } = parseRest(args, ['port', 'sessions', 'host', 'lines']);
+      if (STRICT && !instanceId) strictRefuse('up');
       const inst = resolveInstance(instanceId);
       const opts = {
         service: positional[0] ?? null,
@@ -167,8 +200,13 @@ async function main() {
       return 0;
     }
     case 'down': {
-      const { positional, flags } = parseRest(args, []);
-      const inst = resolveInstance(instanceId);
+      const { positional, flags } = parseRest(args, ['port']);
+      const target = portTarget(flags.port, instanceId);
+      if (STRICT && !instanceId && !target) strictRefuse('down');
+      const inst = target?.instance ?? resolveInstance(instanceId);
+      if (target && positional[0] && positional[0] !== target.service) {
+        throw new CliError(`--port ${flags.port} serves '${target.service}', not '${positional[0]}'`, 2);
+      }
       await cmdDown(out, inst, {
         service: positional[0] ?? null,
         withNest: !!flags['with-nest'],
@@ -180,9 +218,14 @@ async function main() {
     case 'restart':
     case 'kill': {
       const { positional, flags } = parseRest(args, ['port', 'sessions', 'host']);
-      const inst = resolveInstance(instanceId);
-      const service = positional[0];
+      const target = portTarget(flags.port, instanceId);
+      if (STRICT && !instanceId && !target) strictRefuse(command);
+      const inst = target?.instance ?? resolveInstance(instanceId);
+      const service = positional[0] ?? target?.service;
       if (!service) throw new CliError(`${command} requires a service: backend | web`, 2);
+      if (target && service !== target.service) {
+        throw new CliError(`--port ${flags.port} serves '${target.service}', not '${service}'`, 2);
+      }
       const opts = {
         service,
         force: !!flags.force,

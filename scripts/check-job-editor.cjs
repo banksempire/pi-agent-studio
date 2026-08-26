@@ -647,6 +647,18 @@ function writeSessionFile(name) {
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(600);
+    const segSingleLine = await page.evaluate(() => {
+      const seg = document.querySelector('.je-sched-seg');
+      if (!seg) return null;
+      const pills = [...seg.querySelectorAll('.job-editor-seg-btn')];
+      const rows = new Set(pills.map((b) => Math.round(b.getBoundingClientRect().top)));
+      return { pills: pills.length, rows: rows.size };
+    });
+    report(
+      'mobile: schedule selector stays on a single line',
+      segSingleLine?.pills === 7 && segSingleLine.rows === 1,
+      JSON.stringify(segSingleLine),
+    );
     const wideMobile = await injectWide();
     report(
       'mobile: editor is never user-pannable horizontally (even with overflowing content)',

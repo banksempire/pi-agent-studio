@@ -228,38 +228,43 @@ function writeSessionFile(name) {
     await page.waitForSelector('.job-editor', { timeout: 20000 });
     report('job editor opens in a workspace window', true);
 
-    await page.locator('.job-editor-seg-btn', { hasText: 'Periodic' }).click();
-    await page.waitForSelector('.je-pattern-seg', { timeout: 5000 });
+    const modeBtn = (t) => page.locator('.je-sched-seg .job-editor-seg-btn', { hasText: t });
 
-    const patternBtn = (t) => page.locator('.je-pattern-seg .job-editor-seg-btn', { hasText: t });
-
-    const builderDefaults = await page.evaluate(() => {
-      const seg = document.querySelector('.je-pattern-seg');
+    const onceDefaults = await page.evaluate(() => {
+      const seg = document.querySelector('.je-sched-seg');
       const on = seg?.querySelector('.job-editor-seg-btn--on');
-      const ref = document.querySelector('.je-cron-ref code');
-      const desc = document.querySelector('.je-cron-desc');
       return {
-        patterns: seg?.querySelectorAll('.job-editor-seg-btn').length ?? 0,
+        modes: seg?.querySelectorAll('.job-editor-seg-btn').length ?? 0,
         selected: on?.textContent ?? '',
-        ref: ref?.textContent ?? '',
-        desc: desc?.textContent ?? '',
-        rawInputVisible: !!document.querySelector('input[placeholder="0 3 * * *"]'),
+        previewVisible: !!document.querySelector('.je-cron-preview'),
+        rawInputVisible: !!document.querySelector('input[placeholder="0 9 * * *"]'),
+        runAtVisible: !!document.querySelector('input[type="datetime-local"]'),
       };
     });
     report(
-      'periodic builder opens with Daily selected and a synced cron reference',
-      builderDefaults.patterns === 5 &&
-        builderDefaults.selected === 'Daily' &&
-        builderDefaults.ref === '0 9 * * *' &&
-        builderDefaults.desc.includes('At 09:00') &&
-        !builderDefaults.rawInputVisible,
-      JSON.stringify(builderDefaults),
+      'schedule selector opens on Once with all seven modes and no cron UI',
+      onceDefaults.modes === 7 &&
+        onceDefaults.selected === 'Once' &&
+        !onceDefaults.previewVisible &&
+        !onceDefaults.rawInputVisible &&
+        onceDefaults.runAtVisible,
+      JSON.stringify(onceDefaults),
     );
 
-    await patternBtn('Weekly').click();
+    await modeBtn('Daily').click();
     await delay(150);
     let cronRef = await page.locator('.je-cron-ref code').textContent();
     let wdDesc = await page.locator('.je-cron-desc').textContent();
+    report(
+      'daily mode builds a daily expression with synced reference',
+      cronRef === '0 9 * * *' && !!wdDesc && wdDesc.includes('At 09:00'),
+      `${cronRef} | ${wdDesc}`,
+    );
+
+    await modeBtn('Weekly').click();
+    await delay(150);
+    cronRef = await page.locator('.je-cron-ref code').textContent();
+    wdDesc = await page.locator('.je-cron-desc').textContent();
     report(
       'weekly pattern starts on weekdays',
       cronRef === '0 9 * * mon-fri' && !!wdDesc && wdDesc.includes('Mon–Fri'),
@@ -277,17 +282,6 @@ function writeSessionFile(name) {
     cronRef = await page.locator('.je-cron-ref code').textContent();
     report('time selectors rewrite the expression', cronRef === '0 3 * * sun-sat', String(cronRef));
 
-    await patternBtn('Minutes').click();
-    await page.locator('.je-chip', { hasText: '30 min' }).click();
-    await delay(150);
-    cronRef = await page.locator('.je-cron-ref code').textContent();
-    wdDesc = await page.locator('.je-cron-desc').textContent();
-    report(
-      'minutes pattern builds a step expression',
-      cronRef === '*/30 * * * *' && !!wdDesc && wdDesc.includes('Every 30 min'),
-      `${cronRef} | ${wdDesc}`,
-    );
-
     const sizes = await page.evaluate(() => {
       const px = (sel) => {
         const el = document.querySelector(sel);
@@ -298,7 +292,7 @@ function writeSessionFile(name) {
         label: px('.job-editor-field label'),
         input: px('.job-editor-input'),
         segBtn: px('.job-editor-seg-btn'),
-        patternSegBtn: px('.je-pattern-seg .job-editor-seg-btn'),
+        schedSegBtn: px('.je-sched-seg .job-editor-seg-btn'),
         chip: px('.je-chip'),
         save: px('.job-editor-save'),
       };
@@ -317,6 +311,83 @@ function writeSessionFile(name) {
         `${val}px`,
       );
     }
+
+    await modeBtn('Minutes').click();
+    await delay(150);
+    const minutesOptions = await page.evaluate(() =>
+      [...document.querySelectorAll('.je-every-seg .job-editor-seg-btn')].map((b) => b.textContent),
+    );
+    report(
+      'minutes mode offers the requested interval options in a selector',
+      JSON.stringify(minutesOptions) === JSON.stringify(['1', '2', '3', '4', '5', '10', '15', '20', '30']),
+      JSON.stringify(minutesOptions),
+    );
+    await page.locator('.je-every-seg .job-editor-seg-btn', { hasText: '30' }).click();
+    await delay(150);
+    cronRef = await page.locator('.je-cron-ref code').textContent();
+    wdDesc = await page.locator('.je-cron-desc').textContent();
+    report(
+      'minutes mode builds a step expression',
+      cronRef === '*/30 * * * *' && !!wdDesc && wdDesc.includes('Every 30 min'),
+      `${cronRef} | ${wdDesc}`,
+    );
+
+    await modeBtn('Hourly').click();
+    await delay(150);
+    const hourlyOptions = await page.evaluate(() =>
+      [...document.querySelectorAll('.je-atmin-seg .job-editor-seg-btn')].map((b) => b.textContent),
+    );
+    report(
+      'hourly mode offers minute options in a selector',
+      hourlyOptions.length === 12 && hourlyOptions[0] === '00' && hourlyOptions[11] === '55',
+      JSON.stringify(hourlyOptions),
+    );
+    await page.locator('.je-atmin-seg .job-editor-seg-btn', { hasText: '15' }).click();
+    await delay(150);
+    cronRef = await page.locator('.je-cron-ref code').textContent();
+    wdDesc = await page.locator('.je-cron-desc').textContent();
+    report(
+      'hourly mode builds a minute-of-hour expression',
+      cronRef === '15 * * * *' && !!wdDesc && wdDesc.includes('Hourly at :15'),
+      `${cronRef} | ${wdDesc}`,
+    );
+
+    await modeBtn('Advanced').click();
+    await delay(150);
+    const advancedPrefill = await page.evaluate(() => ({
+      visible: !!document.querySelector('input[placeholder="0 9 * * *"]'),
+      value: document.querySelector('input[placeholder="0 9 * * *"]')?.value ?? '',
+    }));
+    report(
+      'advanced mode prefills the raw input from the builder expression',
+      advancedPrefill.visible && advancedPrefill.value === '15 * * * *',
+      JSON.stringify(advancedPrefill),
+    );
+
+    await page.locator('input[placeholder="0 9 * * *"]').fill('99 * * * *');
+    await delay(150);
+    const previewBad = await page.evaluate(() => {
+      const el = document.querySelector('.je-cron-preview');
+      if (!el) return null;
+      return {
+        bad: el.classList.contains('je-cron-preview--bad'),
+        err: el.querySelector('.je-cron-error')?.textContent ?? '',
+      };
+    });
+    report(
+      'invalid cron in advanced mode surfaces an inline error',
+      !!previewBad && previewBad.bad && /not a valid/.test(previewBad.err),
+      JSON.stringify(previewBad),
+    );
+
+    await page.locator('input[placeholder="0 9 * * *"]').fill('15 9,17 * * mon-fri');
+    await delay(150);
+    cronRef = await page.locator('.je-cron-ref code').textContent();
+    report(
+      'valid advanced expression updates the reference',
+      cronRef === '15 9,17 * * mon-fri',
+      String(cronRef),
+    );
 
     const cardCount = await page.locator('.je-card').count();
     await page.locator('.je-card').first().click();
@@ -352,7 +423,7 @@ function writeSessionFile(name) {
     const customState = await page.evaluate(() => {
       const editors = [...document.querySelectorAll('.job-editor')];
       const ed = editors.find((e) => e.textContent?.includes('custom-cron job')) ?? null;
-      const seg = ed?.querySelector('.je-pattern-seg') ?? null;
+      const seg = ed?.querySelector('.je-sched-seg') ?? null;
       const on = seg?.querySelector('.job-editor-seg-btn--on');
       return {
         created: ed !== null,
@@ -362,20 +433,20 @@ function writeSessionFile(name) {
       };
     });
     report(
-      'unrepresentable cron opens read-only as Custom with the expression preserved',
+      'unrepresentable cron opens in Advanced with the expression preserved',
       customState.created &&
-        customState.patterns === 6 &&
-        customState.selected === 'Custom' &&
+        customState.patterns === 7 &&
+        customState.selected === 'Advanced' &&
         customState.ref === '15 9,17 * * mon-fri',
       JSON.stringify(customState),
     );
 
-    await patternBtn('Daily').click();
+    await modeBtn('Daily').click();
     await delay(150);
     const rebuilt = await page.evaluate(() => {
       const editors = [...document.querySelectorAll('.job-editor')];
       const ed = editors.find((e) => e.textContent?.includes('custom-cron job')) ?? null;
-      const seg = ed?.querySelector('.je-pattern-seg');
+      const seg = ed?.querySelector('.je-sched-seg');
       return {
         patterns: seg?.querySelectorAll('.job-editor-seg-btn').length ?? 0,
         selected: seg?.querySelector('.job-editor-seg-btn--on')?.textContent ?? '',
@@ -383,8 +454,8 @@ function writeSessionFile(name) {
       };
     });
     report(
-      'picking a pattern from Custom rewrites the expression and drops the Custom pill',
-      rebuilt.patterns === 5 && rebuilt.selected === 'Daily' && /^0 \d{1,2} \* \* \*$/.test(rebuilt.ref),
+      'picking a builder mode from Advanced rewrites the expression',
+      rebuilt.patterns === 7 && rebuilt.selected === 'Daily' && /^0 \d{1,2} \* \* \*$/.test(rebuilt.ref),
       JSON.stringify(rebuilt),
     );
 

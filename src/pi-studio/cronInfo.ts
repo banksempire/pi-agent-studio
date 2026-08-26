@@ -185,7 +185,7 @@ export function describeCron(expr: string): string {
 }
 
 export interface PeriodicPatternState {
-  pattern: 'minutes' | 'hourly' | 'daily' | 'weekly' | 'monthly' | 'custom';
+  pattern: 'minutes' | 'hourly' | 'daily' | 'weekly' | 'monthly';
   everyMinutes: number;
   atMinute: number;
   hour: number;

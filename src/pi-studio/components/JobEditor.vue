@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue';
-import { checkCron, describeCron, nextCronRuns } from '../cronInfo';
+import type { PeriodicPatternState } from '../cronInfo';
+import { checkCron, cronToPattern, describeCron, nextCronRuns, patternToCron } from '../cronInfo';
 import type { JobInfo } from '../store/chat';
 import { useChatStore } from '../store/chat';
 
@@ -11,15 +12,19 @@ const error = ref('');
 const busy = ref(false);
 const initialized = ref(false);
 const sessionFilter = ref('');
+const rawMode = ref(false);
 
-const CRON_PRESETS: Array<{ label: string; expr: string }> = [
-  { label: 'hourly', expr: '0 * * * *' },
-  { label: 'every 30 min', expr: '*/30 * * * *' },
-  { label: 'daily 09:00', expr: '0 9 * * *' },
-  { label: 'weekdays 09:00', expr: '0 9 * * mon-fri' },
-  { label: 'sundays 03:00', expr: '0 3 * * sun' },
-  { label: 'monthly 1st 00:00', expr: '0 0 1 * *' },
+type PeriodicPattern = PeriodicPatternState['pattern'];
+const PATTERN_OPTIONS: Array<{ id: PeriodicPattern; title: string; hint: string }> = [
+  { id: 'minutes', title: 'Minutes', hint: 'every N minutes, all day' },
+  { id: 'hourly', title: 'Hourly', hint: 'once every hour, at a set minute' },
+  { id: 'daily', title: 'Daily', hint: 'once a day, at a set time' },
+  { id: 'weekly', title: 'Weekly', hint: 'on chosen weekdays, at a set time' },
+  { id: 'monthly', title: 'Monthly', hint: 'on a day of the month, at a set time' },
 ];
+const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const DEFAULT_EVERY_MINUTES = [5, 10, 15, 20, 30, 45];
+const DEFAULT_HOURLY_MINUTES = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
 
 const TARGET_OPTIONS: Array<{ mode: 'file' | 'new' | 'reuse'; title: string; desc: string }> = [
   { mode: 'file', title: 'Existing session', desc: 'Deliver into a session you pick' },
@@ -31,7 +36,7 @@ const form = reactive({
   name: '',
   scheduleType: 'once' as 'once' | 'cron',
   runAtLocal: '',
-  cron: '0 3 * * *',
+  cron: '0 9 * * *',
   targetMode: 'new' as 'file' | 'new' | 'reuse',
   sessionFile: '',
   cwd: '/workspace/sf',
@@ -39,6 +44,16 @@ const form = reactive({
   model: '',
   thinkLevel: '',
   missedPolicy: 'coalesce' as 'coalesce' | 'skip',
+});
+
+const periodic = reactive<PeriodicPatternState>({
+  pattern: 'daily',
+  everyMinutes: 30,
+  atMinute: 0,
+  hour: 9,
+  minute: 0,
+  days: [1, 2, 3, 4, 5],
+  monthDay: 1,
 });
 
 const job = computed<JobInfo | null>(() =>
@@ -63,10 +78,23 @@ const filteredSessions = computed(() => {
   return base.filter((o) => o.label.toLowerCase().includes(q) || o.file.toLowerCase().includes(q));
 });
 
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
 function toLocalInput(ms: number): string {
   const d = new Date(ms);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+function syncFromCron() {
+  const p = cronToPattern(form.cron);
+  if (p) {
+    Object.assign(periodic, p);
+    rawMode.value = false;
+  } else if (form.cron.trim() !== '') {
+    rawMode.value = true;
+  }
 }
 
 function initForm(j: JobInfo | null) {
@@ -74,7 +102,7 @@ function initForm(j: JobInfo | null) {
     form.name = j.name;
     form.scheduleType = j.scheduleType;
     form.runAtLocal = j.runAt ? toLocalInput(j.runAt) : toLocalInput(Date.now() + 3600_000);
-    form.cron = j.cron ?? '0 3 * * *';
+    form.cron = j.cron ?? '0 9 * * *';
     form.targetMode = j.payload.target.mode;
     form.sessionFile = j.payload.target.sessionFile ?? sessionOptions.value[0]?.file ?? '';
     form.cwd = j.payload.target.cwd ?? '/workspace/sf';
@@ -86,7 +114,7 @@ function initForm(j: JobInfo | null) {
     form.name = '';
     form.scheduleType = 'once';
     form.runAtLocal = toLocalInput(Date.now() + 3600_000);
-    form.cron = '0 3 * * *';
+    form.cron = '0 9 * * *';
     form.targetMode = 'new';
     form.sessionFile = sessionOptions.value[0]?.file ?? '';
     form.cwd = '/workspace/sf';
@@ -95,6 +123,7 @@ function initForm(j: JobInfo | null) {
     form.thinkLevel = '';
     form.missedPolicy = 'coalesce';
   }
+  syncFromCron();
   initialized.value = true;
 }
 
@@ -122,14 +151,48 @@ function setTarget(mode: 'file' | 'new' | 'reuse') {
   }
 }
 
-const cronExpr = computed(() => form.cron.trim());
-const cronOk = computed(() => checkCron(cronExpr.value).ok);
+const currentCron = computed(() => (rawMode.value ? form.cron.trim() : patternToCron(periodic)));
+
+watch(currentCron, (v) => {
+  if (!rawMode.value) return;
+  const p = cronToPattern(v);
+  if (p) Object.assign(periodic, p);
+});
+
+function enterRaw() {
+  if (currentCron.value !== '') form.cron = currentCron.value;
+  rawMode.value = true;
+}
+
+function leaveRaw() {
+  rawMode.value = false;
+}
+
+function toggleDay(d: number) {
+  const i = periodic.days.indexOf(d);
+  if (i === -1) periodic.days = [...periodic.days, d].sort((a, b) => a - b);
+  else periodic.days = periodic.days.filter((x) => x !== d);
+}
+
+const everyMinutesOptions = computed(() => {
+  const list = new Set(DEFAULT_EVERY_MINUTES);
+  list.add(periodic.everyMinutes);
+  return [...list].sort((a, b) => a - b);
+});
+
+const hourlyMinuteOptions = computed(() => {
+  const list = new Set(DEFAULT_HOURLY_MINUTES);
+  list.add(periodic.atMinute);
+  return [...list].sort((a, b) => a - b);
+});
+
+const cronOk = computed(() => checkCron(currentCron.value).ok);
 const cronErrorText = computed(() => {
-  const r = checkCron(cronExpr.value);
+  const r = checkCron(currentCron.value);
   return r.ok ? '' : r.error;
 });
-const cronDescribe = computed(() => (cronOk.value ? describeCron(cronExpr.value) : ''));
-const cronNext = computed(() => (cronOk.value ? nextCronRuns(cronExpr.value, 3) : []));
+const cronDescribe = computed(() => (cronOk.value ? describeCron(currentCron.value) : ''));
+const cronNext = computed(() => (cronOk.value ? nextCronRuns(currentCron.value, 3) : []));
 
 const runAtTs = computed(() => (form.runAtLocal === '' ? null : new Date(form.runAtLocal).getTime()));
 const runAtValid = computed(() => runAtTs.value !== null && Number.isFinite(runAtTs.value));
@@ -142,7 +205,14 @@ const problems = computed<string[]>(() => {
   const list: string[] = [];
   if (!form.name.trim()) list.push('name');
   if (form.scheduleType === 'once' && !runAtValid.value) list.push('run-at time');
-  if (form.scheduleType === 'cron' && !cronOk.value) list.push('cron expression');
+  if (form.scheduleType === 'cron' && rawMode.value && !cronOk.value) list.push('cron expression');
+  if (
+    form.scheduleType === 'cron' &&
+    !rawMode.value &&
+    periodic.pattern === 'weekly' &&
+    periodic.days.length === 0
+  )
+    list.push('at least one weekday');
   if (form.targetMode === 'file' && !form.sessionFile) list.push('target session');
   if (form.targetMode !== 'file' && !form.cwd.trim()) list.push('working directory');
   if (!form.message.trim()) list.push('message');
@@ -166,7 +236,8 @@ function buildInput() {
     if (!runAtValid.value) throw new Error('pick a valid run-at time');
     input.runAt = runAtTs.value;
   } else {
-    input.cron = cronExpr.value;
+    if (!currentCron.value) throw new Error('pick at least one weekday');
+    input.cron = currentCron.value;
   }
   if (form.targetMode === 'file') {
     if (!form.sessionFile) throw new Error('pick a target session');
@@ -306,7 +377,7 @@ function fmtRel(ms: number | null): string {
                 <button
                   :class="{ 'job-editor-seg-btn': true, 'job-editor-seg-btn--on': form.scheduleType === 'cron' }"
                   @click="form.scheduleType = 'cron'"
-                >Periodic (cron)</button>
+                >Periodic</button>
               </div>
             </div>
 
@@ -322,31 +393,119 @@ function fmtRel(ms: number | null): string {
             </div>
 
             <template v-else>
-              <div class="job-editor-field">
-                <label>Cron expression <span class="je-label-note">server-local time · min hour dom month dow</span></label>
+              <div class="je-sched-toolbar">
+                <div v-if="!rawMode" class="je-patterns">
+                  <button
+                    v-for="p in PATTERN_OPTIONS"
+                    :key="p.id"
+                    type="button"
+                    class="je-pattern-btn"
+                    :class="{ 'je-pattern-btn--on': periodic.pattern === p.id }"
+                    :title="p.hint"
+                    @click="periodic.pattern = p.id"
+                  >{{ p.title }}</button>
+                </div>
+                <span v-else class="je-raw-tag">custom expression</span>
+                <button
+                  class="sf-panel-btn je-mode-btn"
+                  :title="rawMode ? 'Back to the visual builder' : 'Edit the raw 5-field cron expression'"
+                  @click="rawMode ? leaveRaw() : enterRaw()"
+                >{{ rawMode ? 'use builder' : 'raw expression' }}</button>
+              </div>
+
+              <div v-if="rawMode" class="job-editor-field">
+                <label>Raw cron expression <span class="je-label-note">min hour dom month dow · server-local time</span></label>
                 <input
                   v-model="form.cron"
                   class="job-editor-input job-editor-input--mono job-editor-input--narrow"
                   placeholder="0 3 * * *"
                   spellcheck="false"
                 />
-                <div class="je-presets">
-                  <button
-                    v-for="p in CRON_PRESETS"
-                    :key="p.expr"
-                    class="job-editor-preset"
-                    :class="{ 'job-editor-preset--on': form.cron === p.expr }"
-                    @click="form.cron = p.expr"
-                  >{{ p.label }}</button>
-                </div>
+                <span class="je-hint">switching back to the builder rewrites the expression from the builder's fields</span>
               </div>
 
+              <template v-else>
+                <div v-if="periodic.pattern === 'minutes'" class="je-ctrl">
+                  <span class="je-ctrl-label">Run every</span>
+                  <div class="je-chips">
+                    <button
+                      v-for="m in everyMinutesOptions"
+                      :key="m"
+                      type="button"
+                      class="je-chip"
+                      :class="{ 'je-chip--on': periodic.everyMinutes === m }"
+                      @click="periodic.everyMinutes = m"
+                    >{{ m }} min</button>
+                  </div>
+                </div>
+
+                <div v-else-if="periodic.pattern === 'hourly'" class="je-ctrl">
+                  <span class="je-ctrl-label">At minute past the hour</span>
+                  <div class="je-chips">
+                    <button
+                      v-for="m in hourlyMinuteOptions"
+                      :key="m"
+                      type="button"
+                      class="je-chip"
+                      :class="{ 'je-chip--on': periodic.atMinute === m }"
+                      @click="periodic.atMinute = m"
+                    >{{ pad2(m) }}</button>
+                  </div>
+                </div>
+
+                <template v-else>
+                  <div v-if="periodic.pattern === 'weekly'" class="je-ctrl">
+                    <span class="je-ctrl-label">On days</span>
+                    <div class="je-chips">
+                      <button
+                        v-for="(name, d) in DOW_LABELS"
+                        :key="d"
+                        type="button"
+                        class="je-chip"
+                        :class="{ 'je-chip--on': periodic.days.includes(d) }"
+                        @click="toggleDay(d)"
+                      >{{ name }}</button>
+                    </div>
+                    <div class="je-quick">
+                      <button class="je-quick-btn" type="button" @click="periodic.days = [1, 2, 3, 4, 5]">weekdays</button>
+                      <button class="je-quick-btn" type="button" @click="periodic.days = [0, 6]">weekend</button>
+                      <button class="je-quick-btn" type="button" @click="periodic.days = [0, 1, 2, 3, 4, 5, 6]">every day</button>
+                    </div>
+                    <span v-if="periodic.days.length === 0" class="je-hint je-hint--warn">pick at least one day</span>
+                  </div>
+
+                  <div class="je-ctrl je-ctrl-row">
+                    <template v-if="periodic.pattern === 'monthly'">
+                      <span class="je-ctrl-label">On day</span>
+                      <select v-model.number="periodic.monthDay" class="job-editor-input je-time">
+                        <option v-for="d in 31" :key="d" :value="d">{{ d }}</option>
+                      </select>
+                    </template>
+                    <span class="je-ctrl-label">at</span>
+                    <select v-model.number="periodic.hour" class="job-editor-input je-time" title="Hour">
+                      <option v-for="h in 24" :key="h" :value="h - 1">{{ pad2(h - 1) }}</option>
+                    </select>
+                    <span class="je-ctrl-colon">:</span>
+                    <select v-model.number="periodic.minute" class="job-editor-input je-time" title="Minute">
+                      <option v-for="m in 60" :key="m" :value="m - 1">{{ pad2(m - 1) }}</option>
+                    </select>
+                  </div>
+                  <span v-if="periodic.pattern === 'monthly' && periodic.monthDay > 28" class="je-hint">
+                    months without day {{ periodic.monthDay }} skip that run
+                  </span>
+                </template>
+              </template>
+
               <div
-                v-if="form.cron.trim() !== ''"
+                v-if="currentCron !== ''"
                 class="je-cron-preview"
                 :class="{ 'je-cron-preview--bad': !cronOk }"
               >
                 <template v-if="cronOk">
+                  <div class="je-cron-ref">
+                    <span class="je-cron-ref-label">cron</span>
+                    <code class="je-mono">{{ currentCron }}</code>
+                  </div>
                   <div class="je-cron-desc">{{ cronDescribe }}</div>
                   <div class="je-cron-next">
                     <span class="je-cron-next-label">next</span>
@@ -662,29 +821,109 @@ function fmtRel(ms: number | null): string {
   padding: 2px 12px;
 }
 
-.je-presets {
+.je-sched-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.je-patterns {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
-  margin-top: 2px;
 }
-.job-editor-preset {
-  padding: 3px 10px;
+.je-pattern-btn {
+  padding: 5px 14px;
   border-radius: 6px;
   border: 1px solid var(--sf-border);
   background: transparent;
   color: inherit;
   font-size: 16px;
   cursor: pointer;
-  opacity: 0.7;
+  opacity: 0.75;
 }
-.job-editor-preset:hover {
+.je-pattern-btn:hover {
   opacity: 1;
+  background: var(--sf-hover-overlay);
 }
-.job-editor-preset--on {
+.je-pattern-btn--on {
   opacity: 1;
   background: var(--sf-accent-soft);
   border-color: var(--sf-accent-dim);
+  color: var(--sf-text-bright);
+}
+.je-mode-btn {
+  font-size: 13px;
+}
+.je-raw-tag {
+  font-size: 13px;
+  color: var(--sf-status-warn);
+}
+
+.je-ctrl {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.je-ctrl-row {
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.je-ctrl-label {
+  font-size: 16px;
+  opacity: 0.75;
+}
+.je-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.je-chip {
+  padding: 3px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--sf-border);
+  background: transparent;
+  color: inherit;
+  font-size: 16px;
+  cursor: pointer;
+  opacity: 0.75;
+}
+.je-chip:hover {
+  opacity: 1;
+}
+.je-chip--on {
+  opacity: 1;
+  background: var(--sf-accent-soft);
+  border-color: var(--sf-accent-dim);
+  color: var(--sf-text-bright);
+}
+.je-quick {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.je-quick-btn {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--sf-link);
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.je-time {
+  width: auto;
+  min-width: 84px;
+  padding: 6px 8px;
+  flex-shrink: 0;
+}
+.je-ctrl-colon {
+  font-size: 16px;
+  opacity: 0.6;
 }
 
 .je-cron-preview {
@@ -699,6 +938,22 @@ function fmtRel(ms: number | null): string {
 }
 .je-cron-preview--bad {
   border-color: var(--sf-danger);
+}
+.je-cron-ref {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  opacity: 0.85;
+}
+.je-cron-ref-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+  opacity: 0.6;
+}
+.je-cron-ref code {
+  font-size: 13px;
 }
 .je-cron-desc {
   font-size: 16px;

@@ -183,3 +183,140 @@ export function describeCron(expr: string): string {
 
   return time + days + months;
 }
+
+export interface PeriodicPatternState {
+  pattern: 'minutes' | 'hourly' | 'daily' | 'weekly' | 'monthly';
+  everyMinutes: number;
+  atMinute: number;
+  hour: number;
+  minute: number;
+  days: number[];
+  monthDay: number;
+}
+
+function clampInt(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, Math.round(n)));
+}
+
+function dowList(days: number[]): string {
+  const ds = [...new Set(days)].filter((d) => d >= 0 && d <= 6).sort((a, b) => a - b);
+  const parts: string[] = [];
+  let i = 0;
+  while (i < ds.length) {
+    let j = i;
+    while (j + 1 < ds.length && ds[j + 1] === ds[j] + 1) j++;
+    parts.push(i === j ? DOW_NAMES[ds[i]] : `${DOW_NAMES[ds[i]]}-${DOW_NAMES[ds[j]]}`);
+    i = j + 1;
+  }
+  return parts.join(',');
+}
+
+export function patternToCron(p: PeriodicPatternState): string {
+  const minute = clampInt(p.minute, 0, 59);
+  const hour = clampInt(p.hour, 0, 23);
+  switch (p.pattern) {
+    case 'minutes':
+      return `*/${clampInt(p.everyMinutes, 2, 59)} * * * *`;
+    case 'hourly':
+      return `${clampInt(p.atMinute, 0, 59)} * * * *`;
+    case 'daily':
+      return `${minute} ${hour} * * *`;
+    case 'weekly':
+      if (p.days.length === 0) return '';
+      return `${minute} ${hour} * * ${dowList(p.days)}`;
+    case 'monthly':
+      return `${minute} ${hour} ${clampInt(p.monthDay, 1, 31)} * *`;
+  }
+  return '';
+}
+
+function allTrue(values: boolean[]): boolean {
+  return values.length > 0 && values.every(Boolean);
+}
+
+function minuteStepRun(values: number[]): number | null {
+  if (values.length < 2 || values[0] !== 0) return null;
+  const step = values[1] - values[0];
+  if (step < 2) return null;
+  for (let i = 1; i < values.length; i++) {
+    if (values[i] - values[i - 1] !== step) return null;
+  }
+  return step;
+}
+
+export function cronToPattern(expr: string): PeriodicPatternState | null {
+  const parsed = parseCron(expr);
+  if (!parsed.ok) return null;
+  const p = parsed.parts;
+  const minutes = setIndices(p.minute.values);
+  const hours = setIndices(p.hour.values);
+  const doms = setIndices(p.dom.values, 1);
+  const dows = setIndices(p.dow.values.slice(0, 7));
+  const hourFull = allTrue(p.hour.values) && p.hour.values.length === 24;
+  const domFull = allTrue(p.dom.values) && p.dom.values.length === 31;
+  const monthFull = allTrue(p.month.values) && p.month.values.length === 12;
+  const dowFull = allTrue(p.dow.values.slice(0, 7));
+  if (!monthFull) return null;
+
+  if (hourFull && domFull && dowFull) {
+    const step = minuteStepRun(minutes);
+    if (step !== null) {
+      return {
+        pattern: 'minutes',
+        everyMinutes: step,
+        atMinute: 0,
+        hour: 0,
+        minute: 0,
+        days: [1, 2, 3, 4, 5],
+        monthDay: 1,
+      };
+    }
+    if (minutes.length === 1) {
+      return {
+        pattern: 'hourly',
+        everyMinutes: 30,
+        atMinute: minutes[0],
+        hour: 0,
+        minute: 0,
+        days: [1, 2, 3, 4, 5],
+        monthDay: 1,
+      };
+    }
+    return null;
+  }
+  if (minutes.length !== 1 || hours.length !== 1 || !domFull) return null;
+  if (dowFull && doms.length === 31) {
+    return {
+      pattern: 'daily',
+      everyMinutes: 30,
+      atMinute: 0,
+      hour: hours[0],
+      minute: minutes[0],
+      days: [1, 2, 3, 4, 5],
+      monthDay: 1,
+    };
+  }
+  if (dowFull && doms.length === 1) {
+    return {
+      pattern: 'monthly',
+      everyMinutes: 30,
+      atMinute: 0,
+      hour: hours[0],
+      minute: minutes[0],
+      days: [1, 2, 3, 4, 5],
+      monthDay: doms[0],
+    };
+  }
+  if (!dowFull && doms.length === 31 && dows.length >= 1) {
+    return {
+      pattern: 'weekly',
+      everyMinutes: 30,
+      atMinute: 0,
+      hour: hours[0],
+      minute: minutes[0],
+      days: [...dows],
+      monthDay: 1,
+    };
+  }
+  return null;
+}

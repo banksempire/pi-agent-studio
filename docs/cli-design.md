@@ -232,8 +232,7 @@ studio [-i <instance>] <command> …        # auto-detects instance from CWD's p
                               and refused (exit 5) when no backend code
                               changed since start — `--yes` overrides
   kill <service> [--force]    SIGTERM → grace (web 5s, backend drain+20s) → SIGKILL;
-                              guarded while agents are live; <service> may be
-                              omitted when --port <n> names the victim
+                              guarded while agents are live
   status [service]            per-instance table + all-instances view; --json
   logs [service] [-f] [-n N]        tail managed logs (services log without timestamps,
                                     so no --since filtering; -f follows)
@@ -269,59 +268,12 @@ studio [-i <instance>] <command> …        # auto-detects instance from CWD's p
 - `status` (no args) shows **all** instances: id, branch, pairRoot, webPort,
   stack state; `-i` filters.
 - `main` is never stopped or started implicitly by instance-scoped commands.
-- **`--port <n>` targeting** (`kill` | `restart` | `down`): a bare port number
-  resolves the instance *and* service listening on it — no `-i`, no cwd
-  detection. Refuses when nothing listens there (lists what does), when the
-  port is held by multiple/unattributed processes, or when `-i` disagrees.
-  This makes the victim explicit: an agent that knows a port (from `status`,
-  logs, a URL) can never hit main by resolver accident. The `--port web=7500`
-  key=value form on these commands is unchanged (spawn-time port override);
-  a bare integer is never a valid override, so the two cannot collide.
 - **`PI_STUDIO_STRICT=1`** (env): `up`/`down`/`restart`/`kill` refuse to run
   on defaults — cwd auto-detection and the main fallback are disabled until
-  an explicit `-i <id>` (or `--port <n>`) names the target. Opt-in guard for
-  agent shells / dev containers where a bare `studio up` must not be able to
-  touch the product stack. Read-only commands stay permissive.
-
-## 8. Backend safety guards
-
-Backend stop/kill is a two-gate check:
-
-**Gate 1 — live agents.** Query `/api/agent-states`. Any agent running or
-with queued messages → interactive confirm listing them (id, elapsed runtime,
-queue depth) plus the warning. Non-interactive without `--yes` → refuse,
-exit 5. `restart backend` skips this gate: the graceful drain (§3a) protects
-queued prompts, and in-flight prompts are aborted only at the deadline.
-
-**Gate 2 — stale-code check.** Compare the newest mtime under the backend
-watch paths (`src/pi-nest/**`, `src/pi-studio/server/**`) against the backend
-process start time. If nothing changed since it started, print e.g. `no
-changes under src/pi-nest | src/pi-studio/server since backend started
-(started 14:02, last edit 13:47)` and refuse (exit 5) — `--yes` overrides.
-Mechanizes the AGENTS.md rule (restart only when its own code changed;
-cosmetic edits count as no-change).
-
-Gate 2 applies to `restart backend` only — a deliberate stop (`down`/`kill`)
-reflects intent, not a recycle, so only the live-agent gate fires there.
-
-## 9. Process control
-
-**Daemonization.** `up` spawns each service detached (own process group,
-stdio → managed log file). The CLI exits; services keep running. No
-long-lived supervisor.
-
-**PID registry.** Per-service pidfiles (§4) validated against
-`/proc/<pid>/cmdline` before trust (guards against PID reuse).
-
-**Discovery & attribution.** argv is identical across instances, so:
-1. Match anchored argv signature (e.g. cmdline ending in
-   `pi-agent-studio/src/pi-nest/src/index.mjs`).
-2. Read `/proc/<pid>/environ` → recover `PI_NEST_PORT` / `PI_STUDIO_PORT` /
-   `PI_API_PROXY` → map to an instance via runtime state / ports.
-3. Unattributable matches (pre-CLI era processes) → listed as `unattributed`;
-   `doctor --fix` adopts them only via port match, else reports.
-
-**Orphan handling.** On any mutating command and in `status`/`doctor`:
+  an explicit `-i <id>` names the target. Opt-in guard for agent shells /
+  dev containers where a bare `studio up` must not be able to touch the
+  product stack; instance ids are unique (one registry file per id), so a
+  named target is always unambiguous. Read-only commands stay permissive.
 - orphan found, no pidfile → adopt (write pidfile, report);
 - orphan besides the tracked PID → report both; `doctor --fix` kills orphans
   after SIGTERM grace.

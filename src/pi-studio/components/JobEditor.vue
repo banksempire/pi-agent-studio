@@ -298,6 +298,15 @@ function cancel() {
   store.closeJobEditor(props.jobId ?? null);
 }
 
+function openPicker(e: MouseEvent) {
+  const el = e.currentTarget as HTMLInputElement;
+  const r = el.getBoundingClientRect();
+  if (e.clientX < r.right - 36) return;
+  try {
+    el.showPicker();
+  } catch {}
+}
+
 function fmtAbs(ms: number | null): string {
   if (!ms) return '—';
   return new Date(ms).toLocaleString(undefined, {
@@ -388,7 +397,8 @@ function fmtRel(ms: number | null): string {
               <input
                 v-model="form.runAtLocal"
                 type="datetime-local"
-                class="job-editor-input job-editor-input--narrow"
+                class="job-editor-input je-datetime"
+                @click="openPicker"
               />
               <span v-if="runAtValid" class="je-hint">{{ fmtAbs(runAtTs) }} · {{ fmtRel(runAtTs) }}</span>
               <span v-if="runAtPast" class="je-hint je-hint--warn">this time is in the past</span>
@@ -795,6 +805,19 @@ function fmtRel(ms: number | null): string {
 .je-hint {
   font-size: 13px;
   opacity: 0.65;
+}
+.je-datetime {
+  -webkit-appearance: none;
+  appearance: none;
+  max-width: 300px;
+  padding-right: 36px;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none'><rect x='3' y='5' width='18' height='16' rx='2' stroke='%23cccccc' stroke-width='2'/><path d='M8 3v4M16 3v4M3 10h18' stroke='%23cccccc' stroke-width='2' stroke-linecap='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+.je-datetime:hover {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none'><rect x='3' y='5' width='18' height='16' rx='2' stroke='%23e0e0e0' stroke-width='2'/><path d='M8 3v4M16 3v4M3 10h18' stroke='%23e0e0e0' stroke-width='2' stroke-linecap='round'/></svg>");
 }
 .je-hint--warn {
   color: var(--sf-status-warn);

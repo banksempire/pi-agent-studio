@@ -486,33 +486,6 @@ async function main() {
       cascadeRestartRes.stderr.slice(0, 100),
     );
 
-    const suiteBackendPort = pidfile('backend')?.port;
-    const portKill = studio(['kill', 'backend', '--port', String(suiteBackendPort)], {
-      cwd: BASE,
-      expect: 0,
-      label: 'kill by port (no -i, neutral cwd)',
-    });
-    report(
-      'kill --port targets the owning instance without -i',
-      portKill.status === 0 && !pidfile('backend')?.pid,
-      portKill.stderr.slice(0, 120),
-    );
-    report(
-      'kill --port backend leaves that web running (single service)',
-      (await portServing(webPort)) === true,
-    );
-
-    const unknownPort = studio(['kill', 'backend', '--port', '1'], {
-      cwd: BASE,
-      expect: 2,
-      label: 'kill by unknown port',
-    });
-    report(
-      'kill --port with no listener errors (exit 2)',
-      unknownPort.status === 2 && /no managed service/.test(unknownPort.stderr),
-      unknownPort.stderr.slice(0, 120),
-    );
-
     const strictEnv = { ...env, PI_STUDIO_STRICT: '1' };
     const strictUp = studio(['up'], { cwd: PAIR, env: strictEnv, expect: 2, label: 'strict blocks bare up' });
     report(
@@ -540,17 +513,6 @@ async function main() {
       'PI_STUDIO_STRICT allows explicit -i up',
       strictExplicit.status === 0 && pidfile('backend')?.pid != null,
       strictExplicit.stderr.slice(0, 120),
-    );
-
-    const portDown = studio(['down', '--port', String(suiteBackendPort)], {
-      cwd: BASE,
-      expect: 0,
-      label: 'down by port',
-    });
-    report(
-      'down --port resolves the instance and cascades (web released)',
-      portDown.status === 0 && !pidfile('backend')?.pid && (await portServing(webPort)) === false,
-      portDown.stderr.slice(0, 120),
     );
 
     const rmRes = studio(['worktree', 'rm', ID, '--purge', '--yes'], { expect: 0, label: 'worktree rm' });

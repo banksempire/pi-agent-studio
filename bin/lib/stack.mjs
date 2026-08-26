@@ -174,33 +174,6 @@ function portFromProxy(env) {
   return m ? Number(m[1]) : null;
 }
 
-export function instanceByPort(port) {
-  const n = Number(port);
-  if (!Number.isInteger(n) || n <= 0 || n > 65535) return { error: `invalid port '${port}'` };
-  const attributed = attributeProcesses(null);
-  const rows = attributed.rows.filter((r) => r.ports.includes(n));
-  if (rows.length === 0) {
-    const live = attributed.rows
-      .flatMap((r) => r.ports.map((p) => `${r.instanceId ?? 'unattributed'}/${r.service}:${p}`))
-      .sort();
-    return {
-      error: `no managed service listens on :${n}${live.length ? ` — live: ${live.join(', ')}` : ' (no services running)'}`,
-    };
-  }
-  if (rows.length > 1) return { error: `port :${n} is held by multiple processes — refusing` };
-  const row = rows[0];
-  if (!row.instanceId) {
-    return {
-      error: `port :${n} is held by an unattributed process (pid ${row.pid}) — refusing; sweep or attribute it first (studio doctor)`,
-    };
-  }
-  const inst = loadInstance(row.instanceId);
-  if (!inst) {
-    return { error: `port :${n} belongs to instance '${row.instanceId}' but its record is gone` };
-  }
-  return { instance: inst, service: row.service };
-}
-
 export function attributeProcesses(instances = null) {
   const insts = (instances ?? listInstances().map((id) => loadInstance(id))).filter(Boolean);
   const listeners = listenPortsByPid();

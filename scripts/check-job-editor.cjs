@@ -388,6 +388,7 @@ function writeSessionFile(name) {
     const runGeometry = await page.evaluate(() => {
       const items = [...document.querySelectorAll('.je-ms-item')];
       const pick = (t) => items.find((b) => b.textContent === t);
+      const runMargin = () => getComputedStyle(pick('Wed')).marginLeft;
       const geo = (el) => {
         const cs = getComputedStyle(el);
         return {
@@ -401,9 +402,12 @@ function writeSessionFile(name) {
       const ts = document.querySelector('.je-ms-track')
         ? getComputedStyle(document.querySelector('.je-ms-track'))
         : null;
+      const gap = ts ? Number.parseFloat(ts.gap) : NaN;
       return {
         trackBorder: ts?.borderTopWidth ?? '',
         trackRadius: ts?.borderTopLeftRadius ?? '',
+        gap,
+        mergeMargin: Number.parseFloat(runMargin()),
         mon: geo(pick('Mon')),
         wed: geo(pick('Wed')),
         fri: geo(pick('Fri')),
@@ -414,13 +418,13 @@ function writeSessionFile(name) {
       'consecutive weekdays merge into one rounded box inside the track',
       runGeometry.trackBorder === '1px' &&
         runGeometry.trackRadius === '8px' &&
+        runGeometry.mergeMargin === -(runGeometry.gap + 1) &&
         runGeometry.mon.on &&
         runGeometry.mon.left === '8px' &&
         runGeometry.mon.right === '0px' &&
         runGeometry.wed.on &&
         runGeometry.wed.left === '0px' &&
         runGeometry.wed.right === '0px' &&
-        runGeometry.wed.marginLeft === '-6px' &&
         runGeometry.fri.on &&
         runGeometry.fri.left === '0px' &&
         runGeometry.fri.right === '8px' &&
@@ -722,6 +726,21 @@ function writeSessionFile(name) {
       'mobile: schedule selector stays on a single line',
       segSingleLine?.pills === 7 && segSingleLine.rows === 1,
       JSON.stringify(segSingleLine),
+    );
+
+    await page.locator('.je-sched-seg .job-editor-seg-btn', { hasText: 'Weekly' }).click();
+    await delay(400);
+    const msSingleLine = await page.evaluate(() => {
+      const track = document.querySelector('.je-ms-track');
+      if (!track) return null;
+      const items = [...track.querySelectorAll('.je-ms-item')];
+      const rows = new Set(items.map((b) => Math.round(b.getBoundingClientRect().top)));
+      return { items: items.length, rows: rows.size, wrap: getComputedStyle(track).flexWrap };
+    });
+    report(
+      'mobile: day selector stays on a single line',
+      msSingleLine?.items === 7 && msSingleLine.rows === 1 && msSingleLine.wrap === 'nowrap',
+      JSON.stringify(msSingleLine),
     );
     const wideMobile = await injectWide();
     report(

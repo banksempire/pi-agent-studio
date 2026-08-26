@@ -17,6 +17,8 @@ export interface ModelCatalog {
 
 const CACHE_TTL_MS = 10 * 60_000;
 
+const modelsCache = { at: 0, data: null as { models: ModelInfo[]; default: ModelInfo | null } | null };
+
 const cache = new Map<string, { at: number; data: ModelCatalog }>();
 const inflight = new Map<string, Promise<ModelCatalog | null>>();
 
@@ -42,6 +44,25 @@ export async function getModelInfo(file: string, force = false): Promise<ModelCa
   } finally {
     inflight.delete(file);
   }
+}
+
+export async function getAvailableModels(
+  force = false,
+): Promise<{ models: ModelInfo[]; default: ModelInfo | null } | null> {
+  if (!force && modelsCache.data && Date.now() - modelsCache.at < CACHE_TTL_MS) return modelsCache.data;
+  const j = await api<{
+    ok: boolean;
+    data?: { models?: ModelInfo[]; default?: ModelInfo | null };
+    error?: string;
+  }>('/api/slash', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command: '_models' }),
+  });
+  if (!j.ok || !j.data?.models) throw new Error(j.error || 'Failed to load models');
+  modelsCache.data = { models: j.data.models, default: j.data.default ?? null };
+  modelsCache.at = Date.now();
+  return modelsCache.data;
 }
 
 export function setCachedModel(file: string, model: ModelInfo, thinkLevel: string): void {

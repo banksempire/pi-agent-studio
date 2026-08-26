@@ -221,6 +221,41 @@ function writeSessionFile(name) {
         body: JSON.stringify({ jobs: [CUSTOM_JOB] }),
       }),
     );
+    await page.route('**/api/slash', async (route) => {
+      const body = route.request().postDataJSON();
+      if (body?.command === '_models') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            ok: true,
+            data: {
+              models: [
+                {
+                  id: 'stub-pro',
+                  provider: 'stub',
+                  name: 'Stub Pro',
+                  reasoning: true,
+                  contextWindow: 200000,
+                  thinkingLevels: ['off', 'low', 'high'],
+                },
+                {
+                  id: 'stub-mini',
+                  provider: 'stub',
+                  name: 'Stub Mini',
+                  reasoning: false,
+                  contextWindow: 100000,
+                  thinkingLevels: ['off'],
+                },
+              ],
+              default: null,
+            },
+          }),
+        });
+      } else {
+        await route.continue();
+      }
+    });
 
     await page.locator('.sf-docker-app[title="Scheduler"]').click();
     await page.waitForSelector('.sf-subsection-util[title="New Job"]', { timeout: 10000 });
@@ -249,6 +284,31 @@ function writeSessionFile(name) {
         !onceDefaults.rawInputVisible &&
         onceDefaults.runAtVisible,
       JSON.stringify(onceDefaults),
+    );
+
+    const modelBtn = page.locator('.je-model-btn');
+    await modelBtn.waitFor({ timeout: 10000 });
+    const modelDefaultText = await page.locator('.je-model-btn-text').textContent();
+    await modelBtn.click();
+    await page.waitForSelector('.sf-menu-pop', { timeout: 5000 });
+    await page.locator('.sf-menu-row', { hasText: 'stub' }).hover();
+    await page.locator('.sf-menu-row', { hasText: 'Stub Pro' }).waitFor({ timeout: 5000 });
+    await page.locator('.sf-menu-row', { hasText: 'Stub Pro' }).hover();
+    await page.locator('.sf-menu-row', { hasText: 'high' }).waitFor({ timeout: 5000 });
+    await page.locator('.sf-menu-row', { hasText: 'high' }).click();
+    await delay(300);
+    const modelAfter = await page.locator('.je-model-btn-text').textContent();
+    const clearVisible = await page.locator('.je-model-clear').isVisible();
+    await page.locator('.je-model-clear').click();
+    await delay(150);
+    const modelCleared = await page.locator('.je-model-btn-text').textContent();
+    report(
+      'model override uses the multi-level menu and shows provider/name·level',
+      modelDefaultText === 'Session default' &&
+        modelAfter === 'stub/Stub Pro·high' &&
+        clearVisible &&
+        modelCleared === 'Session default',
+      `${modelDefaultText} → ${modelAfter} → ${modelCleared}`,
     );
 
     const pickerStyle = await page.evaluate(() => {
@@ -336,6 +396,29 @@ function writeSessionFile(name) {
     cronRef = await page.locator('.je-cron-ref code').textContent();
     report('time selectors rewrite the expression', cronRef === '0 3 * * sun-sat', String(cronRef));
 
+    const selectStyle = await page.evaluate(() => {
+      const sel = document.querySelector('select.je-select');
+      const ss = sel ? getComputedStyle(sel) : null;
+      const opt = sel?.querySelector('option');
+      const os = opt ? getComputedStyle(opt) : null;
+      return {
+        found: !!sel,
+        appearance: ss?.appearance ?? '',
+        arrow: ss?.backgroundImage?.includes('svg') ?? false,
+        padRight: ss?.paddingRight ?? '',
+        optionBg: os?.backgroundColor ?? '',
+      };
+    });
+    report(
+      'selects drop native chrome for a themed chevron and dark options',
+      selectStyle.found &&
+        selectStyle.appearance === 'none' &&
+        selectStyle.arrow &&
+        selectStyle.padRight === '32px' &&
+        selectStyle.optionBg === 'rgb(37, 37, 38)',
+      JSON.stringify(selectStyle),
+    );
+
     const sizes = await page.evaluate(() => {
       const px = (sel) => {
         const el = document.querySelector(sel);
@@ -414,18 +497,10 @@ function writeSessionFile(name) {
         b.textContent?.includes('Cancel'),
       );
       const cs = cancel ? getComputedStyle(cancel) : null;
-      const sel = document.querySelector('select.je-select');
-      const ss = sel ? getComputedStyle(sel) : null;
-      const opt = sel?.querySelector('option');
-      const os = opt ? getComputedStyle(opt) : null;
       return {
         cancelFound: !!cancel,
         cancelBg: cs?.backgroundColor ?? '',
         cancelBorder: cs?.borderTopColor ?? '',
-        selectAppearance: ss?.appearance ?? '',
-        selectArrow: ss?.backgroundImage?.includes('svg') ?? false,
-        selectPadRight: ss?.paddingRight ?? '',
-        optionBg: os?.backgroundColor ?? '',
       };
     });
     report(
@@ -433,14 +508,6 @@ function writeSessionFile(name) {
       themedControls.cancelFound &&
         themedControls.cancelBg === 'rgb(41, 41, 41)' &&
         themedControls.cancelBorder === 'rgb(58, 58, 58)',
-      JSON.stringify(themedControls),
-    );
-    report(
-      'selects drop native chrome for a themed chevron and dark options',
-      themedControls.selectAppearance === 'none' &&
-        themedControls.selectArrow &&
-        themedControls.selectPadRight === '32px' &&
-        themedControls.optionBg === 'rgb(37, 37, 38)',
       JSON.stringify(themedControls),
     );
     const advancedPrefill = await page.evaluate(() => ({

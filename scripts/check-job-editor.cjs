@@ -388,7 +388,6 @@ function writeSessionFile(name) {
     const runGeometry = await page.evaluate(() => {
       const items = [...document.querySelectorAll('.je-ms-item')];
       const pick = (t) => items.find((b) => b.textContent === t);
-      const runMargin = () => getComputedStyle(pick('Wed')).marginLeft;
       const geo = (el) => {
         const cs = getComputedStyle(el);
         return {
@@ -403,11 +402,12 @@ function writeSessionFile(name) {
         ? getComputedStyle(document.querySelector('.je-ms-track'))
         : null;
       const gap = ts ? Number.parseFloat(ts.gap) : NaN;
+      const bridge = getComputedStyle(pick('Mon'), '::after');
       return {
         trackBorder: ts?.borderTopWidth ?? '',
         trackRadius: ts?.borderTopLeftRadius ?? '',
         gap,
-        mergeMargin: Number.parseFloat(runMargin()),
+        bridgeWidth: Number.parseFloat(bridge.width) || 0,
         mon: geo(pick('Mon')),
         wed: geo(pick('Wed')),
         fri: geo(pick('Fri')),
@@ -418,7 +418,8 @@ function writeSessionFile(name) {
       'consecutive weekdays merge into one rounded box inside the track',
       runGeometry.trackBorder === '1px' &&
         runGeometry.trackRadius === '8px' &&
-        runGeometry.mergeMargin === -(runGeometry.gap + 1) &&
+        runGeometry.bridgeWidth === runGeometry.gap + 2 &&
+        runGeometry.wed.marginLeft === '0px' &&
         runGeometry.mon.on &&
         runGeometry.mon.left === '8px' &&
         runGeometry.mon.right === '0px' &&
@@ -453,10 +454,33 @@ function writeSessionFile(name) {
     await page.locator('.je-ms-item', { hasText: 'Wed' }).click();
     await delay(150);
 
+    const rectsBefore = await page.evaluate(() => {
+      const track = document.querySelector('.je-ms-track');
+      const items = [...track.querySelectorAll('.je-ms-item')];
+      const snap = (el) => {
+        const r = el.getBoundingClientRect();
+        return [Math.round(r.left * 10), Math.round(r.width * 10)];
+      };
+      return { track: snap(track), items: items.map(snap) };
+    });
     await page.locator('.je-ms-item', { hasText: 'Sat' }).click();
     await delay(150);
+    const rectsAfter = await page.evaluate(() => {
+      const track = document.querySelector('.je-ms-track');
+      const items = [...track.querySelectorAll('.je-ms-item')];
+      const snap = (el) => {
+        const r = el.getBoundingClientRect();
+        return [Math.round(r.left * 10), Math.round(r.width * 10)];
+      };
+      return { track: snap(track), items: items.map(snap) };
+    });
+    report(
+      'selecting an item never shifts positions or changes box lengths',
+      JSON.stringify(rectsBefore) === JSON.stringify(rectsAfter),
+      `${JSON.stringify(rectsBefore.items)} vs ${JSON.stringify(rectsAfter.items)}`,
+    );
     cronRef = await page.locator('.je-cron-ref code').textContent();
-    report('day chips extend the expression', cronRef === '0 9 * * mon-sat', String(cronRef));
+    report('day boxes extend the expression', cronRef === '0 9 * * mon-sat', String(cronRef));
 
     await page.locator('.je-ms-item', { hasText: 'Sun' }).click();
     await page.locator('select.je-time[title="Hour"]').selectOption('3');

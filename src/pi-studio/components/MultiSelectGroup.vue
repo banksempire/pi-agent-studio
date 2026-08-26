@@ -53,9 +53,10 @@ function itemClasses(i: number): Record<string, boolean> {
   container-type: inline-size;
 }
 .je-ms-track {
+  --je-ms-gap: 5px;
   display: inline-flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: var(--je-ms-gap);
   padding: 3px;
   border-radius: 8px;
   border: 1px solid var(--sf-border);
@@ -64,6 +65,7 @@ function itemClasses(i: number): Record<string, boolean> {
   max-width: 100%;
 }
 .je-ms-item {
+  position: relative;
   padding: 3px 11px;
   border: 1px solid transparent;
   border-radius: 8px;
@@ -88,7 +90,6 @@ function itemClasses(i: number): Record<string, boolean> {
   opacity: 1;
 }
 .je-ms-item--on:not(.je-ms-item--start) {
-  margin-left: -6px;
   border-left-color: transparent;
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
@@ -98,27 +99,33 @@ function itemClasses(i: number): Record<string, boolean> {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
 }
+.je-ms-item--on:not(.je-ms-item--end)::after {
+  content: '';
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  left: 100%;
+  width: calc(var(--je-ms-gap, 5px) + 2px);
+  background: var(--sf-accent-soft);
+  border-top: 1px solid var(--sf-accent-dim);
+  border-bottom: 1px solid var(--sf-accent-dim);
+  pointer-events: none;
+}
 
 @container (max-width: 640px) {
   .je-ms-track {
-    gap: 4px;
+    --je-ms-gap: 4px;
   }
   .je-ms-item {
     padding: 3px 9px;
   }
-  .je-ms-item--on:not(.je-ms-item--start) {
-    margin-left: -5px;
-  }
 }
 @container (max-width: 540px) {
   .je-ms-track {
-    gap: 2px;
+    --je-ms-gap: 2px;
   }
   .je-ms-item {
     padding: 3px 6px;
-  }
-  .je-ms-item--on:not(.je-ms-item--start) {
-    margin-left: -3px;
   }
 }
 @container (max-width: 490px) {

@@ -32,40 +32,47 @@ function itemClasses(i: number): Record<string, boolean> {
 
 <template>
   <div class="je-ms" role="group">
-    <button
-      v-for="(opt, i) in options"
-      :key="opt.value"
-      type="button"
-      class="je-ms-item"
-      :class="itemClasses(i)"
-      :title="opt.title ?? opt.label"
-      :aria-pressed="isSelected(opt.value)"
-      @click="toggle(opt.value)"
-    >{{ opt.label }}</button>
+    <div class="je-ms-track">
+      <button
+        v-for="(opt, i) in options"
+        :key="opt.value"
+        type="button"
+        class="je-ms-item"
+        :class="itemClasses(i)"
+        :title="opt.title ?? opt.label"
+        :aria-pressed="isSelected(opt.value)"
+        @click="toggle(opt.value)"
+      >{{ opt.label }}</button>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .je-ms {
-  display: flex;
+  max-width: 100%;
+}
+.je-ms-track {
+  display: inline-flex;
   flex-wrap: wrap;
+  gap: 5px;
+  padding: 3px;
+  border-radius: 8px;
+  border: 1px solid var(--sf-border);
+  background: rgba(0, 0, 0, 0.15);
+  width: fit-content;
   max-width: 100%;
   container-type: inline-size;
 }
 .je-ms-item {
-  padding: 3px 12px;
-  margin-left: 6px;
-  border: 1px solid var(--sf-border);
-  border-radius: 999px;
+  padding: 3px 11px;
+  border: 1px solid transparent;
+  border-radius: 8px;
   background: transparent;
   color: inherit;
   font-size: 16px;
   font-family: var(--sf-font);
   cursor: pointer;
   opacity: 0.75;
-}
-.je-ms-item:first-child {
-  margin-left: 0;
 }
 .je-ms-item:hover {
   opacity: 1;
@@ -81,7 +88,7 @@ function itemClasses(i: number): Record<string, boolean> {
   opacity: 1;
 }
 .je-ms-item--on:not(.je-ms-item--start) {
-  margin-left: 0;
+  margin-left: -6px;
   border-left-color: transparent;
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
@@ -95,13 +102,9 @@ function itemClasses(i: number): Record<string, boolean> {
 @container (max-width: 480px) {
   .je-ms-item {
     padding: 3px 8px;
-    margin-left: 4px;
   }
-}
-@container (max-width: 400px) {
-  .je-ms-item {
-    padding: 3px 6px;
-    margin-left: 3px;
+  .je-ms-item--on:not(.je-ms-item--start) {
+    margin-left: -6px;
   }
 }
 </style>

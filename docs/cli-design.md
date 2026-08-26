@@ -248,7 +248,14 @@ studio [-i <instance>] <command> …        # auto-detects instance from CWD's p
   jobs enable|disable <id>    toggle without editing
   jobs runs <id> [-n N]       run history
   doctor [--fix]              diagnostics per §11; --fix auto-applies safe fixes
-                              (stale pidfiles, orphans, git guard hooks)
+                              (stale pidfiles, orphans, git guard hooks);
+                              orphan sweep also covers reparented browser
+                              processes (headless_shell/chromium with a dead
+                              parent — check-suite leaks), and a registry
+                              without a 'main' instance (a branch CLI's own
+                              registry) only sweeps orphans inside its own
+                              pair roots — another registry's services are
+                              never killed
   guard [install|status]      install/inspect core.hooksPath on both repos
                               (pre-commit: main-branch rule + biome gate;
                               pre-push: typecheck)

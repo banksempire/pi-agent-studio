@@ -333,6 +333,95 @@ async function main() {
             .join(' | ')
             .slice(0, 120),
     );
+
+    const fakeBrowser = spawn('setsid', ['bash', '-c', 'exec -a headless_shell sleep 300'], {
+      stdio: 'ignore',
+      detached: true,
+    });
+    fakeBrowser.unref();
+    await delay(600);
+    const browserPid = (() => {
+      for (const d of fs.readdirSync('/proc')) {
+        if (!/^\d+$/.test(d)) continue;
+        try {
+          const argv = fs.readFileSync(`/proc/${d}/cmdline`, 'utf8').split('\0');
+          if (argv[0] === 'headless_shell' && argv[1] === '300') {
+            const stat = fs.readFileSync(`/proc/${d}/stat`, 'utf8');
+            const parts = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+            if (parts[1] === '1') return Number(d);
+          }
+        } catch {}
+      }
+      return null;
+    })();
+    report('planted an orphaned headless-shell process', browserPid !== null, `pid ${browserPid}`);
+    const docBrowsers = studio(['doctor', '--json'], { label: 'doctor browser orphans' });
+    let browserRows = null;
+    try {
+      browserRows = JSON.parse(docBrowsers.stdout).results.filter(
+        (r) =>
+          r.scope === 'orphans' && r.name === 'browser' && (r.detail ?? '').includes(`pid ${browserPid}`),
+      );
+    } catch {}
+    report(
+      'doctor lists the orphaned browser process',
+      Array.isArray(browserRows) && browserRows.length === 1,
+      docBrowsers.stdout.slice(0, 120),
+    );
+    const docFixBrowsers = studio(['doctor', '--fix'], { label: 'doctor --fix browser orphans' });
+    await delay(400);
+    const procAlive = (pid) => {
+      try {
+        const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+        const state = stat.slice(stat.lastIndexOf(')') + 2).split(' ')[0];
+        return state !== 'Z';
+      } catch {
+        return false;
+      }
+    };
+    const browserGone = browserPid !== null && !procAlive(browserPid);
+    report(
+      'doctor --fix kills the orphaned browser process',
+      docFixBrowsers.status === 0 && browserGone,
+      docFixBrowsers.stderr.slice(0, 120),
+    );
+
+    const foreignPair = path.join(BASE, 'foreign-pair');
+    const foreignSrv = path.join(foreignPair, 'pi-agent-studio', 'src', 'pi-studio', 'server');
+    fs.mkdirSync(foreignSrv, { recursive: true });
+    fs.writeFileSync(path.join(foreignSrv, 'index.mjs'), 'setInterval(() => {}, 60000);\n');
+    const fakeForeign = spawn('node', [path.join(foreignSrv, 'index.mjs')], {
+      cwd: foreignSrv,
+      stdio: 'ignore',
+      detached: true,
+    });
+    fakeForeign.unref();
+    await delay(600);
+    const noRegEnv = {
+      PI_STUDIO_CONFIG_DIR: undefined,
+      PI_STUDIO_STATE_DIR: undefined,
+      PI_STUDIO_WORKTREES: undefined,
+    };
+    const branchDoc = studio(['doctor', '--fix'], {
+      env: noRegEnv,
+      expect: 0,
+      label: 'doctor --fix from branch registry (cwd-resolved)',
+    });
+    await delay(300);
+    let foreignAlive = true;
+    try {
+      process.kill(fakeForeign.pid, 0);
+    } catch {
+      foreignAlive = false;
+    }
+    report(
+      "branch-registry doctor --fix never kills another registry's service",
+      branchDoc.status === 0 && foreignAlive,
+      branchDoc.stderr.slice(0, 120),
+    );
+    try {
+      process.kill(fakeForeign.pid, 9);
+    } catch {}
     try {
       process.kill(fakeOther.pid, 'SIGKILL');
     } catch {}

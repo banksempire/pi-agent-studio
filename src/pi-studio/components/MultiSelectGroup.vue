@@ -67,6 +67,7 @@ function itemClasses(i: number): Record<string, boolean> {
 }
 .je-ms-item {
   position: relative;
+  isolation: isolate;
   padding: 3px 11px;
   border: none;
   border-radius: 8px;

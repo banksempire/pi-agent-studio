@@ -441,21 +441,29 @@ function writeSessionFile(name) {
     const seamless = await page.evaluate(() => {
       const items = [...document.querySelectorAll('.je-ms-item')];
       const pick = (t) => items.find((b) => b.textContent === t);
-      const m = getComputedStyle(pick('Mon'), '::before');
+      const m = getComputedStyle(pick('Mon'));
+      const mb = getComputedStyle(pick('Mon'), '::before');
       const w = getComputedStyle(pick('Wed'), '::before');
       const midJoin = Math.abs(
         pick('Mon').getBoundingClientRect().bottom - pick('Wed').getBoundingClientRect().bottom,
       );
       return {
-        monTop: m.borderTopWidth,
+        monTop: mb.borderTopWidth,
         wedTop: w.borderTopWidth,
         wedExtendsRight: w.right.startsWith('calc') || w.right.includes('-'),
         sameRow: midJoin === 0,
+        underlayBehindItem: mb.zIndex === '-1',
+        itemIsolated: m.isolation === 'isolate',
       };
     });
     report(
       'merged box has a single continuous border with no inner seams',
-      seamless.monTop === '1px' && seamless.wedTop === '1px' && seamless.wedExtendsRight && seamless.sameRow,
+      seamless.monTop === '1px' &&
+        seamless.wedTop === '1px' &&
+        seamless.wedExtendsRight &&
+        seamless.sameRow &&
+        seamless.underlayBehindItem &&
+        seamless.itemIsolated,
       JSON.stringify(seamless),
     );
 

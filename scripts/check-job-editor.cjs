@@ -398,7 +398,12 @@ function writeSessionFile(name) {
           borderLeft: cs.borderLeftColor,
         };
       };
+      const ts = document.querySelector('.je-ms-track')
+        ? getComputedStyle(document.querySelector('.je-ms-track'))
+        : null;
       return {
+        trackBorder: ts?.borderTopWidth ?? '',
+        trackRadius: ts?.borderTopLeftRadius ?? '',
         mon: geo(pick('Mon')),
         wed: geo(pick('Wed')),
         fri: geo(pick('Fri')),
@@ -406,20 +411,22 @@ function writeSessionFile(name) {
       };
     });
     report(
-      'consecutive weekdays merge into one rounded box',
-      runGeometry.mon.on &&
-        runGeometry.mon.left === '999px' &&
+      'consecutive weekdays merge into one rounded box inside the track',
+      runGeometry.trackBorder === '1px' &&
+        runGeometry.trackRadius === '8px' &&
+        runGeometry.mon.on &&
+        runGeometry.mon.left === '8px' &&
         runGeometry.mon.right === '0px' &&
         runGeometry.wed.on &&
         runGeometry.wed.left === '0px' &&
         runGeometry.wed.right === '0px' &&
-        runGeometry.wed.marginLeft === '0px' &&
+        runGeometry.wed.marginLeft === '-6px' &&
         runGeometry.fri.on &&
         runGeometry.fri.left === '0px' &&
-        runGeometry.fri.right === '999px' &&
+        runGeometry.fri.right === '8px' &&
         !runGeometry.sun.on &&
-        runGeometry.sun.left === '999px' &&
-        runGeometry.sun.right === '999px',
+        runGeometry.sun.left === '8px' &&
+        runGeometry.sun.right === '8px',
       JSON.stringify(runGeometry),
     );
 

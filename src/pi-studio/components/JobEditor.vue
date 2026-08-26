@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { checkCron, describeCron, nextCronRuns } from '../cronInfo';
 import type { JobInfo } from '../store/chat';
 import { useChatStore } from '../store/chat';
 
@@ -9,12 +10,21 @@ const store = useChatStore();
 const error = ref('');
 const busy = ref(false);
 const initialized = ref(false);
+const sessionFilter = ref('');
 
 const CRON_PRESETS: Array<{ label: string; expr: string }> = [
-  { label: 'daily 03:00', expr: '0 3 * * *' },
-  { label: 'weekdays 09:00', expr: '0 9 * * mon-fri' },
-  { label: 'sundays 00:00', expr: '0 0 * * 0' },
+  { label: 'hourly', expr: '0 * * * *' },
   { label: 'every 30 min', expr: '*/30 * * * *' },
+  { label: 'daily 09:00', expr: '0 9 * * *' },
+  { label: 'weekdays 09:00', expr: '0 9 * * mon-fri' },
+  { label: 'sundays 03:00', expr: '0 3 * * sun' },
+  { label: 'monthly 1st 00:00', expr: '0 0 1 * *' },
+];
+
+const TARGET_OPTIONS: Array<{ mode: 'file' | 'new' | 'reuse'; title: string; desc: string }> = [
+  { mode: 'file', title: 'Existing session', desc: 'Deliver into a session you pick' },
+  { mode: 'new', title: 'Fresh per run', desc: 'A brand-new session for every run' },
+  { mode: 'reuse', title: 'One per cwd', desc: 'One persistent session per working directory' },
 ];
 
 const form = reactive({
@@ -41,6 +51,17 @@ const sessionOptions = computed(() =>
     .slice(0, 100)
     .map((s) => ({ file: s.file, label: s.title || s.file.split('/').pop() || s.file })),
 );
+
+const filteredSessions = computed(() => {
+  const current = form.sessionFile;
+  const base =
+    current && !sessionOptions.value.some((o) => o.file === current)
+      ? [{ file: current, label: `${current.split('/').pop()} (current value)` }, ...sessionOptions.value]
+      : sessionOptions.value;
+  const q = sessionFilter.value.trim().toLowerCase();
+  if (!q) return base;
+  return base.filter((o) => o.label.toLowerCase().includes(q) || o.file.toLowerCase().includes(q));
+});
 
 function toLocalInput(ms: number): string {
   const d = new Date(ms);
@@ -90,6 +111,46 @@ onMounted(() => {
   if (!initialized.value) initForm(job.value);
 });
 
+watch(sessionOptions, (opts) => {
+  if (form.targetMode === 'file' && !form.sessionFile && opts.length > 0) form.sessionFile = opts[0].file;
+});
+
+function setTarget(mode: 'file' | 'new' | 'reuse') {
+  form.targetMode = mode;
+  if (mode === 'file' && !form.sessionFile && sessionOptions.value.length > 0) {
+    form.sessionFile = sessionOptions.value[0].file;
+  }
+}
+
+const cronExpr = computed(() => form.cron.trim());
+const cronOk = computed(() => checkCron(cronExpr.value).ok);
+const cronErrorText = computed(() => {
+  const r = checkCron(cronExpr.value);
+  return r.ok ? '' : r.error;
+});
+const cronDescribe = computed(() => (cronOk.value ? describeCron(cronExpr.value) : ''));
+const cronNext = computed(() => (cronOk.value ? nextCronRuns(cronExpr.value, 3) : []));
+
+const runAtTs = computed(() => (form.runAtLocal === '' ? null : new Date(form.runAtLocal).getTime()));
+const runAtValid = computed(() => runAtTs.value !== null && Number.isFinite(runAtTs.value));
+const runAtPast = computed(() => {
+  const t = runAtTs.value;
+  return t !== null && Number.isFinite(t) && t < Date.now();
+});
+
+const problems = computed<string[]>(() => {
+  const list: string[] = [];
+  if (!form.name.trim()) list.push('name');
+  if (form.scheduleType === 'once' && !runAtValid.value) list.push('run-at time');
+  if (form.scheduleType === 'cron' && !cronOk.value) list.push('cron expression');
+  if (form.targetMode === 'file' && !form.sessionFile) list.push('target session');
+  if (form.targetMode !== 'file' && !form.cwd.trim()) list.push('working directory');
+  if (!form.message.trim()) list.push('message');
+  return list;
+});
+const canSave = computed(() => problems.value.length === 0 && !busy.value);
+const saveHint = computed(() => (problems.value.length === 0 ? '' : `missing: ${problems.value.join(', ')}`));
+
 function buildInput() {
   const input: Record<string, unknown> = {
     name: form.name,
@@ -102,11 +163,10 @@ function buildInput() {
     createdBy: 'web',
   };
   if (form.scheduleType === 'once') {
-    const t = new Date(form.runAtLocal).getTime();
-    if (!Number.isFinite(t) || form.runAtLocal === '') throw new Error('pick a valid run-at time');
-    input.runAt = t;
+    if (!runAtValid.value) throw new Error('pick a valid run-at time');
+    input.runAt = runAtTs.value;
   } else {
-    input.cron = form.cron;
+    input.cron = cronExpr.value;
   }
   if (form.targetMode === 'file') {
     if (!form.sessionFile) throw new Error('pick a target session');
@@ -119,6 +179,7 @@ function buildInput() {
 }
 
 async function save() {
+  if (!canSave.value) return;
   error.value = '';
   busy.value = true;
   try {
@@ -149,162 +210,257 @@ async function remove() {
   }
 }
 
-function fmtTime(ms: number | null): string {
+async function toggleEnabled() {
+  const j = job.value;
+  if (!j) return;
+  error.value = '';
+  try {
+    await store.updateJob(j.id, { enabled: !j.enabled });
+  } catch (e) {
+    error.value = String((e as Error).message ?? e);
+  }
+}
+
+function cancel() {
+  store.closeJobEditor(props.jobId ?? null);
+}
+
+function fmtAbs(ms: number | null): string {
   if (!ms) return '—';
-  return new Date(ms).toLocaleString();
+  return new Date(ms).toLocaleString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function fmtRel(ms: number | null): string {
+  if (!ms) return '';
+  const diff = ms - Date.now();
+  const abs = Math.abs(diff);
+  const mins = Math.round(abs / 60000);
+  const human =
+    mins < 1
+      ? 'now'
+      : mins < 60
+        ? `${mins}m`
+        : mins < 1440
+          ? `${Math.round(mins / 60)}h`
+          : `${Math.round(mins / 1440)}d`;
+  return diff >= 0 ? `in ${human}` : `${human} ago`;
 }
 </script>
 
 <template>
   <div class="job-editor">
-    <div v-if="props.jobId && !job && store.jobsLoaded" class="job-editor-missing">
+    <div v-if="props.jobId && !job && store.jobsLoaded" class="je-missing">
       Job {{ props.jobId }} not found — it may have been deleted.
     </div>
     <template v-else>
-      <div class="job-editor-head">
-        <div class="job-editor-title">
+      <header class="je-head">
+        <div class="je-head-text">
           <span class="job-editor-title-main">{{ props.jobId ? (job?.name ?? 'Job') : 'New Job' }}</span>
-          <span v-if="job" class="job-editor-title-meta">
-            {{ job.enabled ? 'enabled' : 'disabled' }} · created by {{ job.createdBy || '—' }} ·
-            {{ fmtTime(job.createdAt) }}
-          </span>
+          <div v-if="job" class="je-head-meta">
+            <span class="je-mono je-head-id" :title="job.id">{{ job.id }}</span>
+            <span>created {{ fmtAbs(job.createdAt) }}</span>
+            <span>by {{ job.createdBy || '—' }}</span>
+            <span v-if="job.enabled">next run {{ fmtRel(job.nextDue) }}</span>
+            <span v-else class="je-paused">paused</span>
+            <span v-if="job.lastRun">
+              last {{ job.lastRun.status }} {{ fmtRel(job.lastRun.finishedAt ?? job.lastRun.queuedAt) }}
+            </span>
+          </div>
         </div>
-        <div class="job-editor-head-actions">
+        <div v-if="job" class="je-enabled">
           <button
-            class="chat-send-btn job-editor-save"
-            :disabled="busy"
-            @click="save"
-          >{{ props.jobId ? 'Save' : busy ? 'Creating…' : 'Create Job' }}</button>
-          <button
-            v-if="job"
-            class="sf-panel-btn job-editor-danger"
-            title="Delete job and its run history"
-            @click="remove"
-          >Delete</button>
+            class="md-switch sf-panel-btn je-switch"
+            :class="{ 'md-switch--on': job.enabled }"
+            role="switch"
+            :aria-checked="job.enabled"
+            :title="job.enabled ? 'Disable job' : 'Enable job'"
+            @click="toggleEnabled"
+          ><span class="md-switch-knob" /></button>
+          <span>{{ job.enabled ? 'enabled' : 'paused' }}</span>
+        </div>
+      </header>
+
+      <div class="je-scroll">
+        <div class="job-editor-body">
+          <section class="je-section je-section--flush">
+            <div class="job-editor-field">
+              <label>Job name</label>
+              <input v-model="form.name" class="job-editor-input" placeholder="nightly maintenance" />
+            </div>
+          </section>
+
+          <section class="je-section">
+            <h3 class="je-section-title">Schedule</h3>
+            <div class="job-editor-field">
+              <div class="job-editor-seg je-seg">
+                <button
+                  :class="{ 'job-editor-seg-btn': true, 'job-editor-seg-btn--on': form.scheduleType === 'once' }"
+                  @click="form.scheduleType = 'once'"
+                >One-time</button>
+                <button
+                  :class="{ 'job-editor-seg-btn': true, 'job-editor-seg-btn--on': form.scheduleType === 'cron' }"
+                  @click="form.scheduleType = 'cron'"
+                >Periodic (cron)</button>
+              </div>
+            </div>
+
+            <div v-if="form.scheduleType === 'once'" class="job-editor-field">
+              <label>Run at</label>
+              <input
+                v-model="form.runAtLocal"
+                type="datetime-local"
+                class="job-editor-input job-editor-input--narrow"
+              />
+              <span v-if="runAtValid" class="je-hint">{{ fmtAbs(runAtTs) }} · {{ fmtRel(runAtTs) }}</span>
+              <span v-if="runAtPast" class="je-hint je-hint--warn">this time is in the past</span>
+            </div>
+
+            <template v-else>
+              <div class="job-editor-field">
+                <label>Cron expression <span class="je-label-note">server-local time · min hour dom month dow</span></label>
+                <input
+                  v-model="form.cron"
+                  class="job-editor-input job-editor-input--mono job-editor-input--narrow"
+                  placeholder="0 3 * * *"
+                  spellcheck="false"
+                />
+                <div class="je-presets">
+                  <button
+                    v-for="p in CRON_PRESETS"
+                    :key="p.expr"
+                    class="job-editor-preset"
+                    :class="{ 'job-editor-preset--on': form.cron === p.expr }"
+                    @click="form.cron = p.expr"
+                  >{{ p.label }}</button>
+                </div>
+              </div>
+
+              <div
+                v-if="form.cron.trim() !== ''"
+                class="je-cron-preview"
+                :class="{ 'je-cron-preview--bad': !cronOk }"
+              >
+                <template v-if="cronOk">
+                  <div class="je-cron-desc">{{ cronDescribe }}</div>
+                  <div class="je-cron-next">
+                    <span class="je-cron-next-label">next</span>
+                    <template v-if="cronNext.length">
+                      <span v-for="t in cronNext" :key="t" class="je-cron-next-item">
+                        <span class="je-mono">{{ fmtAbs(t) }}</span>
+                        <em>{{ fmtRel(t) }}</em>
+                      </span>
+                    </template>
+                    <span v-else>no occurrence within a year</span>
+                  </div>
+                </template>
+                <span v-else class="je-cron-error">{{ cronErrorText }}</span>
+              </div>
+
+              <div class="job-editor-field">
+                <label>If a run was missed while the backend was down</label>
+                <div class="job-editor-seg je-seg je-seg--small">
+                  <button
+                    :class="{ 'job-editor-seg-btn': true, 'job-editor-seg-btn--on': form.missedPolicy === 'coalesce' }"
+                    title="Run once on catch-up"
+                    @click="form.missedPolicy = 'coalesce'"
+                  >run once</button>
+                  <button
+                    :class="{ 'job-editor-seg-btn': true, 'job-editor-seg-btn--on': form.missedPolicy === 'skip' }"
+                    title="Skip missed occurrences, wait for the next"
+                    @click="form.missedPolicy = 'skip'"
+                  >skip</button>
+                </div>
+              </div>
+            </template>
+          </section>
+
+          <section class="je-section">
+            <h3 class="je-section-title">Target</h3>
+            <div class="je-cards">
+              <button
+                v-for="opt in TARGET_OPTIONS"
+                :key="opt.mode"
+                type="button"
+                class="je-card"
+                :class="{ 'je-card--on': form.targetMode === opt.mode }"
+                @click="setTarget(opt.mode)"
+              >
+                <span class="je-card-title">{{ opt.title }}</span>
+                <span class="je-card-desc">{{ opt.desc }}</span>
+              </button>
+            </div>
+            <div v-if="form.targetMode === 'file'" class="job-editor-field">
+              <label>Session</label>
+              <input
+                v-if="store.sessions.length > 8"
+                v-model="sessionFilter"
+                class="job-editor-input je-session-filter"
+                placeholder="filter sessions…"
+              />
+              <select v-model="form.sessionFile" class="job-editor-input">
+                <option v-if="filteredSessions.length === 0" :value="form.sessionFile">no match for “{{ sessionFilter }}”</option>
+                <option v-for="s in filteredSessions" :key="s.file" :value="s.file">{{ s.label }}</option>
+              </select>
+            </div>
+            <div v-else class="job-editor-field">
+              <label>Working directory</label>
+              <input v-model="form.cwd" class="job-editor-input job-editor-input--mono" placeholder="/workspace/sf" />
+            </div>
+          </section>
+
+          <section class="je-section">
+            <h3 class="je-section-title">Message</h3>
+            <div class="job-editor-field">
+              <textarea
+                v-model="form.message"
+                class="job-editor-input job-editor-textarea"
+                rows="6"
+                placeholder="What the agent should do each time this job fires — e.g. “run the full check suite and summarize failures.”"
+              />
+            </div>
+          </section>
+
+          <section class="je-section">
+            <h3 class="je-section-title">Agent <span class="je-section-note">applies to newly created sessions</span></h3>
+            <div class="je-row">
+              <div class="job-editor-field je-grow">
+                <label>Model override</label>
+                <input v-model="form.model" class="job-editor-input" placeholder="session default" />
+              </div>
+              <div class="job-editor-field">
+                <label>Thinking</label>
+                <select v-model="form.thinkLevel" class="job-editor-input">
+                  <option value="">default</option>
+                  <option value="off">off</option>
+                  <option value="low">low</option>
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                </select>
+              </div>
+            </div>
+          </section>
         </div>
       </div>
 
-      <div v-if="error" class="job-editor-error">{{ error }}</div>
-
-      <div class="job-editor-body">
-        <div class="job-editor-field">
-          <label>Name</label>
-          <input v-model="form.name" class="job-editor-input" placeholder="nightly maintenance" />
+      <footer class="je-footer">
+        <div class="je-footer-msg">
+          <span v-if="error" class="je-error">{{ error }}</span>
+          <span v-else-if="saveHint" class="je-footer-hint">{{ saveHint }}</span>
         </div>
-
-        <div class="job-editor-field">
-          <label>Schedule</label>
-          <div class="job-editor-seg">
-            <button
-              :class="{ 'job-editor-seg-btn': true, 'job-editor-seg-btn--on': form.scheduleType === 'once' }"
-              @click="form.scheduleType = 'once'"
-            >One-time</button>
-            <button
-              :class="{ 'job-editor-seg-btn': true, 'job-editor-seg-btn--on': form.scheduleType === 'cron' }"
-              @click="form.scheduleType = 'cron'"
-            >Periodic (cron)</button>
-          </div>
+        <div class="je-footer-actions">
+          <button v-if="job" class="sf-panel-btn job-editor-danger" title="Delete job and its run history" @click="remove">Delete</button>
+          <button class="sf-panel-btn" @click="cancel">Cancel</button>
+          <button class="chat-send-btn job-editor-save" :disabled="!canSave" :title="saveHint" @click="save">
+            {{ busy ? 'Saving…' : props.jobId ? 'Save changes' : 'Create job' }}
+          </button>
         </div>
-
-        <div v-if="form.scheduleType === 'once'" class="job-editor-field">
-          <label>Run at (local time)</label>
-          <input v-model="form.runAtLocal" type="datetime-local" class="job-editor-input job-editor-input--narrow" />
-        </div>
-
-        <template v-else>
-          <div class="job-editor-field">
-            <label>Cron (server-local time)</label>
-            <input v-model="form.cron" class="job-editor-input job-editor-input--mono job-editor-input--narrow" placeholder="0 3 * * *" />
-            <div class="job-editor-presets">
-              <button
-                v-for="p in CRON_PRESETS"
-                :key="p.expr"
-                class="job-editor-preset"
-                :class="{ 'job-editor-preset--on': form.cron === p.expr }"
-                @click="form.cron = p.expr"
-              >{{ p.label }}</button>
-            </div>
-          </div>
-          <div class="job-editor-field">
-            <label>Missed while backend down</label>
-            <div class="job-editor-seg">
-              <button
-                :class="{ 'job-editor-seg-btn': true, 'job-editor-seg-btn--on': form.missedPolicy === 'coalesce' }"
-                title="Run once on catch-up"
-                @click="form.missedPolicy = 'coalesce'"
-              >run once</button>
-              <button
-                :class="{ 'job-editor-seg-btn': true, 'job-editor-seg-btn--on': form.missedPolicy === 'skip' }"
-                title="Skip missed occurrences, wait for the next"
-                @click="form.missedPolicy = 'skip'"
-              >skip</button>
-            </div>
-          </div>
-        </template>
-
-        <div class="job-editor-field">
-          <label>Target</label>
-          <div class="job-editor-seg">
-            <button
-              :class="{ 'job-editor-seg-btn': true, 'job-editor-seg-btn--on': form.targetMode === 'file' }"
-              @click="form.targetMode = 'file'"
-            >Existing session</button>
-            <button
-              :class="{ 'job-editor-seg-btn': true, 'job-editor-seg-btn--on': form.targetMode === 'new' }"
-              @click="form.targetMode = 'new'"
-            >New session each run</button>
-            <button
-              :class="{ 'job-editor-seg-btn': true, 'job-editor-seg-btn--on': form.targetMode === 'reuse' }"
-              @click="form.targetMode = 'reuse'"
-            >One session per cwd</button>
-          </div>
-        </div>
-
-        <div v-if="form.targetMode === 'file'" class="job-editor-field">
-          <label>Session</label>
-          <select v-model="form.sessionFile" class="job-editor-input">
-            <option v-for="s in sessionOptions" :key="s.file" :value="s.file">{{ s.label }}</option>
-          </select>
-        </div>
-        <div v-else class="job-editor-field">
-          <label>Working directory</label>
-          <input v-model="form.cwd" class="job-editor-input job-editor-input--mono" placeholder="/workspace/sf" />
-        </div>
-
-        <div class="job-editor-field">
-          <label>Message</label>
-          <textarea
-            v-model="form.message"
-            class="job-editor-input job-editor-textarea"
-            rows="5"
-            placeholder="Run the full check suite and summarize failures."
-          />
-        </div>
-
-        <div class="job-editor-field-row">
-          <div class="job-editor-field job-editor-field--grow">
-            <label>Model (optional, new sessions)</label>
-            <input v-model="form.model" class="job-editor-input" placeholder="session default" />
-          </div>
-          <div class="job-editor-field">
-            <label>Thinking</label>
-            <select v-model="form.thinkLevel" class="job-editor-input">
-              <option value="">default</option>
-              <option value="off">off</option>
-              <option value="low">low</option>
-              <option value="medium">medium</option>
-              <option value="high">high</option>
-            </select>
-          </div>
-        </div>
-
-        <div v-if="job" class="job-editor-meta">
-          <span>next run {{ job.enabled ? fmtTime(job.nextDue) : '— (disabled)' }}</span>
-          <span v-if="job.lastRun">
-            last run {{ job.lastRun.status }} {{ fmtTime(job.lastRun.finishedAt ?? job.lastRun.queuedAt) }}
-          </span>
-        </div>
-      </div>
+      </footer>
     </template>
   </div>
 </template>
@@ -318,16 +474,23 @@ function fmtTime(ms: number | null): string {
   display: flex;
   flex-direction: column;
 }
-.job-editor-head {
+.je-missing {
+  padding: 24px;
+  font-size: 16px;
+  opacity: 0.7;
+}
+
+.je-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   padding: 10px 16px;
-  border-bottom: 1px solid rgba(128, 128, 128, 0.2);
+  border-bottom: 1px solid var(--sf-border);
   flex-wrap: wrap;
+  flex-shrink: 0;
 }
-.job-editor-title {
+.je-head-text {
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -340,102 +503,166 @@ function fmtTime(ms: number | null): string {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.job-editor-title-meta {
-  font-size: 16px;
-  opacity: 0.6;
-}
-.job-editor-head-actions {
+.je-head-meta {
   display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  opacity: 0.65;
+}
+.je-head-id {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.je-paused {
+  color: var(--sf-status-warn);
+  opacity: 1;
+}
+.je-enabled {
+  display: flex;
+  align-items: center;
   gap: 8px;
+  font-size: 13px;
+  opacity: 0.85;
   flex-shrink: 0;
 }
-.job-editor-save {
-  min-width: calc(2.5em + 24px);
-  padding: 5px 14px;
-  border-radius: 6px;
-}
-.job-editor-danger:hover {
-  color: #ff6d6d;
-}
-.job-editor-error {
-  margin: 10px 16px 0;
-  padding: 6px 10px;
-  border-radius: 6px;
-  font-size: 16px;
-  background: rgba(255, 82, 82, 0.12);
-  color: #ff6d6d;
-  word-break: break-word;
-}
-.job-editor-missing {
-  padding: 24px;
-  font-size: 16px;
-  opacity: 0.7;
+
+.je-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: clip;
 }
 .job-editor-body {
-  max-width: 760px;
+  max-width: 720px;
   width: 100%;
-  padding: 16px;
+  margin: 0 auto;
+  padding: 18px 20px 28px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
   box-sizing: border-box;
 }
+.je-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 0 18px;
+}
+.je-section--flush {
+  padding-top: 4px;
+}
+.je-section + .je-section {
+  border-top: 1px solid var(--sf-border);
+}
+.je-section-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--sf-text-muted);
+}
+.je-section-note {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  opacity: 0.8;
+}
+
 .job-editor-field {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
 }
 .job-editor-field label {
   font-size: 16px;
+  opacity: 0.75;
+}
+.je-label-note {
+  font-size: 13px;
   opacity: 0.65;
 }
-.job-editor-field-row {
+.je-row {
   display: flex;
-  gap: 10px;
+  gap: 12px;
+  align-items: flex-start;
 }
-.job-editor-field--grow {
+.je-grow {
   flex: 1;
 }
+
 .job-editor-input {
   width: 100%;
   box-sizing: border-box;
-  padding: 6px 10px;
-  border-radius: 6px;
-  border: 1px solid rgba(128, 128, 128, 0.35);
+  padding: 7px 10px;
+  border-radius: var(--sf-radius-inner);
+  border: 1px solid var(--sf-border);
   background: rgba(0, 0, 0, 0.15);
   color: inherit;
   font-size: 16px;
+  font-family: var(--sf-font);
+}
+.job-editor-input:focus-visible {
+  outline: none;
+  border-color: var(--sf-accent-dim);
 }
 .job-editor-input--narrow {
-  max-width: 280px;
+  max-width: 300px;
 }
 .job-editor-input--mono {
   font-family: var(--sf-mono, monospace);
 }
 .job-editor-textarea {
   resize: vertical;
-  min-height: 90px;
+  min-height: 110px;
+  line-height: 1.45;
 }
-.job-editor-seg {
-  display: flex;
-  gap: 6px;
+.je-hint {
+  font-size: 13px;
+  opacity: 0.65;
+}
+.je-hint--warn {
+  color: var(--sf-status-warn);
+  opacity: 1;
+}
+
+.je-seg {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 999px;
+  border: 1px solid var(--sf-border);
+  background: rgba(0, 0, 0, 0.15);
+  width: fit-content;
   flex-wrap: wrap;
 }
 .job-editor-seg-btn {
-  padding: 5px 12px;
+  padding: 4px 14px;
   border-radius: 999px;
-  border: 1px solid rgba(128, 128, 128, 0.35);
+  border: none;
   background: transparent;
   color: inherit;
   font-size: 16px;
   cursor: pointer;
+  opacity: 0.75;
+}
+.job-editor-seg-btn:hover {
+  opacity: 1;
 }
 .job-editor-seg-btn--on {
-  background: rgba(96, 165, 250, 0.22);
-  border-color: rgba(96, 165, 250, 0.6);
+  background: var(--sf-accent-soft);
+  color: var(--sf-text-bright);
+  opacity: 1;
 }
-.job-editor-presets {
+.je-seg--small .job-editor-seg-btn {
+  padding: 2px 12px;
+}
+
+.je-presets {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
@@ -444,23 +671,138 @@ function fmtTime(ms: number | null): string {
 .job-editor-preset {
   padding: 3px 10px;
   border-radius: 6px;
-  border: 1px solid rgba(128, 128, 128, 0.3);
+  border: 1px solid var(--sf-border);
   background: transparent;
   color: inherit;
   font-size: 16px;
   cursor: pointer;
-  opacity: 0.75;
+  opacity: 0.7;
+}
+.job-editor-preset:hover {
+  opacity: 1;
 }
 .job-editor-preset--on {
   opacity: 1;
-  border-color: rgba(96, 165, 250, 0.6);
+  background: var(--sf-accent-soft);
+  border-color: var(--sf-accent-dim);
 }
-.job-editor-meta {
+
+.je-cron-preview {
   display: flex;
-  gap: 16px;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 12px;
+  border-radius: var(--sf-radius-inner);
+  border: 1px solid var(--sf-border);
+  background: rgba(127, 127, 127, 0.07);
+  overflow-wrap: anywhere;
+}
+.je-cron-preview--bad {
+  border-color: var(--sf-danger);
+}
+.je-cron-desc {
   font-size: 16px;
+  color: var(--sf-text-bright);
+}
+.je-cron-next {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  opacity: 0.85;
+}
+.je-cron-next-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
   opacity: 0.6;
-  padding-top: 4px;
-  border-top: 1px dashed rgba(128, 128, 128, 0.25);
+}
+.je-cron-next-item em {
+  font-style: normal;
+  opacity: 0.6;
+  margin-left: 5px;
+}
+.je-cron-error {
+  font-size: 16px;
+  color: var(--sf-danger);
+}
+
+.je-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+.je-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 10px 12px;
+  border-radius: var(--sf-radius);
+  border: 1px solid var(--sf-border);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.je-card:hover {
+  background: var(--sf-hover-overlay);
+}
+.je-card--on {
+  background: var(--sf-accent-soft);
+  border-color: var(--sf-accent-dim);
+}
+.je-card-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--sf-text-bright);
+}
+.je-card-desc {
+  font-size: 13px;
+  opacity: 0.65;
+}
+.je-session-filter {
+  max-width: 320px;
+}
+
+.je-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--sf-border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.je-footer-msg {
+  min-width: 0;
+  flex: 1;
+  font-size: 13px;
+}
+.je-error {
+  color: var(--sf-danger);
+  word-break: break-word;
+}
+.je-footer-hint {
+  opacity: 0.55;
+}
+.je-footer-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+.job-editor-save {
+  min-width: calc(2.5em + 24px);
+  padding: 5px 14px;
+  border-radius: 6px;
+}
+.job-editor-danger:hover {
+  color: var(--sf-danger);
+}
+.je-mono {
+  font-family: var(--sf-mono, monospace);
 }
 </style>

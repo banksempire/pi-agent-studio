@@ -236,6 +236,75 @@ function writeSessionFile(name) {
       );
     }
 
+    await page.setViewportSize({ width: 1200, height: 900 });
+    const previewOk = await page.evaluate(() => {
+      const el = document.querySelector('.je-cron-preview');
+      if (!el) return null;
+      return {
+        bad: el.classList.contains('je-cron-preview--bad'),
+        desc: el.querySelector('.je-cron-desc')?.textContent ?? '',
+        nextCount: el.querySelectorAll('.je-cron-next-item').length,
+      };
+    });
+    report(
+      'cron preview describes the expression and lists upcoming runs',
+      !!previewOk &&
+        previewOk.bad === false &&
+        previewOk.desc.includes('At 03:00') &&
+        previewOk.nextCount >= 1,
+      JSON.stringify(previewOk),
+    );
+
+    await page.locator('.job-editor-input--mono').first().fill('99 * * * *');
+    await delay(150);
+    const previewBad = await page.evaluate(() => {
+      const el = document.querySelector('.je-cron-preview');
+      if (!el) return null;
+      return {
+        bad: el.classList.contains('je-cron-preview--bad'),
+        err: el.querySelector('.je-cron-error')?.textContent ?? '',
+      };
+    });
+    report(
+      'invalid cron surfaces an inline error instead of a silent preview',
+      !!previewBad && previewBad.bad && /not a valid/.test(previewBad.err),
+      JSON.stringify(previewBad),
+    );
+
+    await page.locator('.job-editor-preset', { hasText: 'weekdays 09:00' }).click();
+    const wdDesc = await page.locator('.je-cron-desc').textContent();
+    report(
+      'preset chip updates the human-readable description',
+      !!wdDesc && wdDesc.includes('09:00') && wdDesc.includes('Mon–Fri'),
+      String(wdDesc),
+    );
+
+    const cardCount = await page.locator('.je-card').count();
+    await page.locator('.je-card').first().click();
+    await delay(150);
+    const targetState = {
+      cards: cardCount,
+      selected: await page.locator('.je-card--on').count(),
+      sessionSelectVisible: await page.locator('select.job-editor-input').first().isVisible(),
+    };
+    report(
+      'target cards switch modes and reveal the session picker',
+      targetState.cards === 3 && targetState.selected === 1 && targetState.sessionSelectVisible,
+      JSON.stringify(targetState),
+    );
+
+    const saveBtn = page.locator('.job-editor-save');
+    const disabledAtStart = await saveBtn.isDisabled();
+    await page.locator('.job-editor-body input[placeholder="nightly maintenance"]').fill('check-suite job');
+    const disabledAfterName = await saveBtn.isDisabled();
+    await page.locator('.job-editor-textarea').fill('run checks');
+    const enabledAfterAll = await saveBtn.isEnabled();
+    report(
+      'save stays disabled until required fields are filled',
+      disabledAtStart && disabledAfterName && enabledAfterAll,
+      `empty=${disabledAtStart} nameOnly=${disabledAfterName} allFilled=${enabledAfterAll}`,
+    );
+
     const injectWide = () =>
       page.evaluate(() => {
         const body = document.querySelector('.job-editor-body');

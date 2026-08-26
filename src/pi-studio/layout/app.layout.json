@@ -79,6 +79,7 @@
                   {
                     "id": "new-chat",
                     "icon": "➕",
+                    "label": "New Chat",
                     "tooltip": "New Chat (Ctrl+N)",
                     "closeMobilePanel": true
                   }
@@ -191,6 +192,7 @@
                   {
                     "id": "new-job",
                     "icon": "➕",
+                    "label": "New Job",
                     "tooltip": "New Job",
                     "closeMobilePanel": true
                   }

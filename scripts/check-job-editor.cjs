@@ -204,8 +204,62 @@ function writeSessionFile(name) {
     await page.waitForSelector('.job-editor', { timeout: 20000 });
     report('job editor opens in a workspace window', true);
 
-    await page.locator('.job-editor-seg-btn', { hasText: 'Periodic (cron)' }).click();
-    await page.waitForSelector('.job-editor-preset', { timeout: 5000 });
+    await page.locator('.job-editor-seg-btn', { hasText: 'Periodic' }).click();
+    await page.waitForSelector('.je-pattern-btn', { timeout: 5000 });
+
+    const builderDefaults = await page.evaluate(() => {
+      const on = document.querySelector('.je-pattern-btn--on');
+      const ref = document.querySelector('.je-cron-ref code');
+      const desc = document.querySelector('.je-cron-desc');
+      return {
+        patterns: document.querySelectorAll('.je-pattern-btn').length,
+        selected: on?.textContent ?? '',
+        ref: ref?.textContent ?? '',
+        desc: desc?.textContent ?? '',
+        rawInputVisible: !!document.querySelector('input[placeholder="0 3 * * *"]'),
+      };
+    });
+    report(
+      'periodic builder opens with Daily selected and a synced cron reference',
+      builderDefaults.patterns === 5 &&
+        builderDefaults.selected === 'Daily' &&
+        builderDefaults.ref === '0 9 * * *' &&
+        builderDefaults.desc.includes('At 09:00') &&
+        !builderDefaults.rawInputVisible,
+      JSON.stringify(builderDefaults),
+    );
+
+    await page.locator('.je-pattern-btn', { hasText: 'Weekly' }).click();
+    await delay(150);
+    let cronRef = await page.locator('.je-cron-ref code').textContent();
+    let wdDesc = await page.locator('.je-cron-desc').textContent();
+    report(
+      'weekly pattern starts on weekdays',
+      cronRef === '0 9 * * mon-fri' && !!wdDesc && wdDesc.includes('Mon–Fri'),
+      `${cronRef} | ${wdDesc}`,
+    );
+
+    await page.locator('.je-chip', { hasText: 'Sat' }).click();
+    await delay(150);
+    cronRef = await page.locator('.je-cron-ref code').textContent();
+    report('day chips extend the expression', cronRef === '0 9 * * mon-sat', String(cronRef));
+
+    await page.locator('.je-chip', { hasText: 'Sun' }).click();
+    await page.locator('select.je-time[title="Hour"]').selectOption('3');
+    await delay(150);
+    cronRef = await page.locator('.je-cron-ref code').textContent();
+    report('time selectors rewrite the expression', cronRef === '0 3 * * sun-sat', String(cronRef));
+
+    await page.locator('.je-pattern-btn', { hasText: 'Minutes' }).click();
+    await page.locator('.je-chip', { hasText: '30 min' }).click();
+    await delay(150);
+    cronRef = await page.locator('.je-cron-ref code').textContent();
+    wdDesc = await page.locator('.je-cron-desc').textContent();
+    report(
+      'minutes pattern builds a step expression',
+      cronRef === '*/30 * * * *' && !!wdDesc && wdDesc.includes('Every 30 min'),
+      `${cronRef} | ${wdDesc}`,
+    );
 
     const sizes = await page.evaluate(() => {
       const px = (sel) => {
@@ -217,7 +271,8 @@ function writeSessionFile(name) {
         label: px('.job-editor-field label'),
         input: px('.job-editor-input'),
         segBtn: px('.job-editor-seg-btn'),
-        preset: px('.job-editor-preset'),
+        patternBtn: px('.je-pattern-btn'),
+        chip: px('.je-chip'),
         save: px('.job-editor-save'),
       };
     });
@@ -236,26 +291,9 @@ function writeSessionFile(name) {
       );
     }
 
-    await page.setViewportSize({ width: 1200, height: 900 });
-    const previewOk = await page.evaluate(() => {
-      const el = document.querySelector('.je-cron-preview');
-      if (!el) return null;
-      return {
-        bad: el.classList.contains('je-cron-preview--bad'),
-        desc: el.querySelector('.je-cron-desc')?.textContent ?? '',
-        nextCount: el.querySelectorAll('.je-cron-next-item').length,
-      };
-    });
-    report(
-      'cron preview describes the expression and lists upcoming runs',
-      !!previewOk &&
-        previewOk.bad === false &&
-        previewOk.desc.includes('At 03:00') &&
-        previewOk.nextCount >= 1,
-      JSON.stringify(previewOk),
-    );
-
-    await page.locator('.job-editor-input--mono').first().fill('99 * * * *');
+    await page.locator('.je-mode-btn', { hasText: 'raw expression' }).click();
+    await page.waitForSelector('input[placeholder="0 3 * * *"]', { timeout: 5000 });
+    await page.locator('input[placeholder="0 3 * * *"]').fill('99 * * * *');
     await delay(150);
     const previewBad = await page.evaluate(() => {
       const el = document.querySelector('.je-cron-preview');
@@ -266,17 +304,21 @@ function writeSessionFile(name) {
       };
     });
     report(
-      'invalid cron surfaces an inline error instead of a silent preview',
+      'invalid raw cron surfaces an inline error instead of a silent preview',
       !!previewBad && previewBad.bad && /not a valid/.test(previewBad.err),
       JSON.stringify(previewBad),
     );
 
-    await page.locator('.job-editor-preset', { hasText: 'weekdays 09:00' }).click();
-    const wdDesc = await page.locator('.je-cron-desc').textContent();
+    await page.locator('.je-mode-btn', { hasText: 'use builder' }).click();
+    await delay(150);
+    const backToBuilder = await page.evaluate(() => ({
+      ref: document.querySelector('.je-cron-ref code')?.textContent ?? '',
+      desc: document.querySelector('.je-cron-desc')?.textContent ?? '',
+    }));
     report(
-      'preset chip updates the human-readable description',
-      !!wdDesc && wdDesc.includes('09:00') && wdDesc.includes('Mon–Fri'),
-      String(wdDesc),
+      'returning to the builder restores its expression',
+      backToBuilder.ref === '*/30 * * * *' && backToBuilder.desc.includes('Every 30 min'),
+      JSON.stringify(backToBuilder),
     );
 
     const cardCount = await page.locator('.je-card').count();

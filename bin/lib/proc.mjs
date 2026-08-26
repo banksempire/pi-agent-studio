@@ -285,6 +285,54 @@ export function newestMtime(dir) {
   return newest;
 }
 
+const BROWSER_ORPHAN_NAMES = new Set([
+  'headless_shell',
+  'headless_shell_old',
+  'chromium',
+  'chrome',
+  'chrome_crashpad_handler',
+]);
+
+export function listOrphanBrowserProcesses() {
+  const out = [];
+  let pids;
+  try {
+    pids = fs.readdirSync('/proc').filter((d) => /^\d+$/.test(d));
+  } catch {
+    return out;
+  }
+  for (const pidDir of pids) {
+    const pid = Number(pidDir);
+    if (pid === process.pid) continue;
+    let stat;
+    try {
+      stat = fs.readFileSync(`/proc/${pidDir}/stat`, 'utf8');
+    } catch {
+      continue;
+    }
+    const close = stat.lastIndexOf(')');
+    if (close < 0) continue;
+    const parts = stat.slice(close + 2).split(' ');
+    const state = parts[0];
+    const ppid = Number(parts[1]);
+    if (state === 'Z' || ppid !== 1) continue;
+    let name = '';
+    try {
+      name = fs.readFileSync(`/proc/${pidDir}/comm`, 'utf8').trim();
+    } catch {}
+    if (!BROWSER_ORPHAN_NAMES.has(name)) {
+      try {
+        name = path.basename(readCmdline(pidDir)[0] ?? '');
+      } catch {
+        continue;
+      }
+      if (!BROWSER_ORPHAN_NAMES.has(name)) continue;
+    }
+    out.push({ pid, name, state, ppid });
+  }
+  return out;
+}
+
 export async function withLock(dir, fn) {
   const lockDir = path.join(dir, 'lock');
   fs.mkdirSync(dir, { recursive: true });

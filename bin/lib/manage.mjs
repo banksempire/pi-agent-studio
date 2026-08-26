@@ -19,7 +19,14 @@ import {
   webPortsInUse,
   worktreesRoot,
 } from './instances.mjs';
-import { alive, clearPidfile, pidHoldingPort, readPidfile, terminate } from './proc.mjs';
+import {
+  alive,
+  clearPidfile,
+  listOrphanBrowserProcesses,
+  pidHoldingPort,
+  readPidfile,
+  terminate,
+} from './proc.mjs';
 import {
   attributeProcesses,
   CliError,
@@ -486,6 +493,15 @@ export async function cmdDoctor(out, opts = {}) {
       detail: `pid ${u.pid}${u.ports.length ? ` :${u.ports.join(',')}` : ''} cwd ${u.cwd ?? '?'}`,
     });
   }
+  const browserOrphans = listOrphanBrowserProcesses();
+  for (const b of browserOrphans) {
+    results.push({
+      scope: 'orphans',
+      name: 'browser',
+      level: 'warn',
+      detail: `pid ${b.pid} ${b.name} (parent dead — check-suite leak)`,
+    });
+  }
   const seen = new Map();
   for (const inst of insts) {
     const dir = path.resolve(instanceSessionsDir(inst));
@@ -523,6 +539,13 @@ export async function cmdDoctor(out, opts = {}) {
   }
   if (opts.fix) {
     let fixed = 0;
+    const registryHoldsMain = !!loadInstance('main');
+    const registryRoots = insts.map((i) => (i.pairRoot ? path.resolve(i.pairRoot) : null)).filter(Boolean);
+    if (!registryHoldsMain) {
+      out.line(
+        `${warnSym} branch registry (no 'main' instance): orphan sweep limited to this registry's pair roots`,
+      );
+    }
     if (guardMissing) {
       await cmdGuard(out, { action: 'install' });
       fixed += 1;
@@ -550,6 +573,15 @@ export async function cmdDoctor(out, opts = {}) {
         );
         continue;
       }
+      if (
+        !registryHoldsMain &&
+        !registryRoots.some((r) => u.cwd && (u.cwd === r || u.cwd.startsWith(`${r}${path.sep}`)))
+      ) {
+        out.line(
+          `${warnSym} orphan ${u.service} pid ${u.pid} left alone (belongs to another registry — run doctor from that pair root)`,
+        );
+        continue;
+      }
       out.line(`${warnSym} killing orphan ${u.service} pid ${u.pid}`);
       appendAudit(null, {
         action: 'terminate',
@@ -559,6 +591,18 @@ export async function cmdDoctor(out, opts = {}) {
         caller: process.argv.slice(1).join(' '),
       });
       await terminate(u.pid, 3000);
+      fixed += 1;
+    }
+    for (const b of browserOrphans) {
+      out.line(`${warnSym} killing orphaned browser ${b.name} pid ${b.pid}`);
+      appendAudit(null, {
+        action: 'terminate',
+        reason: 'doctor-orphan-sweep',
+        service: 'browser',
+        pid: b.pid,
+        caller: process.argv.slice(1).join(' '),
+      });
+      await terminate(b.pid, 3000);
       fixed += 1;
     }
     for (const inst of insts) {

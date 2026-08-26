@@ -787,6 +787,7 @@ function fmtRel(ms: number | null): string {
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
+  container-type: inline-size;
 }
 .je-section {
   display: flex;
@@ -951,6 +952,34 @@ function fmtRel(ms: number | null): string {
   background: var(--sf-accent-soft);
   color: var(--sf-text-bright);
   opacity: 1;
+}
+
+@container (max-width: 640px) {
+  .je-seg {
+    gap: 3px;
+  }
+  .job-editor-seg-btn {
+    padding: 4px 9px;
+  }
+}
+@container (max-width: 540px) {
+  .je-seg {
+    gap: 2px;
+  }
+  .job-editor-seg-btn {
+    padding: 3px 6px;
+  }
+}
+@container (max-width: 490px) {
+  .je-seg {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    max-width: 100%;
+  }
+  .job-editor-seg-btn {
+    flex-shrink: 0;
+  }
 }
 
 .je-ctrl {

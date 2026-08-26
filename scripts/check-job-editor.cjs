@@ -385,12 +385,69 @@ function writeSessionFile(name) {
       `${cronRef} | ${wdDesc}`,
     );
 
-    await page.locator('.je-chip', { hasText: 'Sat' }).click();
+    const runGeometry = await page.evaluate(() => {
+      const items = [...document.querySelectorAll('.je-ms-item')];
+      const pick = (t) => items.find((b) => b.textContent === t);
+      const geo = (el) => {
+        const cs = getComputedStyle(el);
+        return {
+          on: el.classList.contains('je-ms-item--on'),
+          left: cs.borderTopLeftRadius,
+          right: cs.borderTopRightRadius,
+          marginLeft: cs.marginLeft,
+          borderLeft: cs.borderLeftColor,
+        };
+      };
+      return {
+        mon: geo(pick('Mon')),
+        wed: geo(pick('Wed')),
+        fri: geo(pick('Fri')),
+        sun: geo(pick('Sun')),
+      };
+    });
+    report(
+      'consecutive weekdays merge into one rounded box',
+      runGeometry.mon.on &&
+        runGeometry.mon.left === '999px' &&
+        runGeometry.mon.right === '0px' &&
+        runGeometry.wed.on &&
+        runGeometry.wed.left === '0px' &&
+        runGeometry.wed.right === '0px' &&
+        runGeometry.wed.marginLeft === '0px' &&
+        runGeometry.fri.on &&
+        runGeometry.fri.left === '0px' &&
+        runGeometry.fri.right === '999px' &&
+        !runGeometry.sun.on &&
+        runGeometry.sun.left === '999px' &&
+        runGeometry.sun.right === '999px',
+      JSON.stringify(runGeometry),
+    );
+
+    await page.locator('.je-ms-item', { hasText: 'Wed' }).click();
+    await delay(150);
+    const splitRuns = await page.evaluate(() => {
+      const items = [...document.querySelectorAll('.je-ms-item')];
+      const pick = (t) => items.find((b) => b.textContent === t);
+      return {
+        wedOn: pick('Wed').classList.contains('je-ms-item--on'),
+        tueIsEnd: pick('Tue').classList.contains('je-ms-item--end'),
+        thuIsStart: pick('Thu').classList.contains('je-ms-item--start'),
+      };
+    });
+    report(
+      'deselecting a middle day splits the run into two boxes',
+      !splitRuns.wedOn && splitRuns.tueIsEnd && splitRuns.thuIsStart,
+      JSON.stringify(splitRuns),
+    );
+    await page.locator('.je-ms-item', { hasText: 'Wed' }).click();
+    await delay(150);
+
+    await page.locator('.je-ms-item', { hasText: 'Sat' }).click();
     await delay(150);
     cronRef = await page.locator('.je-cron-ref code').textContent();
     report('day chips extend the expression', cronRef === '0 9 * * mon-sat', String(cronRef));
 
-    await page.locator('.je-chip', { hasText: 'Sun' }).click();
+    await page.locator('.je-ms-item', { hasText: 'Sun' }).click();
     await page.locator('select.je-time[title="Hour"]').selectOption('3');
     await delay(150);
     cronRef = await page.locator('.je-cron-ref code').textContent();
@@ -430,7 +487,7 @@ function writeSessionFile(name) {
         input: px('.job-editor-input'),
         segBtn: px('.job-editor-seg-btn'),
         schedSegBtn: px('.je-sched-seg .job-editor-seg-btn'),
-        chip: px('.je-chip'),
+        chip: px('.je-ms-item'),
         save: px('.job-editor-save'),
       };
     });

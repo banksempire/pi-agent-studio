@@ -255,11 +255,26 @@ function writeSessionFile(name) {
       const el = document.querySelector('input[type="datetime-local"]');
       if (!el) return null;
       const cs = getComputedStyle(el);
+      let nativeHidden = false;
+      for (const sheet of document.styleSheets) {
+        let rules;
+        try {
+          rules = sheet.cssRules;
+        } catch {
+          continue;
+        }
+        for (const r of rules) {
+          if (r.selectorText?.includes('calendar-picker-indicator') && r.style?.display === 'none')
+            nativeHidden = true;
+        }
+      }
       return {
         appearance: cs.appearance,
+        colorScheme: cs.colorScheme,
         icon: cs.backgroundImage.includes('svg'),
         padRight: cs.paddingRight,
         stroke: cs.backgroundImage.includes('%23cccccc'),
+        nativeHidden,
       };
     });
     await page.evaluate(() => {
@@ -284,6 +299,7 @@ function writeSessionFile(name) {
         pickerStyle.icon &&
         pickerStyle.stroke &&
         pickerStyle.padRight === '36px' &&
+        pickerStyle.nativeHidden &&
         callsAfterText === 0 &&
         callsAfterIcon >= 1,
       JSON.stringify({ pickerStyle, callsAfterText, callsAfterIcon }),

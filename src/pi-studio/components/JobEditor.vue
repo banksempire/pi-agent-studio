@@ -809,12 +809,17 @@ function fmtRel(ms: number | null): string {
 .je-datetime {
   -webkit-appearance: none;
   appearance: none;
+  color-scheme: dark;
   max-width: 300px;
   padding-right: 36px;
   cursor: pointer;
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none'><rect x='3' y='5' width='18' height='16' rx='2' stroke='%23cccccc' stroke-width='2'/><path d='M8 3v4M16 3v4M3 10h18' stroke='%23cccccc' stroke-width='2' stroke-linecap='round'/></svg>");
   background-repeat: no-repeat;
   background-position: right 10px center;
+}
+.je-datetime::-webkit-calendar-picker-indicator {
+  display: none;
+  -webkit-appearance: none;
 }
 .je-datetime:hover {
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none'><rect x='3' y='5' width='18' height='16' rx='2' stroke='%23e0e0e0' stroke-width='2'/><path d='M8 3v4M16 3v4M3 10h18' stroke='%23e0e0e0' stroke-width='2' stroke-linecap='round'/></svg>");

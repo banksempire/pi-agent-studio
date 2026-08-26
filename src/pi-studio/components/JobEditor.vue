@@ -8,6 +8,7 @@ import type { ModelInfo } from '../modelInfo';
 import { getAvailableModels } from '../modelInfo';
 import type { JobInfo } from '../store/chat';
 import { useChatStore } from '../store/chat';
+import MultiSelectGroup from './MultiSelectGroup.vue';
 
 const props = defineProps<{ jobId: string | null }>();
 const store = useChatStore();
@@ -29,6 +30,7 @@ const MODE_OPTIONS: Array<{ id: SchedMode; title: string; hint: string }> = [
   { id: 'advanced', title: 'Advanced', hint: 'write the 5-field cron expression directly' },
 ];
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const DOW_OPTIONS = DOW_LABELS.map((name, d) => ({ value: d, label: name, title: name }));
 const EVERY_MINUTE_OPTIONS = [1, 2, 3, 4, 5, 10, 15, 20, 30, 40, 50];
 const HOURLY_MINUTE_OPTIONS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
 const LEVEL_DESCRIPTIONS: Record<string, string> = {
@@ -247,10 +249,8 @@ function setTarget(mode: 'file' | 'new' | 'reuse') {
   }
 }
 
-function toggleDay(d: number) {
-  const i = periodic.days.indexOf(d);
-  if (i === -1) periodic.days = [...periodic.days, d].sort((a, b) => a - b);
-  else periodic.days = periodic.days.filter((x) => x !== d);
+function setDays(days: Array<string | number>) {
+  periodic.days = days.map(Number).sort((a, b) => a - b);
 }
 
 const everyMinutesOptions = computed(() => {
@@ -529,16 +529,7 @@ function fmtRel(ms: number | null): string {
               <template v-else>
                 <div v-if="mode === 'weekly'" class="je-ctrl">
                   <span class="je-ctrl-label">On days</span>
-                  <div class="je-chips">
-                    <button
-                      v-for="(name, d) in DOW_LABELS"
-                      :key="d"
-                      type="button"
-                      class="je-chip"
-                      :class="{ 'je-chip--on': periodic.days.includes(d) }"
-                      @click="toggleDay(d)"
-                    >{{ name }}</button>
-                  </div>
+                  <MultiSelectGroup :options="DOW_OPTIONS" :model-value="periodic.days" @update:model-value="setDays" />
                   <span v-if="periodic.days.length === 0" class="je-hint je-hint--warn">pick at least one day</span>
                 </div>
 
@@ -1008,30 +999,6 @@ function fmtRel(ms: number | null): string {
 .je-unit {
   font-size: 16px;
   opacity: 0.6;
-}
-.je-chips {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.je-chip {
-  padding: 3px 12px;
-  border-radius: 999px;
-  border: 1px solid var(--sf-border);
-  background: transparent;
-  color: inherit;
-  font-size: 16px;
-  cursor: pointer;
-  opacity: 0.75;
-}
-.je-chip:hover {
-  opacity: 1;
-}
-.je-chip--on {
-  opacity: 1;
-  background: var(--sf-accent-soft);
-  border-color: var(--sf-accent-dim);
-  color: var(--sf-text-bright);
 }
 .je-time {
   width: auto;

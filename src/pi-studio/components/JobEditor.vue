@@ -29,8 +29,11 @@ const MODE_OPTIONS: Array<{ id: SchedMode; title: string; hint: string }> = [
   { id: 'monthly', title: 'Monthly', hint: 'on a day of the month, at a set time' },
   { id: 'advanced', title: 'Advanced', hint: 'write the 5-field cron expression directly' },
 ];
-const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const DOW_OPTIONS = DOW_LABELS.map((name, d) => ({ value: d, label: name, title: name }));
+const DOW_OPTIONS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((name, d) => ({
+  value: d,
+  label: name,
+  title: name,
+}));
 const EVERY_MINUTE_OPTIONS = [1, 2, 3, 4, 5, 10, 15, 20, 30, 40, 50];
 const HOURLY_MINUTE_OPTIONS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
 const LEVEL_DESCRIPTIONS: Record<string, string> = {

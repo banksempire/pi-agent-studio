@@ -814,6 +814,51 @@ function writeSessionFile(name) {
       msSingleLine?.items === 7 && msSingleLine.rows === 1 && msSingleLine.wrap === 'nowrap',
       JSON.stringify(msSingleLine),
     );
+
+    await page.evaluate(() => {
+      const s = document.createElement('style');
+      s.id = 'force-ms-wrap';
+      s.textContent = '.je-ms-track{flex-wrap:wrap!important;max-width:220px!important}';
+      document.head.appendChild(s);
+    });
+    await page.locator('.je-ms-item', { hasText: 'Sun' }).click();
+    await page.locator('.je-ms-item', { hasText: 'Sat' }).click();
+    await delay(300);
+    const wrapped = await page.evaluate(() => {
+      const track = document.querySelector('.je-ms-track');
+      const items = [...track.querySelectorAll('.je-ms-item')];
+      const rows = new Set(items.map((b) => Math.round(b.getBoundingClientRect().top))).size;
+      let boundary = -1;
+      for (let i = 1; i < items.length; i++) {
+        if (Math.abs(items[i].getBoundingClientRect().top - items[i - 1].getBoundingClientRect().top) > 1) {
+          boundary = i - 1;
+          break;
+        }
+      }
+      if (boundary === -1) return { rows, boundary };
+      const last = getComputedStyle(items[boundary], '::before');
+      const lead = getComputedStyle(items[boundary + 1], '::before');
+      return {
+        rows,
+        boundary: `${items[boundary].textContent}|${items[boundary + 1].textContent}`,
+        lastRight: last.right,
+        lastBorderRight: last.borderRightWidth,
+        lastRadius: last.borderTopRightRadius,
+        leadBorderLeft: lead.borderLeftWidth,
+        leadRadius: lead.borderTopLeftRadius,
+      };
+    });
+    report(
+      'a run crossing a wrapped row closes on the row end and reopens on the next',
+      wrapped.rows >= 2 &&
+        wrapped.lastRight === '0px' &&
+        wrapped.lastBorderRight === '1px' &&
+        wrapped.lastRadius === '8px' &&
+        wrapped.leadBorderLeft === '1px' &&
+        wrapped.leadRadius === '8px',
+      JSON.stringify(wrapped),
+    );
+    await page.evaluate(() => document.getElementById('force-ms-wrap')?.remove());
     const wideMobile = await injectWide();
     report(
       'mobile: editor is never user-pannable horizontally (even with overflowing content)',

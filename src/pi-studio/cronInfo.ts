@@ -185,7 +185,7 @@ export function describeCron(expr: string): string {
 }
 
 export interface PeriodicPatternState {
-  pattern: 'minutes' | 'hourly' | 'daily' | 'weekly' | 'monthly';
+  pattern: 'minutes' | 'hourly' | 'daily' | 'weekly' | 'monthly' | 'custom';
   everyMinutes: number;
   atMinute: number;
   hour: number;
@@ -226,8 +226,9 @@ export function patternToCron(p: PeriodicPatternState): string {
       return `${minute} ${hour} * * ${dowList(p.days)}`;
     case 'monthly':
       return `${minute} ${hour} ${clampInt(p.monthDay, 1, 31)} * *`;
+    default:
+      return '';
   }
-  return '';
 }
 
 function allTrue(values: boolean[]): boolean {

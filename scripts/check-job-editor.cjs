@@ -447,6 +447,19 @@ function writeSessionFile(name) {
       const midJoin = Math.abs(
         pick('Mon').getBoundingClientRect().bottom - pick('Wed').getBoundingClientRect().bottom,
       );
+      const junctions = [];
+      for (let k = 0; k < items.length - 1; k++) {
+        const a = items[k];
+        const b = items[k + 1];
+        const ca = getComputedStyle(a, '::before');
+        const cb = getComputedStyle(b, '::before');
+        if (ca.content === 'none' || cb.content === 'none') continue;
+        const ra = a.getBoundingClientRect();
+        const rb = b.getBoundingClientRect();
+        const aRight = ra.right - Number.parseFloat(ca.right);
+        const bLeft = rb.left + Number.parseFloat(cb.left);
+        junctions.push({ pair: `${a.textContent}|${b.textContent}`, overlap: aRight - bLeft });
+      }
       return {
         monTop: mb.borderTopWidth,
         wedTop: w.borderTopWidth,
@@ -454,6 +467,7 @@ function writeSessionFile(name) {
         sameRow: midJoin === 0,
         underlayBehindItem: mb.zIndex === '-1',
         itemIsolated: m.isolation === 'isolate',
+        junctions,
       };
     });
     report(
@@ -463,7 +477,9 @@ function writeSessionFile(name) {
         seamless.wedExtendsRight &&
         seamless.sameRow &&
         seamless.underlayBehindItem &&
-        seamless.itemIsolated,
+        seamless.itemIsolated &&
+        seamless.junctions.length === 4 &&
+        seamless.junctions.every((j) => Math.abs(j.overlap) < 0.05),
       JSON.stringify(seamless),
     );
 

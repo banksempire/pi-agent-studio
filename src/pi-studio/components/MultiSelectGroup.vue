@@ -50,6 +50,7 @@ function itemClasses(i: number): Record<string, boolean> {
 <style scoped>
 .je-ms {
   max-width: 100%;
+  container-type: inline-size;
 }
 .je-ms-track {
   display: inline-flex;
@@ -61,7 +62,6 @@ function itemClasses(i: number): Record<string, boolean> {
   background: rgba(0, 0, 0, 0.15);
   width: fit-content;
   max-width: 100%;
-  container-type: inline-size;
 }
 .je-ms-item {
   padding: 3px 11px;
@@ -99,12 +99,36 @@ function itemClasses(i: number): Record<string, boolean> {
   border-bottom-right-radius: 0;
 }
 
-@container (max-width: 480px) {
+@container (max-width: 640px) {
+  .je-ms-track {
+    gap: 4px;
+  }
   .je-ms-item {
-    padding: 3px 8px;
+    padding: 3px 9px;
   }
   .je-ms-item--on:not(.je-ms-item--start) {
-    margin-left: -6px;
+    margin-left: -5px;
+  }
+}
+@container (max-width: 540px) {
+  .je-ms-track {
+    gap: 2px;
+  }
+  .je-ms-item {
+    padding: 3px 6px;
+  }
+  .je-ms-item--on:not(.je-ms-item--start) {
+    margin-left: -3px;
+  }
+}
+@container (max-width: 490px) {
+  .je-ms-track {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .je-ms-item {
+    flex-shrink: 0;
   }
 }
 </style>

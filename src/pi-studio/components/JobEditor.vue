@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import Menu from '@sf/components/Menu.vue';
+import MultiSelectGroup from '@sf/components/MultiSelectGroup.vue';
+import PillSelector from '@sf/components/PillSelector.vue';
 import type { MenuNodeDef } from '@sf/types/layout';
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import type { PeriodicPatternState } from '../cronInfo';
@@ -8,7 +10,6 @@ import type { ModelInfo } from '../modelInfo';
 import { getAvailableModels } from '../modelInfo';
 import type { JobInfo } from '../store/chat';
 import { useChatStore } from '../store/chat';
-import MultiSelectGroup from './MultiSelectGroup.vue';
 
 const props = defineProps<{ jobId: string | null }>();
 const store = useChatStore();
@@ -28,6 +29,11 @@ const MODE_OPTIONS: Array<{ id: SchedMode; title: string; hint: string }> = [
   { id: 'weekly', title: 'Weekly', hint: 'on chosen weekdays, at a set time' },
   { id: 'monthly', title: 'Monthly', hint: 'on a day of the month, at a set time' },
   { id: 'advanced', title: 'Advanced', hint: 'write the 5-field cron expression directly' },
+];
+const MODE_PILL = MODE_OPTIONS.map((m) => ({ value: m.id, label: m.title, title: m.hint }));
+const MISSED_POLICY_PILL = [
+  { value: 'coalesce', label: 'run once', title: 'Run once on catch-up' },
+  { value: 'skip', label: 'skip', title: 'Skip missed occurrences, wait for the next' },
 ];
 const DOW_OPTIONS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((name, d) => ({
   value: d,
@@ -268,6 +274,9 @@ const hourlyMinuteOptions = computed(() => {
   return [...list].sort((a, b) => a - b);
 });
 
+const everyPill = computed(() => everyMinutesOptions.value.map((m) => ({ value: m, label: String(m) })));
+const hourlyPill = computed(() => hourlyMinuteOptions.value.map((m) => ({ value: m, label: pad2(m) })));
+
 const currentCron = computed(() => {
   if (mode.value === 'advanced') return form.cron.trim();
   if (mode.value === 'once') return '';
@@ -459,18 +468,12 @@ function fmtRel(ms: number | null): string {
 
           <section class="je-section">
             <h3 class="je-section-title">Schedule</h3>
-            <div class="job-editor-seg je-seg je-sched-seg">
-              <button
-                v-for="m in MODE_OPTIONS"
-                :key="m.id"
-                :class="{
-                  'job-editor-seg-btn': true,
-                  'job-editor-seg-btn--on': mode === m.id,
-                }"
-                :title="m.hint"
-                @click="setMode(m.id)"
-              >{{ m.title }}</button>
-            </div>
+            <PillSelector
+              class="je-sched-seg"
+              :options="MODE_PILL"
+              :model-value="mode"
+              @update:model-value="(v) => setMode(v as SchedMode)"
+            />
 
             <div v-if="mode === 'once'" class="job-editor-field">
               <label>Run at</label>
@@ -499,34 +502,24 @@ function fmtRel(ms: number | null): string {
               <div v-if="mode === 'minutes'" class="je-ctrl">
                 <span class="je-ctrl-label">Run every</span>
                 <div class="je-ctrl-inline">
-                  <div class="job-editor-seg je-seg je-every-seg">
-                    <button
-                      v-for="m in everyMinutesOptions"
-                      :key="m"
-                      :class="{
-                        'job-editor-seg-btn': true,
-                        'job-editor-seg-btn--on': periodic.everyMinutes === m,
-                      }"
-                      @click="periodic.everyMinutes = m"
-                    >{{ m }}</button>
-                  </div>
+                  <PillSelector
+                    class="je-every-seg"
+                    :options="everyPill"
+                    :model-value="periodic.everyMinutes"
+                    @update:model-value="periodic.everyMinutes = Number($event)"
+                  />
                   <span class="je-unit">min</span>
                 </div>
               </div>
 
               <div v-else-if="mode === 'hourly'" class="je-ctrl">
                 <span class="je-ctrl-label">At minute past the hour</span>
-                <div class="job-editor-seg je-seg je-atmin-seg">
-                  <button
-                    v-for="m in hourlyMinuteOptions"
-                    :key="m"
-                    :class="{
-                      'job-editor-seg-btn': true,
-                      'job-editor-seg-btn--on': periodic.atMinute === m,
-                    }"
-                    @click="periodic.atMinute = m"
-                  >{{ pad2(m) }}</button>
-                </div>
+                <PillSelector
+                  class="je-atmin-seg"
+                  :options="hourlyPill"
+                  :model-value="periodic.atMinute"
+                  @update:model-value="periodic.atMinute = Number($event)"
+                />
               </div>
 
               <template v-else>
@@ -585,18 +578,7 @@ function fmtRel(ms: number | null): string {
 
             <div v-if="mode !== 'once'" class="job-editor-field">
               <label>If a run was missed while the backend was down</label>
-              <div class="job-editor-seg je-seg">
-                <button
-                  :class="{ 'job-editor-seg-btn': true, 'job-editor-seg-btn--on': form.missedPolicy === 'coalesce' }"
-                  title="Run once on catch-up"
-                  @click="form.missedPolicy = 'coalesce'"
-                >run once</button>
-                <button
-                  :class="{ 'job-editor-seg-btn': true, 'job-editor-seg-btn--on': form.missedPolicy === 'skip' }"
-                  title="Skip missed occurrences, wait for the next"
-                  @click="form.missedPolicy = 'skip'"
-                >skip</button>
-              </div>
+              <PillSelector :options="MISSED_POLICY_PILL" v-model="form.missedPolicy" />
             </div>
           </section>
 
@@ -781,7 +763,6 @@ function fmtRel(ms: number | null): string {
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
-  container-type: inline-size;
 }
 .je-section {
   display: flex;
@@ -815,6 +796,7 @@ function fmtRel(ms: number | null): string {
   flex-direction: column;
   gap: 6px;
   min-width: 0;
+  font-size: 16px;
 }
 .job-editor-field label {
   font-size: 16px;
@@ -918,69 +900,12 @@ function fmtRel(ms: number | null): string {
   opacity: 1;
 }
 
-.je-seg {
-  display: inline-flex;
-  gap: 4px;
-  padding: 3px;
-  border-radius: 999px;
-  border: 1px solid var(--sf-border);
-  background: rgba(0, 0, 0, 0.15);
-  width: fit-content;
-  max-width: 100%;
-  flex-wrap: wrap;
-}
-.job-editor-seg-btn {
-  padding: 4px 14px;
-  border-radius: 999px;
-  border: none;
-  background: transparent;
-  color: inherit;
-  font-size: 16px;
-  cursor: pointer;
-  opacity: 0.75;
-}
-.job-editor-seg-btn:hover {
-  opacity: 1;
-}
-.job-editor-seg-btn--on {
-  background: var(--sf-accent-soft);
-  color: var(--sf-text-bright);
-  opacity: 1;
-}
-
-@container (max-width: 640px) {
-  .je-seg {
-    gap: 3px;
-  }
-  .job-editor-seg-btn {
-    padding: 4px 9px;
-  }
-}
-@container (max-width: 540px) {
-  .je-seg {
-    gap: 2px;
-  }
-  .job-editor-seg-btn {
-    padding: 3px 6px;
-  }
-}
-@container (max-width: 490px) {
-  .je-seg {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    scrollbar-width: none;
-    max-width: 100%;
-  }
-  .job-editor-seg-btn {
-    flex-shrink: 0;
-  }
-}
-
 .je-ctrl {
   display: flex;
   flex-direction: column;
   gap: 6px;
   min-width: 0;
+  font-size: 16px;
 }
 .je-ctrl-row {
   flex-direction: row;

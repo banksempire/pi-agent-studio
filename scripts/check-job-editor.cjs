@@ -319,7 +319,8 @@ function writeSessionFile(name) {
     );
     report(
       'minutes mode offers the requested interval options in a selector',
-      JSON.stringify(minutesOptions) === JSON.stringify(['1', '2', '3', '4', '5', '10', '15', '20', '30']),
+      JSON.stringify(minutesOptions) ===
+        JSON.stringify(['1', '2', '3', '4', '5', '10', '15', '20', '30', '40', '50']),
       JSON.stringify(minutesOptions),
     );
     await page.locator('.je-every-seg .job-editor-seg-btn', { hasText: '30' }).click();
@@ -354,6 +355,40 @@ function writeSessionFile(name) {
 
     await modeBtn('Advanced').click();
     await delay(150);
+    const themedControls = await page.evaluate(() => {
+      const cancel = [...document.querySelectorAll('.je-footer-actions button')].find((b) =>
+        b.textContent?.includes('Cancel'),
+      );
+      const cs = cancel ? getComputedStyle(cancel) : null;
+      const sel = document.querySelector('select.je-select');
+      const ss = sel ? getComputedStyle(sel) : null;
+      const opt = sel?.querySelector('option');
+      const os = opt ? getComputedStyle(opt) : null;
+      return {
+        cancelFound: !!cancel,
+        cancelBg: cs?.backgroundColor ?? '',
+        cancelBorder: cs?.borderTopColor ?? '',
+        selectAppearance: ss?.appearance ?? '',
+        selectArrow: ss?.backgroundImage?.includes('svg') ?? false,
+        selectPadRight: ss?.paddingRight ?? '',
+        optionBg: os?.backgroundColor ?? '',
+      };
+    });
+    report(
+      'footer buttons use the themed style, not the system default',
+      themedControls.cancelFound &&
+        themedControls.cancelBg === 'rgb(41, 41, 41)' &&
+        themedControls.cancelBorder === 'rgb(58, 58, 58)',
+      JSON.stringify(themedControls),
+    );
+    report(
+      'selects drop native chrome for a themed chevron and dark options',
+      themedControls.selectAppearance === 'none' &&
+        themedControls.selectArrow &&
+        themedControls.selectPadRight === '32px' &&
+        themedControls.optionBg === 'rgb(37, 37, 38)',
+      JSON.stringify(themedControls),
+    );
     const advancedPrefill = await page.evaluate(() => ({
       visible: !!document.querySelector('input[placeholder="0 9 * * *"]'),
       value: document.querySelector('input[placeholder="0 9 * * *"]')?.value ?? '',

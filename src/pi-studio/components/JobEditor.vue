@@ -25,7 +25,7 @@ const MODE_OPTIONS: Array<{ id: SchedMode; title: string; hint: string }> = [
   { id: 'advanced', title: 'Advanced', hint: 'write the 5-field cron expression directly' },
 ];
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const EVERY_MINUTE_OPTIONS = [1, 2, 3, 4, 5, 10, 15, 20, 30];
+const EVERY_MINUTE_OPTIONS = [1, 2, 3, 4, 5, 10, 15, 20, 30, 40, 50];
 const HOURLY_MINUTE_OPTIONS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
 
 const TARGET_OPTIONS: Array<{ mode: 'file' | 'new' | 'reuse'; title: string; desc: string }> = [
@@ -458,16 +458,16 @@ function fmtRel(ms: number | null): string {
                 <div class="je-ctrl je-ctrl-row">
                   <template v-if="mode === 'monthly'">
                     <span class="je-ctrl-label">On day</span>
-                    <select v-model.number="periodic.monthDay" class="job-editor-input je-time">
+                    <select v-model.number="periodic.monthDay" class="job-editor-input je-select je-time">
                       <option v-for="d in 31" :key="d" :value="d">{{ d }}</option>
                     </select>
                   </template>
                   <span class="je-ctrl-label">at</span>
-                  <select v-model.number="periodic.hour" class="job-editor-input je-time" title="Hour">
+                  <select v-model.number="periodic.hour" class="job-editor-input je-select je-time" title="Hour">
                     <option v-for="h in 24" :key="h" :value="h - 1">{{ pad2(h - 1) }}</option>
                   </select>
                   <span class="je-ctrl-colon">:</span>
-                  <select v-model.number="periodic.minute" class="job-editor-input je-time" title="Minute">
+                  <select v-model.number="periodic.minute" class="job-editor-input je-select je-time" title="Minute">
                     <option v-for="m in 60" :key="m" :value="m - 1">{{ pad2(m - 1) }}</option>
                   </select>
                 </div>
@@ -542,7 +542,7 @@ function fmtRel(ms: number | null): string {
                 class="job-editor-input je-session-filter"
                 placeholder="filter sessions…"
               />
-              <select v-model="form.sessionFile" class="job-editor-input">
+              <select v-model="form.sessionFile" class="job-editor-input je-select">
                 <option v-if="filteredSessions.length === 0" :value="form.sessionFile">no match for “{{ sessionFilter }}”</option>
                 <option v-for="s in filteredSessions" :key="s.file" :value="s.file">{{ s.label }}</option>
               </select>
@@ -574,7 +574,7 @@ function fmtRel(ms: number | null): string {
               </div>
               <div class="job-editor-field">
                 <label>Thinking</label>
-                <select v-model="form.thinkLevel" class="job-editor-input">
+                <select v-model="form.thinkLevel" class="job-editor-input je-select">
                   <option value="">default</option>
                   <option value="off">off</option>
                   <option value="low">low</option>
@@ -593,8 +593,8 @@ function fmtRel(ms: number | null): string {
           <span v-else-if="saveHint" class="je-footer-hint">{{ saveHint }}</span>
         </div>
         <div class="je-footer-actions">
-          <button v-if="job" class="sf-panel-btn job-editor-danger" title="Delete job and its run history" @click="remove">Delete</button>
-          <button class="sf-panel-btn" @click="cancel">Cancel</button>
+          <button v-if="job" class="je-btn job-editor-danger" title="Delete job and its run history" @click="remove">Delete</button>
+          <button class="je-btn" @click="cancel">Cancel</button>
           <button class="chat-send-btn job-editor-save" :disabled="!canSave" :title="saveHint" @click="save">
             {{ busy ? 'Saving…' : props.jobId ? 'Save changes' : 'Create job' }}
           </button>
@@ -759,6 +759,38 @@ function fmtRel(ms: number | null): string {
   resize: vertical;
   min-height: 110px;
   line-height: 1.45;
+}
+.je-select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 32px;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='%23858585' stroke-width='1.5' fill='none' stroke-linecap='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 10px 6px;
+}
+.je-select option,
+.je-select optgroup {
+  background-color: #252526;
+  color: #cccccc;
+}
+.je-time.je-select {
+  padding-right: 32px;
+}
+.je-btn {
+  padding: 5px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--sf-border);
+  background: var(--sf-bar);
+  color: var(--sf-text);
+  font-family: var(--sf-font);
+  font-size: 16px;
+  cursor: pointer;
+}
+.je-btn:hover {
+  box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
+  color: var(--sf-text-bright);
 }
 .je-hint {
   font-size: 13px;

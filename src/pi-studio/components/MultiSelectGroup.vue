@@ -26,6 +26,7 @@ function itemClasses(i: number): Record<string, boolean> {
     'je-ms-item--on': on,
     'je-ms-item--start': on && !prevOn,
     'je-ms-item--end': on && !nextOn,
+    'je-ms-item--cont': on && nextOn,
   };
 }
 </script>
@@ -42,7 +43,7 @@ function itemClasses(i: number): Record<string, boolean> {
         :title="opt.title ?? opt.label"
         :aria-pressed="isSelected(opt.value)"
         @click="toggle(opt.value)"
-      >{{ opt.label }}</button>
+      ><span class="je-ms-label">{{ opt.label }}</span></button>
     </div>
   </div>
 </template>
@@ -67,7 +68,7 @@ function itemClasses(i: number): Record<string, boolean> {
 .je-ms-item {
   position: relative;
   padding: 3px 11px;
-  border: 1px solid transparent;
+  border: none;
   border-radius: 8px;
   background: transparent;
   color: inherit;
@@ -84,32 +85,36 @@ function itemClasses(i: number): Record<string, boolean> {
   outline-offset: 1px;
 }
 .je-ms-item--on {
-  background: var(--sf-accent-soft);
-  border-color: var(--sf-accent-dim);
   color: var(--sf-text-bright);
   opacity: 1;
 }
-.je-ms-item--on:not(.je-ms-item--start) {
-  border-left-color: transparent;
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
+.je-ms-item--on::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--sf-accent-soft);
+  border: 1px solid var(--sf-accent-dim);
+  border-radius: 8px;
 }
-.je-ms-item--on:not(.je-ms-item--end) {
-  border-right-color: transparent;
+.je-ms-item--cont::before {
+  right: calc(var(--je-ms-gap, 5px) * -1 - 1px);
+  border-right: none;
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
 }
-.je-ms-item--on:not(.je-ms-item--end)::after {
-  content: '';
-  position: absolute;
-  top: -1px;
-  bottom: -1px;
-  left: 100%;
-  width: calc(var(--je-ms-gap, 5px) + 2px);
-  background: var(--sf-accent-soft);
-  border-top: 1px solid var(--sf-accent-dim);
-  border-bottom: 1px solid var(--sf-accent-dim);
-  pointer-events: none;
+.je-ms-item--on.je-ms-item--start:not(.je-ms-item--end)::before {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.je-ms-item--on:not(.je-ms-item--start)::before {
+  left: -1px;
+  border-left: none;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
 }
 
 @container (max-width: 640px) {

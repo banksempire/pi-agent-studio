@@ -263,13 +263,13 @@ function writeSessionFile(name) {
     await page.waitForSelector('.job-editor', { timeout: 20000 });
     report('job editor opens in a workspace window', true);
 
-    const modeBtn = (t) => page.locator('.je-sched-seg .job-editor-seg-btn', { hasText: t });
+    const modeBtn = (t) => page.locator('.je-sched-seg .sf-pill-item', { hasText: t });
 
     const onceDefaults = await page.evaluate(() => {
       const seg = document.querySelector('.je-sched-seg');
-      const on = seg?.querySelector('.job-editor-seg-btn--on');
+      const on = seg?.querySelector('.sf-pill-item--on');
       return {
-        modes: seg?.querySelectorAll('.job-editor-seg-btn').length ?? 0,
+        modes: seg?.querySelectorAll('.sf-pill-item').length ?? 0,
         selected: on?.textContent ?? '',
         previewVisible: !!document.querySelector('.je-cron-preview'),
         rawInputVisible: !!document.querySelector('input[placeholder="0 9 * * *"]'),
@@ -386,14 +386,14 @@ function writeSessionFile(name) {
     );
 
     const runGeometry = await page.evaluate(() => {
-      const items = [...document.querySelectorAll('.je-ms-item')];
+      const items = [...document.querySelectorAll('.sf-ms-item')];
       const pick = (t) => items.find((b) => b.textContent === t);
       const geo = (el) => {
         const und = getComputedStyle(el, '::before');
         return {
-          on: el.classList.contains('je-ms-item--on'),
-          start: el.classList.contains('je-ms-item--start'),
-          cont: el.classList.contains('je-ms-item--cont'),
+          on: el.classList.contains('sf-ms-item--on'),
+          start: el.classList.contains('sf-ms-item--start'),
+          cont: el.classList.contains('sf-ms-item--cont'),
           left: und.borderTopLeftRadius,
           right: und.borderTopRightRadius,
           borderLeft: und.borderLeftWidth,
@@ -401,8 +401,8 @@ function writeSessionFile(name) {
           rightEdge: und.right,
         };
       };
-      const ts = document.querySelector('.je-ms-track')
-        ? getComputedStyle(document.querySelector('.je-ms-track'))
+      const ts = document.querySelector('.sf-ms-track')
+        ? getComputedStyle(document.querySelector('.sf-ms-track'))
         : null;
       const gap = ts ? Number.parseFloat(ts.gap) : NaN;
       return {
@@ -439,7 +439,7 @@ function writeSessionFile(name) {
     );
 
     const seamless = await page.evaluate(() => {
-      const items = [...document.querySelectorAll('.je-ms-item')];
+      const items = [...document.querySelectorAll('.sf-ms-item')];
       const pick = (t) => items.find((b) => b.textContent === t);
       const m = getComputedStyle(pick('Mon'));
       const mb = getComputedStyle(pick('Mon'), '::before');
@@ -483,15 +483,15 @@ function writeSessionFile(name) {
       JSON.stringify(seamless),
     );
 
-    await page.locator('.je-ms-item', { hasText: 'Wed' }).click();
+    await page.locator('.sf-ms-item', { hasText: 'Wed' }).click();
     await delay(150);
     const splitRuns = await page.evaluate(() => {
-      const items = [...document.querySelectorAll('.je-ms-item')];
+      const items = [...document.querySelectorAll('.sf-ms-item')];
       const pick = (t) => items.find((b) => b.textContent === t);
       return {
-        wedOn: pick('Wed').classList.contains('je-ms-item--on'),
-        tueIsEnd: pick('Tue').classList.contains('je-ms-item--end'),
-        thuIsStart: pick('Thu').classList.contains('je-ms-item--start'),
+        wedOn: pick('Wed').classList.contains('sf-ms-item--on'),
+        tueIsEnd: pick('Tue').classList.contains('sf-ms-item--end'),
+        thuIsStart: pick('Thu').classList.contains('sf-ms-item--start'),
       };
     });
     report(
@@ -499,23 +499,23 @@ function writeSessionFile(name) {
       !splitRuns.wedOn && splitRuns.tueIsEnd && splitRuns.thuIsStart,
       JSON.stringify(splitRuns),
     );
-    await page.locator('.je-ms-item', { hasText: 'Wed' }).click();
+    await page.locator('.sf-ms-item', { hasText: 'Wed' }).click();
     await delay(150);
 
     const rectsBefore = await page.evaluate(() => {
-      const track = document.querySelector('.je-ms-track');
-      const items = [...track.querySelectorAll('.je-ms-item')];
+      const track = document.querySelector('.sf-ms-track');
+      const items = [...track.querySelectorAll('.sf-ms-item')];
       const snap = (el) => {
         const r = el.getBoundingClientRect();
         return [Math.round(r.left * 10), Math.round(r.width * 10)];
       };
       return { track: snap(track), items: items.map(snap) };
     });
-    await page.locator('.je-ms-item', { hasText: 'Sat' }).click();
+    await page.locator('.sf-ms-item', { hasText: 'Sat' }).click();
     await delay(150);
     const rectsAfter = await page.evaluate(() => {
-      const track = document.querySelector('.je-ms-track');
-      const items = [...track.querySelectorAll('.je-ms-item')];
+      const track = document.querySelector('.sf-ms-track');
+      const items = [...track.querySelectorAll('.sf-ms-item')];
       const snap = (el) => {
         const r = el.getBoundingClientRect();
         return [Math.round(r.left * 10), Math.round(r.width * 10)];
@@ -530,7 +530,7 @@ function writeSessionFile(name) {
     cronRef = await page.locator('.je-cron-ref code').textContent();
     report('day boxes extend the expression', cronRef === '0 9 * * mon-sat', String(cronRef));
 
-    await page.locator('.je-ms-item', { hasText: 'Sun' }).click();
+    await page.locator('.sf-ms-item', { hasText: 'Sun' }).click();
     await page.locator('select.je-time[title="Hour"]').selectOption('3');
     await delay(150);
     cronRef = await page.locator('.je-cron-ref code').textContent();
@@ -568,9 +568,9 @@ function writeSessionFile(name) {
         titleMain: px('.job-editor-title-main'),
         label: px('.job-editor-field label'),
         input: px('.job-editor-input'),
-        segBtn: px('.job-editor-seg-btn'),
-        schedSegBtn: px('.je-sched-seg .job-editor-seg-btn'),
-        chip: px('.je-ms-item'),
+        segBtn: px('.sf-pill-item'),
+        schedSegBtn: px('.je-sched-seg .sf-pill-item'),
+        chip: px('.sf-ms-item'),
         save: px('.job-editor-save'),
       };
     });
@@ -592,7 +592,7 @@ function writeSessionFile(name) {
     await modeBtn('Minutes').click();
     await delay(150);
     const minutesOptions = await page.evaluate(() =>
-      [...document.querySelectorAll('.je-every-seg .job-editor-seg-btn')].map((b) => b.textContent),
+      [...document.querySelectorAll('.je-every-seg .sf-pill-item')].map((b) => b.textContent),
     );
     report(
       'minutes mode offers the requested interval options in a selector',
@@ -600,7 +600,7 @@ function writeSessionFile(name) {
         JSON.stringify(['1', '2', '3', '4', '5', '10', '15', '20', '30', '40', '50']),
       JSON.stringify(minutesOptions),
     );
-    await page.locator('.je-every-seg .job-editor-seg-btn', { hasText: '30' }).click();
+    await page.locator('.je-every-seg .sf-pill-item', { hasText: '30' }).click();
     await delay(150);
     cronRef = await page.locator('.je-cron-ref code').textContent();
     wdDesc = await page.locator('.je-cron-desc').textContent();
@@ -613,14 +613,14 @@ function writeSessionFile(name) {
     await modeBtn('Hourly').click();
     await delay(150);
     const hourlyOptions = await page.evaluate(() =>
-      [...document.querySelectorAll('.je-atmin-seg .job-editor-seg-btn')].map((b) => b.textContent),
+      [...document.querySelectorAll('.je-atmin-seg .sf-pill-item')].map((b) => b.textContent),
     );
     report(
       'hourly mode offers minute options in a selector',
       hourlyOptions.length === 12 && hourlyOptions[0] === '00' && hourlyOptions[11] === '55',
       JSON.stringify(hourlyOptions),
     );
-    await page.locator('.je-atmin-seg .job-editor-seg-btn', { hasText: '15' }).click();
+    await page.locator('.je-atmin-seg .sf-pill-item', { hasText: '15' }).click();
     await delay(150);
     cronRef = await page.locator('.je-cron-ref code').textContent();
     wdDesc = await page.locator('.je-cron-desc').textContent();
@@ -720,10 +720,10 @@ function writeSessionFile(name) {
       const editors = [...document.querySelectorAll('.job-editor')];
       const ed = editors.find((e) => e.textContent?.includes('custom-cron job')) ?? null;
       const seg = ed?.querySelector('.je-sched-seg') ?? null;
-      const on = seg?.querySelector('.job-editor-seg-btn--on');
+      const on = seg?.querySelector('.sf-pill-item--on');
       return {
         created: ed !== null,
-        patterns: seg?.querySelectorAll('.job-editor-seg-btn').length ?? 0,
+        patterns: seg?.querySelectorAll('.sf-pill-item').length ?? 0,
         selected: on?.textContent ?? '',
         ref: ed?.querySelector('.je-cron-ref code')?.textContent ?? '',
       };
@@ -744,8 +744,8 @@ function writeSessionFile(name) {
       const ed = editors.find((e) => e.textContent?.includes('custom-cron job')) ?? null;
       const seg = ed?.querySelector('.je-sched-seg');
       return {
-        patterns: seg?.querySelectorAll('.job-editor-seg-btn').length ?? 0,
-        selected: seg?.querySelector('.job-editor-seg-btn--on')?.textContent ?? '',
+        patterns: seg?.querySelectorAll('.sf-pill-item').length ?? 0,
+        selected: seg?.querySelector('.sf-pill-item--on')?.textContent ?? '',
         ref: ed?.querySelector('.je-cron-ref code')?.textContent ?? '',
       };
     });
@@ -790,7 +790,7 @@ function writeSessionFile(name) {
     const segSingleLine = await page.evaluate(() => {
       const seg = document.querySelector('.je-sched-seg');
       if (!seg) return null;
-      const pills = [...seg.querySelectorAll('.job-editor-seg-btn')];
+      const pills = [...seg.querySelectorAll('.sf-pill-item')];
       const rows = new Set(pills.map((b) => Math.round(b.getBoundingClientRect().top)));
       return { pills: pills.length, rows: rows.size };
     });
@@ -800,12 +800,12 @@ function writeSessionFile(name) {
       JSON.stringify(segSingleLine),
     );
 
-    await page.locator('.je-sched-seg .job-editor-seg-btn', { hasText: 'Weekly' }).click();
+    await page.locator('.je-sched-seg .sf-pill-item', { hasText: 'Weekly' }).click();
     await delay(400);
     const msSingleLine = await page.evaluate(() => {
-      const track = document.querySelector('.je-ms-track');
+      const track = document.querySelector('.sf-ms-track');
       if (!track) return null;
-      const items = [...track.querySelectorAll('.je-ms-item')];
+      const items = [...track.querySelectorAll('.sf-ms-item')];
       const rows = new Set(items.map((b) => Math.round(b.getBoundingClientRect().top)));
       return { items: items.length, rows: rows.size, wrap: getComputedStyle(track).flexWrap };
     });
@@ -818,15 +818,15 @@ function writeSessionFile(name) {
     await page.evaluate(() => {
       const s = document.createElement('style');
       s.id = 'force-ms-wrap';
-      s.textContent = '.je-ms-track{flex-wrap:wrap!important;max-width:220px!important}';
+      s.textContent = '.sf-ms-track{flex-wrap:wrap!important;max-width:220px!important}';
       document.head.appendChild(s);
     });
-    await page.locator('.je-ms-item', { hasText: 'Sun' }).click();
-    await page.locator('.je-ms-item', { hasText: 'Sat' }).click();
+    await page.locator('.sf-ms-item', { hasText: 'Sun' }).click();
+    await page.locator('.sf-ms-item', { hasText: 'Sat' }).click();
     await delay(300);
     const wrapped = await page.evaluate(() => {
-      const track = document.querySelector('.je-ms-track');
-      const items = [...track.querySelectorAll('.je-ms-item')];
+      const track = document.querySelector('.sf-ms-track');
+      const items = [...track.querySelectorAll('.sf-ms-item')];
       const rows = new Set(items.map((b) => Math.round(b.getBoundingClientRect().top))).size;
       let boundary = -1;
       for (let i = 1; i < items.length; i++) {

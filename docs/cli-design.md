@@ -224,7 +224,10 @@ studio [-i <instance>] <command> …        # auto-detects instance from CWD's p
                               default: backend then web
   down [service]              graceful stop, reverse order (web then backend);
                               the backend drains + spills (§3a); deliberate
-                              stops pass the live-agent guard (§8)
+                              stops pass the live-agent guard (§8);
+                              `down backend` cascades to web — the stack is
+                              the resource unit (`restart backend` and
+                              `kill <svc>` stay single-service)
   restart <service>           stop + up; `restart backend` is graceful (§3a)
                               and refused (exit 5) when no backend code
                               changed since start — `--yes` overrides

@@ -102,7 +102,7 @@ function itemClasses(i: number): Record<string, boolean> {
   border-radius: 8px;
 }
 .je-ms-item--cont::before {
-  right: calc(var(--je-ms-gap, 5px) * -1 - 1px);
+  right: calc(var(--je-ms-gap, 5px) * -1);
   border-right: none;
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
@@ -112,7 +112,7 @@ function itemClasses(i: number): Record<string, boolean> {
   border-bottom-right-radius: 0;
 }
 .je-ms-item--on:not(.je-ms-item--start)::before {
-  left: -1px;
+  left: 0;
   border-left: none;
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;

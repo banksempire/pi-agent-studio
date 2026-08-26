@@ -27,8 +27,10 @@ usage: studio [-i <instance>] <command> [options]
 commands:
   up [service]              start the stack (backend → web), health-gated;
                             adopts already-running services
-  down [service]            stop the stack (web + backend); backend stops
-                            gracefully (drains agents, spills queued prompts)
+  down [service]            stop the stack; 'down backend' also stops web —
+                            the stack is the resource unit (restart backend
+                            does not cascade); backend stops gracefully
+                            (drains agents, spills queued prompts)
   restart <service>         stop + start one service; restart backend is
                             graceful: in-flight prompts drain (abort at the
                             deadline), queued prompts spill to disk and are

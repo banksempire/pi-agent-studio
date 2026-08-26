@@ -298,6 +298,11 @@ async function tryAdopt(out, instance, service) {
     const health = await serviceHealth(service, port);
     if (!health.ok) continue;
     if (service === 'web' && port !== instance.webPort) continue;
+    if (service === 'backend') {
+      const db = cand.environ?.PI_STUDIO_DB_PATH;
+      const expected = path.join(instanceStateDir(instance.id), 'studio.db');
+      if (!db || path.resolve(db) !== path.resolve(expected)) continue;
+    }
     writePidfile(pidfilePath(instance.id, service), {
       pid: cand.pid,
       pgid: cand.pid,
@@ -619,7 +624,7 @@ export async function cmdDown(out, instance, opts = {}) {
     const explicit = opts.service ?? null;
     let targets;
     if (explicit === 'backend') {
-      targets = ['backend'];
+      targets = opts.cascade === false ? ['backend'] : ['web', 'backend'];
     } else if (explicit) {
       targets = [explicit];
     } else {

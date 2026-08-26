@@ -18,6 +18,10 @@ const PAIR = path.join(WT, 'check');
 const ID = 'check';
 const RESERVED = [7492, 7494];
 
+for (const key of Object.keys(process.env)) {
+  if (key.startsWith('PI_STUDIO_') || key === 'PI_API_PROXY') delete process.env[key];
+}
+
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const run = (cmd, args, cwd, env) => spawnSync(cmd, args, { cwd, encoding: 'utf8', env: env ?? process.env });
@@ -83,6 +87,20 @@ function pidfile(service) {
 function backendLog() {
   const file = path.join(PAIR, '.studio', 'state', 'logs', 'backend.log');
   return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+}
+
+function portServing(port) {
+  return new Promise((resolve) => {
+    const req = http.get({ host: '127.0.0.1', port, path: '/' }, (res) => {
+      res.resume();
+      resolve(true);
+    });
+    req.on('error', () => resolve(false));
+    req.setTimeout(2000, () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
 }
 
 function getJson(port, p, method = 'GET', body = null) {
@@ -434,14 +452,38 @@ async function main() {
     const downRes = studio(['-i', ID, 'down'], { expect: 0, label: 'down' });
     report('down tears down the full stack (no --yes needed, no agents)', downRes.status === 0, '');
     report('down stops the backend', !pidfile('backend')?.pid, '');
-    const webAfterDown = await getJson(webPort, '/').catch(() => null);
-    report('web port released after down', webAfterDown === null || webAfterDown === undefined, '');
+    const webAfterDown = await portServing(webPort);
+    report('web port released after down', webAfterDown === false, '');
 
     const pairUp = studio(['-i', ID, 'up', 'backend'], { env, expect: 0, label: 'up backend' });
     report(
       'up backend works standalone',
       pairUp.status === 0 && pidfile('backend')?.pid != null,
       pairUp.stderr,
+    );
+
+    const fullUp = studio(['-i', ID, 'up'], { env, expect: 0, label: 'up full for cascade' });
+    report('up full stack brings web back', fullUp.status === 0, fullUp.stderr);
+    const cascadeDown = studio(['-i', ID, 'down', 'backend'], { expect: 0, label: 'down backend' });
+    const webAfterCascade = await portServing(webPort);
+    report(
+      'down backend cascades to web (web port released)',
+      cascadeDown.status === 0 && !pidfile('backend')?.pid && webAfterCascade === false,
+      cascadeDown.stderr.slice(0, 100),
+    );
+
+    const upForRestart = studio(['-i', ID, 'up'], { env, expect: 0, label: 'up for restart' });
+    report('up full stack again', upForRestart.status === 0, upForRestart.stderr);
+    const cascadeRestartRes = studio(['-i', ID, 'restart', 'backend', '--yes'], {
+      env,
+      expect: 0,
+      label: 'restart backend --yes',
+    });
+    const webAfterRestart = await portServing(webPort);
+    report(
+      'restart backend keeps web running (no cascade)',
+      cascadeRestartRes.status === 0 && pidfile('backend')?.pid != null && webAfterRestart === true,
+      cascadeRestartRes.stderr.slice(0, 100),
     );
 
     const rmRes = studio(['worktree', 'rm', ID, '--purge', '--yes'], { expect: 0, label: 'worktree rm' });

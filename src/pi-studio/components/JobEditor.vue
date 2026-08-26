@@ -12,10 +12,9 @@ const error = ref('');
 const busy = ref(false);
 const initialized = ref(false);
 const sessionFilter = ref('');
-const rawMode = ref(false);
 
-type PeriodicPattern = PeriodicPatternState['pattern'];
-const PATTERN_OPTIONS: Array<{ id: PeriodicPattern; title: string; hint: string }> = [
+type BuilderPattern = 'minutes' | 'hourly' | 'daily' | 'weekly' | 'monthly';
+const PATTERN_OPTIONS: Array<{ id: BuilderPattern; title: string; hint: string }> = [
   { id: 'minutes', title: 'Minutes', hint: 'every N minutes, all day' },
   { id: 'hourly', title: 'Hourly', hint: 'once every hour, at a set minute' },
   { id: 'daily', title: 'Daily', hint: 'once a day, at a set time' },
@@ -89,12 +88,8 @@ function toLocalInput(ms: number): string {
 
 function syncFromCron() {
   const p = cronToPattern(form.cron);
-  if (p) {
-    Object.assign(periodic, p);
-    rawMode.value = false;
-  } else if (form.cron.trim() !== '') {
-    rawMode.value = true;
-  }
+  if (p) Object.assign(periodic, p);
+  else periodic.pattern = 'custom';
 }
 
 function initForm(j: JobInfo | null) {
@@ -135,6 +130,15 @@ watch(
   { immediate: true },
 );
 
+watch(
+  () => props.jobId,
+  () => {
+    initialized.value = false;
+    const j = job.value;
+    if (j !== null || store.jobsLoaded) initForm(j);
+  },
+);
+
 onMounted(() => {
   void store.refreshJobs();
   if (!initialized.value) initForm(job.value);
@@ -151,22 +155,9 @@ function setTarget(mode: 'file' | 'new' | 'reuse') {
   }
 }
 
-const currentCron = computed(() => (rawMode.value ? form.cron.trim() : patternToCron(periodic)));
-
-watch(currentCron, (v) => {
-  if (!rawMode.value) return;
-  const p = cronToPattern(v);
-  if (p) Object.assign(periodic, p);
-});
-
-function enterRaw() {
-  if (currentCron.value !== '') form.cron = currentCron.value;
-  rawMode.value = true;
-}
-
-function leaveRaw() {
-  rawMode.value = false;
-}
+const currentCron = computed(() =>
+  periodic.pattern === 'custom' ? form.cron.trim() : patternToCron(periodic),
+);
 
 function toggleDay(d: number) {
   const i = periodic.days.indexOf(d);
@@ -205,13 +196,8 @@ const problems = computed<string[]>(() => {
   const list: string[] = [];
   if (!form.name.trim()) list.push('name');
   if (form.scheduleType === 'once' && !runAtValid.value) list.push('run-at time');
-  if (form.scheduleType === 'cron' && rawMode.value && !cronOk.value) list.push('cron expression');
-  if (
-    form.scheduleType === 'cron' &&
-    !rawMode.value &&
-    periodic.pattern === 'weekly' &&
-    periodic.days.length === 0
-  )
+  if (form.scheduleType === 'cron' && !cronOk.value) list.push('cron expression');
+  if (form.scheduleType === 'cron' && periodic.pattern === 'weekly' && periodic.days.length === 0)
     list.push('at least one weekday');
   if (form.targetMode === 'file' && !form.sessionFile) list.push('target session');
   if (form.targetMode !== 'file' && !form.cwd.trim()) list.push('working directory');
@@ -236,7 +222,7 @@ function buildInput() {
     if (!runAtValid.value) throw new Error('pick a valid run-at time');
     input.runAt = runAtTs.value;
   } else {
-    if (!currentCron.value) throw new Error('pick at least one weekday');
+    if (!currentCron.value) throw new Error('schedule is empty');
     input.cron = currentCron.value;
   }
   if (form.targetMode === 'file') {
@@ -393,38 +379,29 @@ function fmtRel(ms: number | null): string {
             </div>
 
             <template v-else>
-              <div class="je-sched-toolbar">
-                <div v-if="!rawMode" class="je-patterns">
-                  <button
-                    v-for="p in PATTERN_OPTIONS"
-                    :key="p.id"
-                    type="button"
-                    class="je-pattern-btn"
-                    :class="{ 'je-pattern-btn--on': periodic.pattern === p.id }"
-                    :title="p.hint"
-                    @click="periodic.pattern = p.id"
-                  >{{ p.title }}</button>
-                </div>
-                <span v-else class="je-raw-tag">custom expression</span>
+              <div class="job-editor-seg je-seg je-pattern-seg">
                 <button
-                  class="sf-panel-btn je-mode-btn"
-                  :title="rawMode ? 'Back to the visual builder' : 'Edit the raw 5-field cron expression'"
-                  @click="rawMode ? leaveRaw() : enterRaw()"
-                >{{ rawMode ? 'use builder' : 'raw expression' }}</button>
+                  v-for="p in PATTERN_OPTIONS"
+                  :key="p.id"
+                  :class="{
+                    'job-editor-seg-btn': true,
+                    'job-editor-seg-btn--on': periodic.pattern === p.id,
+                  }"
+                  :title="p.hint"
+                  @click="periodic.pattern = p.id"
+                >{{ p.title }}</button>
+                <button
+                  v-if="periodic.pattern === 'custom'"
+                  :class="{
+                    'job-editor-seg-btn': true,
+                    'job-editor-seg-btn--on': true,
+                  }"
+                  title="The stored expression can't be represented by the builder — picking a pattern rewrites it"
+                  disabled
+                >Custom</button>
               </div>
 
-              <div v-if="rawMode" class="job-editor-field">
-                <label>Raw cron expression <span class="je-label-note">min hour dom month dow · server-local time</span></label>
-                <input
-                  v-model="form.cron"
-                  class="job-editor-input job-editor-input--mono job-editor-input--narrow"
-                  placeholder="0 3 * * *"
-                  spellcheck="false"
-                />
-                <span class="je-hint">switching back to the builder rewrites the expression from the builder's fields</span>
-              </div>
-
-              <template v-else>
+              <template v-if="periodic.pattern !== 'custom'">
                 <div v-if="periodic.pattern === 'minutes'" class="je-ctrl">
                   <span class="je-ctrl-label">Run every</span>
                   <div class="je-chips">
@@ -466,11 +443,6 @@ function fmtRel(ms: number | null): string {
                         @click="toggleDay(d)"
                       >{{ name }}</button>
                     </div>
-                    <div class="je-quick">
-                      <button class="je-quick-btn" type="button" @click="periodic.days = [1, 2, 3, 4, 5]">weekdays</button>
-                      <button class="je-quick-btn" type="button" @click="periodic.days = [0, 6]">weekend</button>
-                      <button class="je-quick-btn" type="button" @click="periodic.days = [0, 1, 2, 3, 4, 5, 6]">every day</button>
-                    </div>
                     <span v-if="periodic.days.length === 0" class="je-hint je-hint--warn">pick at least one day</span>
                   </div>
 
@@ -506,7 +478,7 @@ function fmtRel(ms: number | null): string {
                     <span class="je-cron-ref-label">cron</span>
                     <code class="je-mono">{{ currentCron }}</code>
                   </div>
-                  <div class="je-cron-desc">{{ cronDescribe }}</div>
+                  <div class="je-cron-desc" v-if="cronDescribe">{{ cronDescribe }}</div>
                   <div class="je-cron-next">
                     <span class="je-cron-next-label">next</span>
                     <template v-if="cronNext.length">
@@ -821,44 +793,8 @@ function fmtRel(ms: number | null): string {
   padding: 2px 12px;
 }
 
-.je-sched-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-.je-patterns {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.je-pattern-btn {
-  padding: 5px 14px;
-  border-radius: 6px;
-  border: 1px solid var(--sf-border);
-  background: transparent;
-  color: inherit;
-  font-size: 16px;
-  cursor: pointer;
-  opacity: 0.75;
-}
-.je-pattern-btn:hover {
-  opacity: 1;
-  background: var(--sf-hover-overlay);
-}
-.je-pattern-btn--on {
-  opacity: 1;
-  background: var(--sf-accent-soft);
-  border-color: var(--sf-accent-dim);
-  color: var(--sf-text-bright);
-}
-.je-mode-btn {
-  font-size: 13px;
-}
-.je-raw-tag {
-  font-size: 13px;
-  color: var(--sf-status-warn);
+.je-pattern-seg {
+  margin-top: 2px;
 }
 
 .je-ctrl {
@@ -900,20 +836,6 @@ function fmtRel(ms: number | null): string {
   background: var(--sf-accent-soft);
   border-color: var(--sf-accent-dim);
   color: var(--sf-text-bright);
-}
-.je-quick {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.je-quick-btn {
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--sf-link);
-  font-size: 13px;
-  cursor: pointer;
-  text-decoration: underline;
 }
 .je-time {
   width: auto;

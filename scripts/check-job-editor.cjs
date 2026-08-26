@@ -198,6 +198,30 @@ function writeSessionFile(name) {
       return { msg: px('.chat-msg'), input: px('.chat-input') };
     });
 
+    const CUSTOM_JOB = {
+      id: 'deadbeef',
+      name: 'custom-cron job',
+      enabled: true,
+      kind: 'message',
+      scheduleType: 'cron',
+      runAt: null,
+      cron: '15 9,17 * * mon-fri',
+      payload: { message: 'probe', target: { mode: 'new', cwd: '/tmp' } },
+      nextDue: Date.now() + 3_600_000,
+      missedPolicy: 'coalesce',
+      createdBy: 'web',
+      createdAt: Date.now() - 60_000,
+      updatedAt: Date.now() - 60_000,
+      lastRun: null,
+    };
+    await page.route('**/api/jobs', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ jobs: [CUSTOM_JOB] }),
+      }),
+    );
+
     await page.locator('.sf-docker-app[title="Scheduler"]').click();
     await page.waitForSelector('.sf-subsection-util[title="New Job"]', { timeout: 10000 });
     await page.locator('.sf-subsection-util[title="New Job"]').click();
@@ -205,14 +229,17 @@ function writeSessionFile(name) {
     report('job editor opens in a workspace window', true);
 
     await page.locator('.job-editor-seg-btn', { hasText: 'Periodic' }).click();
-    await page.waitForSelector('.je-pattern-btn', { timeout: 5000 });
+    await page.waitForSelector('.je-pattern-seg', { timeout: 5000 });
+
+    const patternBtn = (t) => page.locator('.je-pattern-seg .job-editor-seg-btn', { hasText: t });
 
     const builderDefaults = await page.evaluate(() => {
-      const on = document.querySelector('.je-pattern-btn--on');
+      const seg = document.querySelector('.je-pattern-seg');
+      const on = seg?.querySelector('.job-editor-seg-btn--on');
       const ref = document.querySelector('.je-cron-ref code');
       const desc = document.querySelector('.je-cron-desc');
       return {
-        patterns: document.querySelectorAll('.je-pattern-btn').length,
+        patterns: seg?.querySelectorAll('.job-editor-seg-btn').length ?? 0,
         selected: on?.textContent ?? '',
         ref: ref?.textContent ?? '',
         desc: desc?.textContent ?? '',
@@ -229,7 +256,7 @@ function writeSessionFile(name) {
       JSON.stringify(builderDefaults),
     );
 
-    await page.locator('.je-pattern-btn', { hasText: 'Weekly' }).click();
+    await patternBtn('Weekly').click();
     await delay(150);
     let cronRef = await page.locator('.je-cron-ref code').textContent();
     let wdDesc = await page.locator('.je-cron-desc').textContent();
@@ -250,7 +277,7 @@ function writeSessionFile(name) {
     cronRef = await page.locator('.je-cron-ref code').textContent();
     report('time selectors rewrite the expression', cronRef === '0 3 * * sun-sat', String(cronRef));
 
-    await page.locator('.je-pattern-btn', { hasText: 'Minutes' }).click();
+    await patternBtn('Minutes').click();
     await page.locator('.je-chip', { hasText: '30 min' }).click();
     await delay(150);
     cronRef = await page.locator('.je-cron-ref code').textContent();
@@ -271,7 +298,7 @@ function writeSessionFile(name) {
         label: px('.job-editor-field label'),
         input: px('.job-editor-input'),
         segBtn: px('.job-editor-seg-btn'),
-        patternBtn: px('.je-pattern-btn'),
+        patternSegBtn: px('.je-pattern-seg .job-editor-seg-btn'),
         chip: px('.je-chip'),
         save: px('.job-editor-save'),
       };
@@ -290,36 +317,6 @@ function writeSessionFile(name) {
         `${val}px`,
       );
     }
-
-    await page.locator('.je-mode-btn', { hasText: 'raw expression' }).click();
-    await page.waitForSelector('input[placeholder="0 3 * * *"]', { timeout: 5000 });
-    await page.locator('input[placeholder="0 3 * * *"]').fill('99 * * * *');
-    await delay(150);
-    const previewBad = await page.evaluate(() => {
-      const el = document.querySelector('.je-cron-preview');
-      if (!el) return null;
-      return {
-        bad: el.classList.contains('je-cron-preview--bad'),
-        err: el.querySelector('.je-cron-error')?.textContent ?? '',
-      };
-    });
-    report(
-      'invalid raw cron surfaces an inline error instead of a silent preview',
-      !!previewBad && previewBad.bad && /not a valid/.test(previewBad.err),
-      JSON.stringify(previewBad),
-    );
-
-    await page.locator('.je-mode-btn', { hasText: 'use builder' }).click();
-    await delay(150);
-    const backToBuilder = await page.evaluate(() => ({
-      ref: document.querySelector('.je-cron-ref code')?.textContent ?? '',
-      desc: document.querySelector('.je-cron-desc')?.textContent ?? '',
-    }));
-    report(
-      'returning to the builder restores its expression',
-      backToBuilder.ref === '*/30 * * * *' && backToBuilder.desc.includes('Every 30 min'),
-      JSON.stringify(backToBuilder),
-    );
 
     const cardCount = await page.locator('.je-card').count();
     await page.locator('.je-card').first().click();
@@ -345,6 +342,50 @@ function writeSessionFile(name) {
       'save stays disabled until required fields are filled',
       disabledAtStart && disabledAfterName && enabledAfterAll,
       `empty=${disabledAtStart} nameOnly=${disabledAfterName} allFilled=${enabledAfterAll}`,
+    );
+
+    const customItem = page.locator('.jobs-item', { hasText: 'custom-cron job' });
+    await customItem.first().waitFor({ timeout: 10000 });
+    await customItem.first().locator('.jobs-item-row').first().click();
+    await page.waitForSelector('.job-editor-title-main:has-text("custom-cron job")', { timeout: 10000 });
+    await delay(400);
+    const customState = await page.evaluate(() => {
+      const editors = [...document.querySelectorAll('.job-editor')];
+      const ed = editors.find((e) => e.textContent?.includes('custom-cron job')) ?? null;
+      const seg = ed?.querySelector('.je-pattern-seg') ?? null;
+      const on = seg?.querySelector('.job-editor-seg-btn--on');
+      return {
+        created: ed !== null,
+        patterns: seg?.querySelectorAll('.job-editor-seg-btn').length ?? 0,
+        selected: on?.textContent ?? '',
+        ref: ed?.querySelector('.je-cron-ref code')?.textContent ?? '',
+      };
+    });
+    report(
+      'unrepresentable cron opens read-only as Custom with the expression preserved',
+      customState.created &&
+        customState.patterns === 6 &&
+        customState.selected === 'Custom' &&
+        customState.ref === '15 9,17 * * mon-fri',
+      JSON.stringify(customState),
+    );
+
+    await patternBtn('Daily').click();
+    await delay(150);
+    const rebuilt = await page.evaluate(() => {
+      const editors = [...document.querySelectorAll('.job-editor')];
+      const ed = editors.find((e) => e.textContent?.includes('custom-cron job')) ?? null;
+      const seg = ed?.querySelector('.je-pattern-seg');
+      return {
+        patterns: seg?.querySelectorAll('.job-editor-seg-btn').length ?? 0,
+        selected: seg?.querySelector('.job-editor-seg-btn--on')?.textContent ?? '',
+        ref: ed?.querySelector('.je-cron-ref code')?.textContent ?? '',
+      };
+    });
+    report(
+      'picking a pattern from Custom rewrites the expression and drops the Custom pill',
+      rebuilt.patterns === 5 && rebuilt.selected === 'Daily' && /^0 \d{1,2} \* \* \*$/.test(rebuilt.ref),
+      JSON.stringify(rebuilt),
     );
 
     const injectWide = () =>

@@ -221,40 +221,39 @@ function writeSessionFile(name) {
         body: JSON.stringify({ jobs: [CUSTOM_JOB] }),
       }),
     );
-    await page.route('**/api/slash', async (route) => {
-      const body = route.request().postDataJSON();
-      if (body?.command === '_models') {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({
-            ok: true,
-            data: {
-              models: [
-                {
-                  id: 'stub-pro',
-                  provider: 'stub',
-                  name: 'Stub Pro',
-                  reasoning: true,
-                  contextWindow: 200000,
-                  thinkingLevels: ['off', 'low', 'high'],
-                },
-                {
-                  id: 'stub-mini',
-                  provider: 'stub',
-                  name: 'Stub Mini',
-                  reasoning: false,
-                  contextWindow: 100000,
-                  thinkingLevels: ['off'],
-                },
-              ],
-              default: null,
-            },
-          }),
-        });
-      } else {
+    await page.route('**/api/models*', async (route) => {
+      const url = new URL(route.request().url());
+      if (url.searchParams.get('file')) {
         await route.continue();
+        return;
       }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          models: [
+            {
+              id: 'stub-pro',
+              provider: 'stub',
+              name: 'Stub Pro',
+              reasoning: true,
+              contextWindow: 200000,
+              thinkingLevels: ['off', 'low', 'high'],
+            },
+            {
+              id: 'stub-mini',
+              provider: 'stub',
+              name: 'Stub Mini',
+              reasoning: false,
+              contextWindow: 100000,
+              thinkingLevels: ['off'],
+            },
+          ],
+          default: null,
+          current: null,
+          currentThinkingLevel: null,
+        }),
+      });
     });
 
     await page.locator('.sf-docker-app[title="Scheduler"]').click();

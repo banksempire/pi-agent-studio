@@ -25,11 +25,8 @@ if (!sdkDir) {
   process.exit(1);
 }
 const sdk = await import(pathToFileURL(path.join(sdkDir, 'dist', 'index.js')).href);
-const { BUILTIN_SLASH_COMMANDS } = await import(
-  pathToFileURL(path.join(sdkDir, 'dist', 'core', 'slash-commands.js')).href
-);
 
-export { BUILTIN_SLASH_COMMANDS, sdk, sdkDir };
+export { sdk, sdkDir };
 
 export function hashId(text) {
   let h = 0;

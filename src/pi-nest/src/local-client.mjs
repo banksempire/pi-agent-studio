@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
-import { execSlash, listSkills, slashCatalog } from './slash.mjs';
+import { getModelsData, setSessionModel } from './models.mjs';
+import { execSlash } from './slash.mjs';
 
 const MAX_IMAGES = 4;
 const MAX_IMAGE_BASE64 = 11_200_000;
@@ -67,11 +68,29 @@ export function createLocalClient(registry) {
       };
     },
 
-    async getSlashCatalog() {
-      return {
-        commandsJson: JSON.stringify(slashCatalog()),
-        skillsJson: JSON.stringify(listSkills()),
-      };
+    async getModels({ file = '' } = {}) {
+      try {
+        const data = await getModelsData(registry, file || undefined);
+        return { ok: true, ...data };
+      } catch (e) {
+        return {
+          ok: false,
+          error: String(e?.message ?? e),
+          models: [],
+          default: null,
+          current: null,
+          currentThinkingLevel: null,
+        };
+      }
+    },
+
+    async setModel({ file = '', model = '', thinkLevel = '' } = {}) {
+      try {
+        const notice = await setSessionModel(registry, { file: file || undefined, model, thinkLevel });
+        return { ok: true, notice };
+      } catch (e) {
+        return { ok: false, error: String(e?.message ?? e) };
+      }
     },
 
     async listStates() {

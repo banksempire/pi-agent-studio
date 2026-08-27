@@ -4,23 +4,19 @@ import Menu from '@sf/components/Menu.vue';
 import type { MenuNodeDef } from '@sf/types/layout';
 import type { KeyValueItem } from '@sf/types/panel';
 import { computed, onMounted, ref, watch } from 'vue';
-import type { ModelCatalog, ModelInfo } from '../modelInfo';
-import { cachedModelMatches, getModelInfo, setCachedModel } from '../modelInfo';
-import { api, useChatStore } from '../store/chat';
-
-const LEVEL_DESCRIPTIONS: Record<string, string> = {
-  off: 'No reasoning',
-  minimal: 'Very brief reasoning (~1k tokens)',
-  low: 'Light reasoning (~2k tokens)',
-  medium: 'Moderate reasoning (~8k tokens)',
-  high: 'Deep reasoning (~16k tokens)',
-  xhigh: 'Extra-high reasoning (~32k tokens)',
-  max: 'Maximum reasoning',
-};
+import type { ModelCatalogView, ModelInfo } from '../modelInfo';
+import {
+  cachedModelMatches,
+  loadSessionModels,
+  modelMenuItems,
+  setCachedModel,
+  setSessionModel,
+} from '../modelInfo';
+import { useChatStore } from '../store/chat';
 
 const store = useChatStore();
 
-const catalog = ref<ModelCatalog | null>(null);
+const catalog = ref<ModelCatalogView | null>(null);
 const busy = ref(false);
 const error = ref('');
 const open = ref(false);
@@ -35,7 +31,7 @@ async function load(force = false) {
   }
   error.value = '';
   try {
-    catalog.value = await getModelInfo(s.file, force);
+    catalog.value = await loadSessionModels(s.file, force);
   } catch (e) {
     if (!(e instanceof TypeError)) {
       error.value = String((e as Error)?.message ?? e);
@@ -59,32 +55,7 @@ watch(
 );
 onMounted(() => void load());
 
-const providers = computed(() => {
-  if (!catalog.value) return [];
-  const seen = new Set<string>();
-  for (const m of catalog.value.models) seen.add(m.provider);
-  return [...seen].sort();
-});
-
-const modelsOf = (p: string) => catalog.value?.models.filter((m) => m.provider === p) ?? [];
-
-const menuItems = computed<MenuNodeDef[]>(() =>
-  providers.value.map((p) => ({
-    id: p,
-    label: p,
-    items: modelsOf(p).map((m) => ({
-      id: m.id,
-      label: m.name || m.id,
-      detail: m.reasoning ? 'thinking' : 'plain',
-      items: m.thinkingLevels.map((l) => ({
-        id: l,
-        label: l === 'off' ? '(None)' : l,
-        detail: LEVEL_DESCRIPTIONS[l] ?? '',
-        data: { model: m, level: l },
-      })),
-    })),
-  })),
-);
+const menuItems = computed<MenuNodeDef[]>(() => modelMenuItems(catalog.value?.models ?? []));
 
 function onSelect(item: MenuNodeDef) {
   const d = item.data as { model: ModelInfo; level: string } | undefined;
@@ -109,22 +80,9 @@ async function commit(m: ModelInfo, thinkLevel: string) {
   busy.value = true;
   error.value = '';
   try {
-    const j = await api<{ ok: boolean; error?: string }>('/api/slash', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        file: s.file,
-        command: 'model',
-        args: `${m.provider}/${m.id}`,
-        extra: { thinkLevel },
-      }),
-    });
-    if (!j.ok) {
-      error.value = j.error || 'Failed to apply model';
-    } else {
-      setCachedModel(s.file, m, thinkLevel);
-      void load(true);
-    }
+    await setSessionModel(s.file, `${m.provider}/${m.id}`, thinkLevel);
+    setCachedModel(s.file, m, thinkLevel);
+    void load(true);
   } catch (e) {
     if (!(e instanceof TypeError)) {
       error.value = String((e as Error)?.message ?? e);

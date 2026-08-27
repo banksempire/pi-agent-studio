@@ -27,6 +27,7 @@
     "check:registry": "node scripts/check-registry-drain.cjs",
     "check:stream-scroll": "node scripts/check-stream-scroll.cjs",
     "check:backend-restart": "node scripts/check-backend-restart.cjs",
+    "check:modelapi": "node scripts/check-model-api.cjs",
     "check:scheduler": "node scripts/check-scheduler.cjs"
   },
   "dependencies": {

@@ -402,6 +402,7 @@ function deriveSession(entries, st) {
   const header = entries.find((e) => e.type === 'session');
   let name;
   let model = null;
+  let modelKey = null;
   let thinkingLevel = null;
   let firstMessage = '';
   let lastText = '';
@@ -412,7 +413,12 @@ function deriveSession(entries, st) {
     if (entry.type === 'session') continue;
     if (entry.type === 'session_info' && entry.name !== undefined) name = entry.name;
     if (entry.type === 'model_change') {
-      if (!model) model = entry.modelId ?? null;
+      model = entry.modelId ?? model;
+      modelKey = entry.modelId
+        ? entry.provider
+          ? `${entry.provider}/${entry.modelId}`
+          : entry.modelId
+        : modelKey;
       continue;
     }
     if (entry.type === 'thinking_level_change') {
@@ -436,7 +442,10 @@ function deriveSession(entries, st) {
       lastText = plainTextOf(msg.content);
     }
     if (msg.role === 'assistant') {
-      if (msg.model) model = msg.model;
+      if (msg.model) {
+        model = msg.model;
+        modelKey = msg.provider ? `${msg.provider}/${msg.model}` : msg.model;
+      }
       const t = textOf(msg.content);
       if (t) lastText = t;
     }
@@ -476,6 +485,7 @@ function deriveSession(entries, st) {
       firstMessage: firstMessage.slice(0, 200),
       preview: lastText.slice(0, 200),
       model,
+      modelKey,
       tokens: stats.tokens,
       cost: stats.cost,
       costBreakdown: stats.costBreakdown,
@@ -626,6 +636,7 @@ async function analyzeSession(file, opts = {}) {
     firstMessage: base.firstMessage,
     preview: base.preview,
     model: base.model,
+    modelKey: base.modelKey ?? null,
     tokens: base.tokens,
     cost: base.cost,
     costBreakdown: base.costBreakdown,
@@ -645,36 +656,50 @@ async function analyzeSession(file, opts = {}) {
 let modelWindows = new Map();
 let modelCostRates = new Map();
 let modelCatalogAt = 0;
-let modelCatalogBackoff = 0;
+let modelCatalogFailAt = 0;
 const MODEL_CATALOG_TTL_MS = 60 * 1000;
+const MODEL_CATALOG_RETRY_MS = 5 * 1000;
 
 async function ensureModelCatalog() {
-  if (Date.now() - modelCatalogAt <= MODEL_CATALOG_TTL_MS) return;
-  if (modelCatalogAt === 0 && modelCatalogBackoff !== 0 && Date.now() - modelCatalogBackoff <= 5_000) return;
+  const now = Date.now();
+  if (now - modelCatalogAt <= MODEL_CATALOG_TTL_MS) return;
+  if (now - modelCatalogFailAt <= MODEL_CATALOG_RETRY_MS) return;
   try {
-    const r = await client.slash({ agentId: '', command: '_models' });
-    const data = r.dataJson ? JSON.parse(r.dataJson) : {};
-    modelWindows = new Map();
-    modelCostRates = new Map();
-    for (const m of data.models ?? []) {
-      modelWindows.set(m.id, m.contextWindow ?? 0);
-      modelCostRates.set(`${m.provider}/${m.id}`, m.cost ?? {});
+    const r = await client.getModels({ file: '' });
+    if (!r.ok) throw new Error(r.error || 'model catalog unavailable');
+    const windows = new Map();
+    const rates = new Map();
+    for (const m of r.models ?? []) {
+      windows.set(`${m.provider}/${m.id}`, m.contextWindow ?? 0);
+      rates.set(`${m.provider}/${m.id}`, m.cost ?? {});
     }
+    modelWindows = windows;
+    modelCostRates = rates;
     modelCatalogAt = Date.now();
   } catch {
-    modelCatalogBackoff = Date.now();
+    modelCatalogFailAt = Date.now();
   }
 }
 
 async function contextWindowOf(modelId) {
   if (!modelId) return 0;
   await ensureModelCatalog();
-  return modelWindows.get(modelId) ?? 0;
+  if (modelWindows.size === 0) return 0;
+  if (modelWindows.has(modelId)) return modelWindows.get(modelId);
+  const bare = modelId.includes('/') ? modelId.slice(modelId.indexOf('/') + 1) : modelId;
+  let hit = null;
+  for (const [key, window] of modelWindows) {
+    if (key.endsWith(`/${bare}`)) {
+      if (hit !== null) return 0;
+      hit = window;
+    }
+  }
+  return hit ?? 0;
 }
 
 async function withContext(info) {
   const tokens = info.contextTokens ?? null;
-  const window = await contextWindowOf(info.model);
+  const window = await contextWindowOf(info.modelKey ?? info.model);
   info.context = {
     tokens,
     window,
@@ -1374,11 +1399,36 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    if (p === '/api/slash-commands' && req.method === 'GET') {
-      const r = await client.getSlashCatalog({});
-      const commands = r.commandsJson ? JSON.parse(r.commandsJson) : [];
-      const skills = r.skillsJson ? JSON.parse(r.skillsJson) : [];
-      sendJson(res, 200, { commands, skills });
+    if (p === '/api/models' && req.method === 'GET') {
+      const file = url.searchParams.get('file') || '';
+      try {
+        const r = await client.getModels({ file });
+        if (!r.ok) return sendJson(res, 400, { error: r.error || 'Failed to load models' });
+        sendJson(res, 200, {
+          models: r.models ?? [],
+          default: r.default ?? null,
+          current: r.current ?? null,
+          currentThinkingLevel: r.currentThinkingLevel ?? null,
+        });
+      } catch (e) {
+        sendJson(res, 400, { error: String(e?.message ?? e) });
+      }
+      return;
+    }
+
+    if (p === '/api/models' && req.method === 'POST') {
+      const body = await readBody(req);
+      if (!body.file) return sendJson(res, 400, { error: 'missing file' });
+      try {
+        const r = await client.setModel({
+          file: body.file,
+          model: body.model ?? '',
+          thinkLevel: body.thinkLevel ?? '',
+        });
+        sendJson(res, r.ok ? 200 : 400, r);
+      } catch (e) {
+        sendJson(res, 400, { ok: false, error: String(e?.message ?? e) });
+      }
       return;
     }
 

@@ -78,8 +78,11 @@ export async function createClient() {
       }
       return { ok: true, notice: '' };
     },
-    async getSlashCatalog() {
-      return { commandsJson: '[]', skillsJson: '[]' };
+    async getModels() {
+      return { ok: true, models: [], default: null, current: null, currentThinkingLevel: null };
+    },
+    async setModel() {
+      return { ok: true, notice: '' };
     },
     async listStates() {
       return { states: liveStates };

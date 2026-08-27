@@ -6,15 +6,6 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ActionBubble, ActionGroup, type ActionKind, type ActionStatus, actionName } from '../actionBubble';
 import { dataUrlOf, processImageFile } from '../imageAttach';
 import {
-  allSlashCommands,
-  type ParsedSlash,
-  parseSlash,
-  runSlash,
-  type SlashCommandInfo,
-  type SlashPicker,
-  type SlashResult,
-} from '../slash/commands';
-import {
   attachmentsOf,
   type ChatAttachment,
   type ChatSession,
@@ -605,68 +596,6 @@ watch(items, (list) => {
   }
 });
 
-const commandCatalog = ref<SlashCommandInfo[]>([]);
-const completionOpen = ref(false);
-const completionIndex = ref(0);
-const completionItems = ref<SlashCommandInfo[]>([]);
-let catalogLoaded = false;
-
-const LOCAL_COMMANDS: SlashCommandInfo[] = [
-  {
-    name: 'wait',
-    description: 'Queue this message — it runs after the current turn finishes, instead of interrupting it',
-    argumentHint: '<message>',
-    available: true,
-  },
-];
-
-function ensureCatalog() {
-  if (catalogLoaded) return;
-  catalogLoaded = true;
-  void allSlashCommands().then((cmds) => {
-    commandCatalog.value = [...LOCAL_COMMANDS, ...cmds];
-    updateCompletions();
-  });
-}
-
-function isKnownCommand(name: string): boolean {
-  return commandCatalog.value.some((c) => c.name === name);
-}
-
-function updateCompletions() {
-  const t = input.value;
-  if (!t.startsWith('/') || t.startsWith('//')) {
-    completionOpen.value = false;
-    return;
-  }
-  const sp = t.indexOf(' ');
-  const prefix = (sp < 0 ? t.slice(1) : t.slice(1, sp)).toLowerCase();
-  const items = commandCatalog.value.filter((c) => c.name.startsWith(prefix));
-  completionItems.value = items;
-  completionIndex.value = 0;
-  completionOpen.value = items.length > 0;
-}
-
-watch(input, () => {
-  ensureCatalog();
-  updateCompletions();
-});
-
-function completeWith(cmd: SlashCommandInfo) {
-  input.value = `/${cmd.name} `;
-  completionOpen.value = false;
-  nextTick(() => inputEl.value?.focus());
-}
-
-function moveCompletion(delta: number) {
-  const n = completionItems.value.length;
-  if (n === 0) return;
-  completionIndex.value = (completionIndex.value + delta + n) % n;
-}
-
-const picker = ref<SlashPicker | null>(null);
-const pickerIndex = ref(0);
-
 const review = ref<{ images: MessageImage[]; start: number } | null>(null);
 
 const composerBlock = computed(() => {
@@ -687,72 +616,12 @@ function openReview(images: MessageImage[], start: number) {
   review.value = { images, start };
 }
 
-async function handleSlashResult(r: SlashResult) {
-  switch (r.kind) {
-    case 'none':
-      break;
-    case 'notice':
-      store.appendLocalMessage(props.sessionId, { text: r.text });
-      break;
-    case 'error':
-      store.appendLocalMessage(props.sessionId, { text: r.text, isError: true });
-      break;
-    case 'clipboard':
-      try {
-        await navigator.clipboard.writeText(r.text);
-        store.appendLocalMessage(props.sessionId, { text: 'Copied last agent message to clipboard.' });
-      } catch {
-        store.appendLocalMessage(props.sessionId, {
-          text: `Clipboard unavailable — last agent message:\n\n${r.text}`,
-        });
-      }
-      break;
-    case 'download': {
-      const blob = new Blob([r.content], { type: r.mime || 'text/plain' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = r.filename || 'export';
-      a.click();
-      URL.revokeObjectURL(url);
-      store.appendLocalMessage(props.sessionId, { text: `Exported session — downloaded ${r.filename}.` });
-      break;
-    }
-    case 'picker':
-      picker.value = r;
-      pickerIndex.value = 0;
-      break;
-  }
-}
-
-function runCommand(parsed: ParsedSlash) {
-  store.clearSessionError(props.sessionId);
-  input.value = '';
-  completionOpen.value = false;
-  void runCommandAsync(parsed);
-}
-
 function compactContext() {
   const s = session.value;
   if (!s || s.compacting) return;
-  const parsed = parseSlash('/compact');
-  if (!parsed) return;
   store.clearSessionError(props.sessionId);
-  void runCommandAsync(parsed);
-}
-
-async function runCommandAsync(parsed: ParsedSlash) {
-  const r = await runSlash(props.sessionId, parsed);
-  await handleSlashResult(r);
+  void store.compactSession(props.sessionId);
   pinToBottom();
-}
-
-async function onPickerSelect(id: string) {
-  const p = picker.value;
-  if (!p) return;
-  picker.value = null;
-  const r = await p.onSelect(id);
-  if (r) await handleSlashResult(r);
 }
 
 const MOBILE_INPUT_MAX_PX = 120;
@@ -783,29 +652,6 @@ function send() {
   const text = input.value.trim();
   const imgs = attachments.value.map((a) => ({ data: a.data, mimeType: a.mimeType }));
   if ((!text && !imgs.length) || !session.value) return;
-  const parsed = text ? parseSlash(text) : null;
-  if (parsed && parsed.command === 'wait') {
-    const rest = parsed.args.trim();
-    if (!rest && !imgs.length) {
-      store.appendLocalMessage(props.sessionId, {
-        text: 'Usage: /wait <message> — the message queues and runs after the current turn finishes, instead of interrupting it.',
-      });
-      input.value = '';
-      completionOpen.value = false;
-      inputEl.value?.focus();
-      return;
-    }
-    store.clearSessionError(props.sessionId);
-    void store.sendMessage(props.sessionId, rest, { wait: true, images: imgs });
-    input.value = '';
-    attachments.value = [];
-    pinToBottom();
-    return;
-  }
-  if (parsed) {
-    void runCommand(parsed);
-    return;
-  }
   store.clearSessionError(props.sessionId);
   void store.sendMessage(props.sessionId, text, { images: imgs });
   input.value = '';
@@ -873,69 +719,11 @@ function onWindowShiftKey(e: KeyboardEvent) {
 }
 
 function onKeydown(e: KeyboardEvent) {
-  if (picker.value) {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      pickerIndex.value = (pickerIndex.value + 1) % picker.value.items.length;
-      return;
-    }
-    if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      pickerIndex.value = (pickerIndex.value - 1 + picker.value.items.length) % picker.value.items.length;
-      return;
-    }
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      void onPickerSelect(picker.value.items[pickerIndex.value].id);
-      return;
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      picker.value = null;
-      return;
-    }
-    return;
-  }
-
-  if (completionOpen.value) {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      moveCompletion(1);
-      return;
-    }
-    if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      moveCompletion(-1);
-      return;
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      completionOpen.value = false;
-      return;
-    }
-    if (e.key === 'Tab') {
-      e.preventDefault();
-      const items = completionItems.value;
-      if (items[completionIndex.value]) completeWith(items[completionIndex.value]);
-      return;
-    }
-  }
-
   const realShift = e.shiftKey && (shiftDown || performance.now() - lastShiftDown < SHIFT_TRUST_WINDOW);
   const sendPressed =
     e.key === 'Enter' && !e.isComposing && (store.prefs.sendKey === 'enter' ? !realShift : realShift);
   if (sendPressed) {
     e.preventDefault();
-    const parsed = parseSlash(input.value);
-    if (
-      completionOpen.value &&
-      parsed &&
-      !isKnownCommand(parsed.command) &&
-      completionItems.value.length > 0
-    ) {
-      completeWith(completionItems.value[completionIndex.value]);
-      return;
-    }
     send();
   }
 }
@@ -1072,7 +860,6 @@ watch(
     }
     if (newId) {
       review.value = null;
-      picker.value = null;
       flash.value = {};
       prevBubbleStatus.clear();
       restoreScroll(newId);
@@ -1091,9 +878,7 @@ watch(
     <div ref="listEl" class="chat-messages" @scroll="onScroll">
       <div class="chat-flow">
         <div v-if="!session" class="chat-empty">Session not found.</div>
-        <div v-else-if="session.messages.length === 0" class="chat-empty">
-          No messages yet — say hello. Type <code>/</code> for slash commands.
-        </div>
+        <div v-else-if="session.messages.length === 0" class="chat-empty">No messages yet — say hello.</div>
         <template v-else>
         <div
           class="chat-load-older"
@@ -1258,20 +1043,6 @@ watch(
       >
         <SvgIcon name="⚠" /> {{ windowError }} (click to dismiss)
       </div>
-        <div v-if="completionOpen && !picker" class="chat-completions">
-          <div
-            v-for="(c, i) in completionItems"
-            :key="c.name"
-            class="chat-completion"
-            :class="{ 'chat-completion--selected': i === completionIndex }"
-            @mouseenter="completionIndex = i"
-            @click="completeWith(c)"
-          >
-            <span class="chat-completion-name">/{{ c.name }}</span>
-            <span class="chat-completion-hint">{{ c.argumentHint ?? '' }}</span>
-            <span class="chat-completion-desc">{{ c.description }}</span>
-          </div>
-        </div>
 
         <div v-if="attachments.length" class="chat-attach-row">
           <div v-for="(a, i) in attachments" :key="i" class="chat-attach-chip">
@@ -1350,26 +1121,5 @@ watch(
       :start="review.start"
       @close="review = null"
     />
-
-    <div v-if="picker" class="chat-picker-backdrop" @click.self="picker = null">
-      <div class="chat-picker">
-        <div class="chat-picker-title">{{ picker.title }}</div>
-        <div class="chat-picker-list">
-          <div
-            v-for="(item, i) in picker.items"
-            :key="item.id"
-            class="chat-picker-item"
-            :class="{ 'chat-picker-item--selected': i === pickerIndex }"
-            @mouseenter="pickerIndex = i"
-            @click="onPickerSelect(item.id)"
-          >
-            <span class="chat-picker-label">{{ item.label }}</span>
-            <span v-if="item.detail" class="chat-picker-detail">{{ item.detail }}</span>
-          </div>
-          <div v-if="picker.items.length === 0" class="chat-picker-empty">Nothing to pick from.</div>
-        </div>
-        <div class="chat-picker-footer">↑↓ navigate · Enter pick · Esc cancel</div>
-      </div>
-    </div>
   </div>
 </template>

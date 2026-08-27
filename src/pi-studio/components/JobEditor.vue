@@ -6,8 +6,8 @@ import type { MenuNodeDef } from '@sf/types/layout';
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import type { PeriodicPatternState } from '../cronInfo';
 import { checkCron, cronToPattern, describeCron, nextCronRuns, patternToCron } from '../cronInfo';
-import type { ModelInfo } from '../modelInfo';
-import { getAvailableModels } from '../modelInfo';
+import type { ModelCatalogView, ModelInfo } from '../modelInfo';
+import { modelMenuItems as buildModelMenu, loadModelCatalog } from '../modelInfo';
 import type { JobInfo } from '../store/chat';
 import { useChatStore } from '../store/chat';
 
@@ -42,15 +42,6 @@ const DOW_OPTIONS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((name,
 }));
 const EVERY_MINUTE_OPTIONS = [1, 2, 3, 4, 5, 10, 15, 20, 30, 40, 50];
 const HOURLY_MINUTE_OPTIONS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
-const LEVEL_DESCRIPTIONS: Record<string, string> = {
-  off: 'No reasoning',
-  minimal: 'Very brief reasoning (~1k tokens)',
-  low: 'Light reasoning (~2k tokens)',
-  medium: 'Moderate reasoning (~8k tokens)',
-  high: 'Deep reasoning (~16k tokens)',
-  xhigh: 'Extra-high reasoning (~32k tokens)',
-  max: 'Maximum reasoning',
-};
 
 const TARGET_OPTIONS: Array<{ mode: 'file' | 'new' | 'reuse'; title: string; desc: string }> = [
   { mode: 'file', title: 'Existing session', desc: 'Deliver into a session you pick' },
@@ -72,7 +63,7 @@ const form = reactive({
 });
 
 const mode = ref<SchedMode>('once');
-const modelCatalog = ref<{ models: ModelInfo[]; default: ModelInfo | null } | null>(null);
+const modelCatalog = ref<ModelCatalogView | null>(null);
 const modelError = ref('');
 const modelMenuOpen = ref(false);
 const periodic = reactive({
@@ -189,42 +180,14 @@ onMounted(() => {
 
 async function loadModels() {
   try {
-    modelCatalog.value = await getAvailableModels();
+    modelCatalog.value = await loadModelCatalog();
     modelError.value = '';
   } catch (e) {
     if (!(e instanceof TypeError)) modelError.value = String((e as Error)?.message ?? e);
   }
 }
 
-const modelMenuItems = computed<MenuNodeDef[]>(() => {
-  const catalog = modelCatalog.value;
-  if (!catalog) return [];
-  const providers: string[] = [];
-  const seen = new Set<string>();
-  for (const m of catalog.models) {
-    if (!seen.has(m.provider)) {
-      seen.add(m.provider);
-      providers.push(m.provider);
-    }
-  }
-  return providers.map((p) => ({
-    id: p,
-    label: p,
-    items: catalog.models
-      .filter((m) => m.provider === p)
-      .map((m) => ({
-        id: m.id,
-        label: m.name || m.id,
-        detail: m.reasoning ? 'thinking' : 'plain',
-        items: m.thinkingLevels.map((l) => ({
-          id: l,
-          label: l === 'off' ? '(None)' : l,
-          detail: LEVEL_DESCRIPTIONS[l] ?? '',
-          data: { model: m, level: l },
-        })),
-      })),
-  }));
-});
+const modelMenuItems = computed<MenuNodeDef[]>(() => buildModelMenu(modelCatalog.value?.models ?? []));
 
 function onModelSelect(item: MenuNodeDef) {
   const d = item.data as { model: ModelInfo; level: string } | undefined;

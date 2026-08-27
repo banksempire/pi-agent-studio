@@ -1,43 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import {
-  BUILTIN_SLASH_COMMANDS,
-  NEW_CHAT_CWD,
-  SESSIONS_ROOT,
-  sdk,
-  sdkDir,
-  supportedThinkingLevels,
-} from './sdk-bridge.mjs';
-
-const NA_COMMANDS = {
-  settings: 'Settings are configured in the pi TUI (/settings there).',
-  login: 'Provider authentication requires the pi TUI (opens OAuth in the terminal).',
-  logout: 'Provider logout requires the pi TUI.',
-  trust: 'Project trust decisions are made in the pi TUI.',
-  share: 'Gist sharing requires GitHub auth in the pi TUI.',
-  quit: 'Nothing to quit in a browser tab — close the tab instead.',
-};
-
-function serializeModel(m) {
-  if (!m) return null;
-  return {
-    id: m.id,
-    provider: m.provider,
-    name: m.name,
-    reasoning: !!m.reasoning,
-    contextWindow: m.contextWindow ?? 0,
-    cost: m.cost
-      ? {
-          input: m.cost.input ?? 0,
-          output: m.cost.output ?? 0,
-          cacheRead: m.cost.cacheRead ?? 0,
-          cacheWrite: m.cost.cacheWrite ?? 0,
-        }
-      : undefined,
-    thinkingLevels: supportedThinkingLevels(m),
-  };
-}
+import { serializeModel } from './models.mjs';
+import { NEW_CHAT_CWD, SESSIONS_ROOT, sdk, sdkDir } from './sdk-bridge.mjs';
 
 function treeToJson(nodes) {
   return (nodes ?? []).map((n) => ({
@@ -61,65 +26,14 @@ async function forkSession(registry, live, targetLeafId) {
   return forkedPath;
 }
 
-async function catalogOf(cwd) {
-  const sm = sdk.SessionManager.inMemory(cwd);
-  const { session } = await sdk.createAgentSession({ sessionManager: sm });
-  try {
-    const models = await session.modelRuntime.getAvailable().catch(() => []);
-    return {
-      models,
-      defaultModel: session.model,
-      defaultLevel: session.thinkingLevel ?? null,
-    };
-  } finally {
-    try {
-      session.dispose();
-    } catch {}
-  }
-}
-
-let catalogCache = null;
-let catalogCachedAt = 0;
-const CATALOG_TTL_MS = 30 * 1000;
-
-async function pendingCatalog(pending) {
-  if (!catalogCache || Date.now() - catalogCachedAt > CATALOG_TTL_MS) {
-    catalogCache = await catalogOf(pending.cwd);
-    catalogCachedAt = Date.now();
-  }
-  return {
-    models: catalogCache.models,
-    current: pending.model ?? catalogCache.defaultModel,
-    currentLevel: pending.thinkLevel ?? catalogCache.defaultLevel,
-  };
-}
-
-function findModel(models, term) {
-  const t = term.toLowerCase();
-  return models.find((m) => `${m.provider}/${m.id}`.toLowerCase() === t);
-}
-
 export async function execSlash(registry, { agentId, command, args, extra = {} }) {
   const name = String(command ?? '')
     .replace(/^\/+/, '')
     .trim();
   if (!name) return { ok: false, error: 'empty slash command' };
-  if (NA_COMMANDS[name]) return { ok: true, notice: NA_COMMANDS[name] };
   const file = agentId || undefined;
 
   switch (name) {
-    case '_models': {
-      const { models, defaultModel } = await pendingCatalog({
-        cwd: NEW_CHAT_CWD,
-        model: null,
-        thinkLevel: null,
-      });
-      return {
-        ok: true,
-        data: { models: models.map(serializeModel), default: serializeModel(defaultModel) },
-      };
-    }
-
     case 'new': {
       const cwd = args?.trim() || NEW_CHAT_CWD;
       const { file: f } = registry.createSession(cwd);
@@ -197,95 +111,6 @@ export async function execSlash(registry, { agentId, command, args, extra = {} }
       const text = live.session.getLastAssistantText();
       if (!text) return { ok: true, notice: 'No agent messages to copy yet.' };
       return { ok: true, data: { text } };
-    }
-
-    case 'model': {
-      const requested = args?.trim() ?? '';
-      const wantedLevel = extra?.thinkLevel ?? null;
-
-      const pending = registry.pendingInfo(file);
-      if (pending) {
-        const { models, current, currentLevel } = await pendingCatalog(pending);
-        if (requested) {
-          const hit = findModel(models, requested);
-          if (!hit) return { ok: false, error: `No model matches "${requested}"` };
-          const level = wantedLevel ?? pending.thinkLevel;
-          const levels = supportedThinkingLevels(hit);
-          if (level && !levels.includes(level)) {
-            return {
-              ok: false,
-              error: `"${level}" is not a supported thinking level for ${hit.provider}/${hit.id} (offers: ${levels.join(', ')}).`,
-            };
-          }
-          registry.setPendingModel(file, hit, level);
-          registry.broadcast('refresh', file, {});
-          return {
-            ok: true,
-            notice: `Model: ${hit.provider}/${hit.id}${level ? ` · Thinking: ${level}` : ''} (applies when the chat starts)`,
-          };
-        }
-        if (wantedLevel) {
-          const levels = supportedThinkingLevels(current);
-          if (!levels.includes(wantedLevel)) {
-            return {
-              ok: false,
-              error: `"${wantedLevel}" is not a supported thinking level for ${current.provider}/${current.id} (offers: ${levels.join(', ')}).`,
-            };
-          }
-          registry.setPendingModel(file, current, wantedLevel);
-          registry.broadcast('refresh', file, {});
-          return {
-            ok: true,
-            notice: `Thinking: ${wantedLevel} (applies when the chat starts)`,
-          };
-        }
-        return {
-          ok: true,
-          data: {
-            models: models.map(serializeModel),
-            current: serializeModel(current),
-            currentThinkingLevel: currentLevel,
-          },
-        };
-      }
-
-      const live = await registry.open(file);
-      const rt = live.session.modelRuntime;
-      const current = live.session.model;
-      let target = current;
-      if (requested) {
-        const models = await rt.getAvailable().catch(() => []);
-        const hit = findModel(models, requested);
-        if (!hit) return { ok: false, error: `No model matches "${requested}"` };
-        await live.session.setModel(hit);
-        target = hit;
-        registry.broadcast('refresh', file, {});
-      }
-      if (wantedLevel) {
-        const levels = supportedThinkingLevels(target);
-        if (!levels.includes(wantedLevel)) {
-          return {
-            ok: false,
-            error: `"${wantedLevel}" is not a supported thinking level for ${target.provider}/${target.id} (offers: ${levels.join(', ')}).`,
-          };
-        }
-        live.session.setThinkingLevel(wantedLevel);
-      }
-      if (!requested && !wantedLevel) {
-        const models = await rt.getAvailable().catch(() => []);
-        return {
-          ok: true,
-          data: {
-            models: models.map(serializeModel),
-            current: serializeModel(current),
-            currentThinkingLevel: live.session.thinkingLevel ?? null,
-          },
-        };
-      }
-      const bits = [];
-      if (requested) bits.push(`Model: ${target.provider}/${target.id}`);
-      if (wantedLevel) bits.push(`Thinking: ${wantedLevel}`);
-      return { ok: true, notice: bits.join(' · ') };
     }
 
     case 'scoped-models': {
@@ -433,38 +258,5 @@ export async function execSlash(registry, { agentId, command, args, extra = {} }
 
     default:
       return { ok: false, error: `Unknown slash command /${name}` };
-  }
-}
-
-export { BUILTIN_SLASH_COMMANDS, NA_COMMANDS };
-
-export function slashCatalog() {
-  return BUILTIN_SLASH_COMMANDS.map((c) => ({
-    name: c.name,
-    description: c.description,
-    argumentHint: c.argumentHint,
-    available: !NA_COMMANDS[c.name],
-    naReason: NA_COMMANDS[c.name],
-  }));
-}
-
-let skillsCache = null;
-let skillsCachedAt = 0;
-const SKILLS_TTL_MS = 60 * 1000;
-
-export function listSkills() {
-  if (skillsCache && Date.now() - skillsCachedAt < SKILLS_TTL_MS) return skillsCache;
-  try {
-    const result = sdk.loadSkills({
-      cwd: NEW_CHAT_CWD,
-      agentDir: sdk.getAgentDir(),
-      skillPaths: [],
-      includeDefaults: true,
-    });
-    skillsCache = (result.skills ?? []).map((s) => ({ name: s.name, description: s.description ?? '' }));
-    skillsCachedAt = Date.now();
-    return skillsCache;
-  } catch {
-    return [];
   }
 }

@@ -1627,6 +1627,21 @@ export function markCompactFailed(sessionId: string, reason?: string | null) {
   if (reason) setSessionError(sessionId, reason);
 }
 
+export async function compactSession(sessionId: string) {
+  const s = findSession(sessionId);
+  if (!s) return;
+  try {
+    const j = await api<any>('/api/slash', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: s.file, command: 'compact' }),
+    });
+    if (!j.ok) markCompactFailed(sessionId, j.error ?? null);
+  } catch (e) {
+    markCompactFailed(sessionId, `Compaction failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
 export async function stopSession(sessionId: string) {
   const s = findSession(sessionId);
   if (!s) return;
@@ -1951,7 +1966,7 @@ export const store = {
   openJobEditor,
   closeJobEditor,
   renameJobEditorTab,
-  markCompactFailed,
+  compactSession,
   stopSession,
   closeChatView,
   renameSession,

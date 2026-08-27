@@ -61,18 +61,17 @@ function isCollapsed(provider: string): boolean {
 
 function fmtContext(window: number): string {
   if (!window) return '—';
-  return window >= 1000 ? `${(window / 1000).toLocaleString()}k` : String(window);
+  return window >= 1000 ? `${Math.round(window / 1000).toLocaleString()}k` : String(window);
+}
+
+function fmtInput(m: ModelInfo): string {
+  return m.input?.length ? m.input.join(' + ') : 'text';
 }
 
 function fmtCost(m: ModelInfo): string {
   const c = m.cost;
   if (!c) return '—';
   return `$${c.input.toFixed(2)} / $${c.output.toFixed(2)} per M`;
-}
-
-function fmtLevels(m: ModelInfo): string {
-  if (!m.reasoning) return 'plain';
-  return m.thinkingLevels.filter((l) => l !== 'off').join(', ') || 'off';
 }
 
 const providers = computed(() => {
@@ -150,7 +149,7 @@ const totalCount = computed(() => {
             </span>
             <span class="model-catalog-ctx">{{ fmtContext(m.contextWindow) }}</span>
             <span class="model-catalog-cost">{{ fmtCost(m) }}</span>
-            <span class="model-catalog-levels" :title="m.thinkingLevels.join(', ')">{{ fmtLevels(m) }}</span>
+            <span class="model-catalog-input">{{ fmtInput(m) }}</span>
           </div>
         </div>
       </div>
@@ -331,7 +330,7 @@ const totalCount = computed(() => {
 
 .model-catalog-ctx,
 .model-catalog-cost,
-.model-catalog-levels {
+.model-catalog-input {
   color: var(--sf-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;

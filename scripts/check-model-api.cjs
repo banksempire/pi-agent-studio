@@ -109,7 +109,7 @@ const STUB_MODELS = [
     provider: 'stub',
     name: 'Stub Pro',
     reasoning: true,
-    contextWindow: 200000,
+    contextWindow: 1048576,
     maxTokens: 8192,
     api: 'openai-completions',
     baseUrl: 'https://stub.example/v1',
@@ -392,6 +392,22 @@ const STUB_MODELS = [
     const idCols = await page.locator('.model-catalog-id').count();
     report('redundant model id column removed', idCols === 0, `idCols=${idCols}`);
 
+    const levelsCols = await page.locator('.model-catalog-levels').count();
+    const proRow = await page.locator('.model-catalog-row', { hasText: 'Stub Pro' }).first().textContent();
+    const miniRow = await page.locator('.model-catalog-row', { hasText: 'Stub Mini' }).first().textContent();
+    report(
+      'catalog rows show name, context, input type, cost only — levels moved to the detail panel',
+      levelsCols === 0 &&
+        !!proRow &&
+        proRow.includes('text + image') &&
+        proRow.includes('1,049k') &&
+        !proRow.includes('low, high') &&
+        !!miniRow &&
+        miniRow.includes('text') &&
+        !miniRow.includes('off'),
+      `levelsCols=${levelsCols} pro=${proRow ? proRow.slice(0, 60) : '?'}`,
+    );
+
     await page.locator('.model-catalog-group-head').click();
     await delay(300);
     const rowsCollapsed = await page.locator('.model-catalog-row').count();
@@ -423,7 +439,7 @@ const STUB_MODELS = [
       detailText.includes('stub-pro') &&
         detailText.includes('openai-completions') &&
         detailText.includes('https://stub.example/v1') &&
-        detailText.includes('200k') &&
+        detailText.includes('1,049k') &&
         detailText.includes('8,192') &&
         detailText.includes('text + image') &&
         detailPill === 1,

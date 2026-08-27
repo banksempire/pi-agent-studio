@@ -29,7 +29,7 @@ async function makeDefault() {
 
 function fmtContext(window: number): string {
   if (!window) return '—';
-  return window >= 1000 ? `${(window / 1000).toLocaleString()}k` : String(window);
+  return window >= 1000 ? `${Math.round(window / 1000).toLocaleString()}k` : String(window);
 }
 
 function fmtTokens(n?: number): string {

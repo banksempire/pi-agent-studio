@@ -197,6 +197,9 @@ export async function createClient() {
     async refreshCatalog() {
       return { ok: true, models: [], default: null, current: null, currentThinkingLevel: null, errors: [] };
     },
+    async setDefault() {
+      return { ok: true, models: [], default: null, current: null, currentThinkingLevel: null, errors: [] };
+    },
     async listStates() {
       return { states: [] };
     },

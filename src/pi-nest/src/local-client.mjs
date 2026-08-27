@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { getModelsData, refreshCatalog, setSessionModel } from './models.mjs';
+import { getModelsData, refreshCatalog, setDefaultModel, setSessionModel } from './models.mjs';
 import { execSlash } from './slash.mjs';
 
 const MAX_IMAGES = 4;
@@ -96,6 +96,15 @@ export function createLocalClient(registry) {
     async refreshCatalog() {
       try {
         const data = await refreshCatalog();
+        return { ok: true, ...data };
+      } catch (e) {
+        return { ok: false, error: String(e?.message ?? e) };
+      }
+    },
+
+    async setDefault({ model = '' } = {}) {
+      try {
+        const data = await setDefaultModel({ model });
         return { ok: true, ...data };
       } catch (e) {
         return { ok: false, error: String(e?.message ?? e) };

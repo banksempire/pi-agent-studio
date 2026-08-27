@@ -157,6 +157,29 @@ export async function refreshCatalog() {
   }
 }
 
+export async function setDefaultModel({ model }) {
+  const t = String(model ?? '').toLowerCase();
+  if (!t.includes('/')) throw new Error('Pass the model as provider/id');
+  const sep = t.indexOf('/');
+  const provider = t.slice(0, sep);
+  const modelId = t.slice(sep + 1);
+  if (!provider || !modelId) throw new Error('Pass the model as provider/id');
+  const sm = sdk.SettingsManager.create(NEW_CHAT_CWD);
+  sm.setDefaultModelAndProvider(provider, modelId);
+  await sm.flush();
+  const errs = sm.drainErrors();
+  if (errs.length) throw new Error(errs.map((e) => e?.message ?? String(e)).join('; '));
+  catalogs.delete(NEW_CHAT_CWD);
+  const entry = await catalogFor(NEW_CHAT_CWD);
+  return {
+    errors: [],
+    models: entry.serialized,
+    default: entry.serializedDefault,
+    current: null,
+    currentThinkingLevel: entry.defaultLevel,
+  };
+}
+
 export async function setSessionModel(registry, { file, model, thinkLevel }) {
   if (!file) throw new Error('setModel requires a session file');
   const level = thinkLevel || null;

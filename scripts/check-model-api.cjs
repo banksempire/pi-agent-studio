@@ -315,6 +315,25 @@ const STUB_MODELS = [
       });
     });
 
+    const defaultPosts = [];
+    await page.route('**/api/models/default', async (route) => {
+      const body = route.request().postDataJSON();
+      defaultPosts.push(body);
+      state.defaultId = body.model;
+      const hit = STUB_MODELS.find((m) => `${m.provider}/${m.id}` === body.model) ?? null;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          models: STUB_MODELS,
+          default: hit,
+          current: null,
+          currentThinkingLevel: null,
+          errors: [],
+        }),
+      });
+    });
+
     await page.locator('.sf-menu-item', { hasText: 'Model' }).click();
     await page.locator('.sf-menu-row', { hasText: 'Refresh Catalog' }).waitFor({ timeout: 5000 });
     await page.locator('.sf-menu-row', { hasText: 'Refresh Catalog' }).click();
@@ -337,6 +356,56 @@ const STUB_MODELS = [
       'Model Catalog window lists models grouped by provider with default badge',
       catalogGroups === 1 && catalogRows === 2 && defaultBadge === 1,
       `groups=${catalogGroups} rows=${catalogRows} badges=${defaultBadge}`,
+    );
+
+    const themed = await page.evaluate(() => {
+      const input = document.querySelector('.model-catalog-filter');
+      const btn = document.querySelector('.model-catalog-refresh');
+      if (!input || !btn) return null;
+      const si = getComputedStyle(input);
+      const sb = getComputedStyle(btn);
+      return {
+        inputBg: si.backgroundColor,
+        inputBorder: si.borderTopWidth !== '0px' && si.borderTopStyle !== 'none',
+        btnBorder: sb.borderTopWidth !== '0px' && sb.borderTopStyle !== 'none',
+        btnBg: sb.backgroundColor,
+      };
+    });
+    report(
+      'filter input and refresh button use theme colors and borders',
+      !!themed &&
+        themed.inputBg === 'rgb(30, 30, 30)' &&
+        themed.inputBorder &&
+        themed.btnBorder &&
+        themed.btnBg !== 'rgba(0, 0, 0, 0)',
+      themed ? JSON.stringify(themed) : 'controls not found',
+    );
+
+    const idCols = await page.locator('.model-catalog-id').count();
+    report('redundant model id column removed', idCols === 0, `idCols=${idCols}`);
+
+    await page.locator('.model-catalog-group-head').click();
+    await delay(300);
+    const rowsCollapsed = await page.locator('.model-catalog-row').count();
+    await page.locator('.model-catalog-group-head').click();
+    await delay(300);
+    const rowsExpanded = await page.locator('.model-catalog-row').count();
+    report(
+      'provider group collapses and expands from its banner',
+      rowsCollapsed === 0 && rowsExpanded === 2,
+      `collapsed=${rowsCollapsed} expanded=${rowsExpanded}`,
+    );
+
+    await page.locator('.model-catalog-default-btn', { hasText: 'Set Default' }).first().click();
+    await delay(600);
+    const defaultPost = defaultPosts[defaultPosts.length - 1];
+    const badgeRow = await page.locator('.model-catalog-row:has(.model-catalog-badge)').first().textContent();
+    report(
+      'Set Default POSTs provider/id and moves the default badge',
+      !!defaultPost && defaultPost.model === 'stub/stub-mini' && !!badgeRow && badgeRow.includes('Stub Mini'),
+      defaultPost
+        ? `${defaultPost.model} -> badge row ${badgeRow ? (badgeRow.includes('Stub Mini') ? 'Stub Mini' : 'other') : '?'} `
+        : 'no POST',
     );
 
     await page.locator('.model-catalog-filter').fill('mini');

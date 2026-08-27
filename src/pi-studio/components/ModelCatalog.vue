@@ -1,13 +1,16 @@
 <script setup lang="ts">
+import SvgIcon from '@sf/components/SvgIcon.vue';
 import { computed, onMounted, ref } from 'vue';
 import type { ModelCatalogView, ModelInfo } from '../modelInfo';
-import { loadModelCatalog, refreshModelCatalog } from '../modelInfo';
+import { loadModelCatalog, refreshModelCatalog, setDefaultModel } from '../modelInfo';
 
 const catalog = ref<ModelCatalogView | null>(null);
 const busy = ref(false);
 const error = ref('');
 const refreshErrors = ref<string[]>([]);
 const filter = ref('');
+const collapsed = ref(new Set<string>());
+const defaultBusy = ref('');
 
 async function load(force = false) {
   error.value = '';
@@ -31,6 +34,32 @@ async function refresh() {
     await load(true);
   } finally {
     busy.value = false;
+  }
+}
+
+function toggleGroup(provider: string) {
+  const next = new Set(collapsed.value);
+  if (next.has(provider)) next.delete(provider);
+  else next.add(provider);
+  collapsed.value = next;
+}
+
+function isCollapsed(provider: string): boolean {
+  return collapsed.value.has(provider);
+}
+
+async function makeDefault(m: ModelInfo) {
+  if (busy.value || defaultBusy.value) return;
+  defaultBusy.value = `${m.provider}/${m.id}`;
+  error.value = '';
+  try {
+    const data = await setDefaultModel(`${m.provider}/${m.id}`);
+    catalog.value = data;
+    refreshErrors.value = data.errors ?? [];
+  } catch (e) {
+    if (!(e instanceof TypeError)) error.value = String((e as Error)?.message ?? e);
+  } finally {
+    defaultBusy.value = '';
   }
 }
 
@@ -94,7 +123,7 @@ const totalCount = computed(() => {
         placeholder="Filter models…"
       >
       <span class="model-catalog-count">{{ totalCount }} models</span>
-      <button class="model-catalog-refresh sf-panel-btn" :disabled="busy" @click="refresh">
+      <button class="model-catalog-refresh" :disabled="busy" @click="refresh">
         {{ busy ? 'Refreshing…' : 'Refresh Catalog' }}
       </button>
     </div>
@@ -104,21 +133,38 @@ const totalCount = computed(() => {
     </div>
     <div class="model-catalog-body">
       <div v-for="g in providers" :key="g.provider" class="model-catalog-group">
-        <div class="model-catalog-group-head">{{ g.provider }}</div>
-        <div
-          v-for="m in g.models"
-          :key="`${m.provider}/${m.id}`"
-          class="model-catalog-row"
-          :title="`${m.provider}/${m.id}`"
-        >
-          <span class="model-catalog-name">
-            {{ m.name || m.id }}
-            <span v-if="`${m.provider}/${m.id}` === defaultKey" class="model-catalog-badge">default</span>
-          </span>
-          <span class="model-catalog-id">{{ m.id }}</span>
-          <span class="model-catalog-ctx">{{ fmtContext(m.contextWindow) }}</span>
-          <span class="model-catalog-cost">{{ fmtCost(m) }}</span>
-          <span class="model-catalog-levels" :title="m.thinkingLevels.join(', ')">{{ fmtLevels(m) }}</span>
+        <div class="model-catalog-group-head" @click="toggleGroup(g.provider)">
+          <span class="model-catalog-arrow" :class="{ 'model-catalog-arrow--expanded': !isCollapsed(g.provider) }"
+          ><SvgIcon name="❯"
+          /></span>
+          <span class="model-catalog-group-label">{{ g.provider }}</span>
+          <span class="model-catalog-group-count">{{ g.models.length }}</span>
+        </div>
+        <div v-if="!isCollapsed(g.provider)" class="model-catalog-rows">
+          <div
+            v-for="m in g.models"
+            :key="`${m.provider}/${m.id}`"
+            class="model-catalog-row"
+            :title="`${m.provider}/${m.id}`"
+          >
+            <span class="model-catalog-name">
+              {{ m.name || m.id }}
+              <span v-if="`${m.provider}/${m.id}` === defaultKey" class="model-catalog-badge">default</span>
+            </span>
+            <span class="model-catalog-ctx">{{ fmtContext(m.contextWindow) }}</span>
+            <span class="model-catalog-cost">{{ fmtCost(m) }}</span>
+            <span class="model-catalog-levels" :title="m.thinkingLevels.join(', ')">{{ fmtLevels(m) }}</span>
+            <button
+              v-if="`${m.provider}/${m.id}` !== defaultKey"
+              class="model-catalog-default-btn"
+              :disabled="defaultBusy !== ''"
+              title="Set as the default model for new chats"
+              @click="makeDefault(m)"
+            >
+              {{ defaultBusy === `${m.provider}/${m.id}` ? 'Setting…' : 'Set Default' }}
+            </button>
+            <span v-else class="model-catalog-default-spacer" />
+          </div>
         </div>
       </div>
       <div v-if="!providers.length && !error" class="model-catalog-empty">
@@ -150,12 +196,46 @@ const totalCount = computed(() => {
   flex: 1;
   min-width: 120px;
   max-width: 320px;
+  background: var(--sf-bg);
+  border: 1px solid var(--sf-border);
+  border-radius: 4px;
+  color: var(--sf-text);
+  font-family: var(--sf-font);
+  font-size: 16px;
+  padding: 5px 8px;
+  outline: none;
+}
+
+.model-catalog-filter:focus {
+  border-color: var(--sf-accent);
 }
 
 .model-catalog-count {
   color: var(--sf-text-muted);
   font-size: 16px;
   margin-right: auto;
+}
+
+.model-catalog-refresh {
+  background: var(--sf-bar);
+  border: 1px solid var(--sf-border);
+  border-radius: 4px;
+  color: var(--sf-text);
+  font-size: 16px;
+  padding: 5px 14px;
+  cursor: pointer;
+}
+
+.model-catalog-refresh:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .model-catalog-refresh:not(:disabled):hover {
+    box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
+    color: var(--sf-text-bright);
+  }
 }
 
 .model-catalog-note {
@@ -173,25 +253,64 @@ const totalCount = computed(() => {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 4px 0;
 }
 
 .model-catalog-group-head {
   position: sticky;
   top: 0;
-  padding: 4px 12px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 8px;
+  cursor: pointer;
+  user-select: none;
   font-size: 16px;
   font-weight: 600;
-  text-transform: uppercase;
   letter-spacing: 0.4px;
+  text-transform: uppercase;
   color: var(--sf-text-bright);
   background: var(--sf-bg-lighter);
   border-bottom: 1px solid var(--sf-border);
 }
 
+@media (hover: hover) {
+  .model-catalog-group-head:hover {
+    box-shadow:
+      inset 0 0 0 999px var(--sf-hover-overlay),
+      inset 0 1px 0 var(--sf-border),
+      inset 0 -1px 0 var(--sf-border);
+  }
+}
+
+.model-catalog-arrow {
+  width: 16px;
+  text-align: center;
+  font-size: 16px;
+  color: var(--sf-text);
+  transition: transform 0.1s;
+}
+
+.model-catalog-arrow--expanded {
+  transform: rotate(90deg);
+}
+
+.model-catalog-group-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-catalog-group-count {
+  color: var(--sf-text-muted);
+  font-weight: 400;
+}
+
 .model-catalog-row {
   display: grid;
-  grid-template-columns: minmax(120px, 1.4fr) minmax(100px, 1fr) 70px minmax(140px, 1fr) minmax(100px, 1fr);
+  grid-template-columns: minmax(140px, 1.6fr) 70px minmax(130px, 1fr) minmax(90px, 1fr) 96px;
   gap: 8px;
   align-items: baseline;
   padding: 4px 12px;
@@ -213,14 +332,6 @@ const totalCount = computed(() => {
   font-size: 14px;
 }
 
-.model-catalog-id {
-  font-family: var(--sf-mono);
-  color: var(--sf-text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .model-catalog-ctx,
 .model-catalog-cost,
 .model-catalog-levels {
@@ -228,6 +339,33 @@ const totalCount = computed(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.model-catalog-default-btn {
+  justify-self: end;
+  background: none;
+  border: 1px solid var(--sf-border);
+  border-radius: 4px;
+  color: var(--sf-text-muted);
+  font-size: 14px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.model-catalog-default-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .model-catalog-default-btn:not(:disabled):hover {
+    box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
+    color: var(--sf-text-bright);
+  }
+}
+
+.model-catalog-default-spacer {
+  justify-self: end;
 }
 
 .model-catalog-empty {

@@ -104,6 +104,18 @@ export async function refreshModelCatalog(): Promise<ModelCatalogView & { errors
   return normalized;
 }
 
+export async function setDefaultModel(model: string): Promise<ModelCatalogView & { errors: string[] }> {
+  const data = await api<ModelCatalogView & { errors?: string[] }>('/api/models/default', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model }),
+  });
+  const normalized = { ...data, errors: data.errors ?? [] };
+  globalCache.data = normalized;
+  globalCache.at = Date.now();
+  return normalized;
+}
+
 export async function setSessionModel(file: string, model: string, thinkLevel: string): Promise<string> {
   const j = await api<{ ok: boolean; notice?: string; error?: string }>('/api/models', {
     method: 'POST',

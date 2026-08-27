@@ -1430,6 +1430,26 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (p === '/api/models/default' && req.method === 'POST') {
+      const body = await readBody(req);
+      if (!body.model) return sendJson(res, 400, { error: 'missing model' });
+      try {
+        const r = await client.setDefault({ model: String(body.model) });
+        if (!r.ok) return sendJson(res, 400, { error: r.error || 'Failed to set default model' });
+        applyModelCatalog(r.models);
+        sendJson(res, 200, {
+          models: r.models ?? [],
+          default: r.default ?? null,
+          current: null,
+          currentThinkingLevel: r.currentThinkingLevel ?? null,
+          errors: r.errors ?? [],
+        });
+      } catch (e) {
+        sendJson(res, 400, { error: String(e?.message ?? e) });
+      }
+      return;
+    }
+
     if (p === '/api/models/refresh' && req.method === 'POST') {
       try {
         const r = await client.refreshCatalog();

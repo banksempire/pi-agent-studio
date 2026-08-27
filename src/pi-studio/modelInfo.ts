@@ -36,6 +36,7 @@ export const LEVEL_DESCRIPTIONS: Record<string, string> = {
 };
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
+const SESSION_CACHE_MAX = 32;
 
 const globalCache: { at: number; data: ModelCatalogView | null } = { at: 0, data: null };
 let globalInflight: Promise<ModelCatalogView> | null = null;
@@ -71,6 +72,17 @@ export async function loadSessionModels(file: string, force = false): Promise<Mo
     const data = await api<ModelCatalogView>(`/api/models?file=${encodeURIComponent(file)}`);
     const entry = { at: Date.now(), data };
     sessionCache.set(file, entry);
+    if (sessionCache.size > SESSION_CACHE_MAX) {
+      let oldestKey: string | null = null;
+      let oldestAt = Infinity;
+      for (const [key, e] of sessionCache) {
+        if (e.at < oldestAt) {
+          oldestAt = e.at;
+          oldestKey = key;
+        }
+      }
+      if (oldestKey !== null) sessionCache.delete(oldestKey);
+    }
     return data;
   })();
   sessionInflight.set(file, p);

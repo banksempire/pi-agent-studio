@@ -1,6 +1,7 @@
 import { NEW_CHAT_CWD, sdk, supportedThinkingLevels } from './sdk-bridge.mjs';
 
 const CATALOG_TTL_MS = 30 * 1000;
+const CATALOG_MAX_ENTRIES = 8;
 
 export function serializeModel(m) {
   if (!m) return null;
@@ -30,6 +31,20 @@ export function findModel(models, term) {
 const catalogs = new Map();
 const inflight = new Map();
 
+function evictCatalogs() {
+  while (catalogs.size > CATALOG_MAX_ENTRIES) {
+    let oldestKey = null;
+    let oldestAt = Infinity;
+    for (const [key, entry] of catalogs) {
+      if (entry.at < oldestAt) {
+        oldestAt = entry.at;
+        oldestKey = key;
+      }
+    }
+    catalogs.delete(oldestKey);
+  }
+}
+
 async function fetchCatalog(cwd) {
   const sm = sdk.SessionManager.inMemory(cwd);
   const { session } = await sdk.createAgentSession({ sessionManager: sm });
@@ -55,8 +70,14 @@ async function catalogFor(cwd) {
   if (pending) return pending;
   const p = (async () => {
     const data = await fetchCatalog(key);
-    const entry = { at: Date.now(), ...data };
+    const entry = {
+      at: Date.now(),
+      ...data,
+      serialized: data.models.map(serializeModel),
+      serializedDefault: serializeModel(data.defaultModel),
+    };
     catalogs.set(key, entry);
+    evictCatalogs();
     return entry;
   })();
   inflight.set(key, p);
@@ -71,8 +92,8 @@ export async function getModelsData(registry, file) {
   if (!file) {
     const cat = await catalogFor(NEW_CHAT_CWD);
     return {
-      models: cat.models.map(serializeModel),
-      default: serializeModel(cat.defaultModel),
+      models: cat.serialized,
+      default: cat.serializedDefault,
       current: null,
       currentThinkingLevel: cat.defaultLevel,
     };
@@ -81,9 +102,9 @@ export async function getModelsData(registry, file) {
   if (pending) {
     const cat = await catalogFor(pending.cwd);
     return {
-      models: cat.models.map(serializeModel),
-      default: serializeModel(cat.defaultModel),
-      current: serializeModel(pending.model ?? cat.defaultModel),
+      models: cat.serialized,
+      default: cat.serializedDefault,
+      current: serializeModel(pending.model) ?? cat.serializedDefault,
       currentThinkingLevel: pending.thinkLevel ?? cat.defaultLevel,
     };
   }

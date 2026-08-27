@@ -654,9 +654,11 @@ async function analyzeSession(file, opts = {}) {
 }
 
 let modelWindows = new Map();
+let modelBareWindows = new Map();
 let modelCostRates = new Map();
 let modelCatalogAt = 0;
 let modelCatalogFailAt = 0;
+let modelCatalogInflight = null;
 const MODEL_CATALOG_TTL_MS = 60 * 1000;
 const MODEL_CATALOG_RETRY_MS = 5 * 1000;
 
@@ -664,20 +666,34 @@ async function ensureModelCatalog() {
   const now = Date.now();
   if (now - modelCatalogAt <= MODEL_CATALOG_TTL_MS) return;
   if (now - modelCatalogFailAt <= MODEL_CATALOG_RETRY_MS) return;
-  try {
-    const r = await client.getModels({ file: '' });
-    if (!r.ok) throw new Error(r.error || 'model catalog unavailable');
-    const windows = new Map();
-    const rates = new Map();
-    for (const m of r.models ?? []) {
-      windows.set(`${m.provider}/${m.id}`, m.contextWindow ?? 0);
-      rates.set(`${m.provider}/${m.id}`, m.cost ?? {});
+  if (modelCatalogInflight) return modelCatalogInflight;
+  modelCatalogInflight = (async () => {
+    try {
+      const r = await client.getModels({ file: '' });
+      if (!r.ok) throw new Error(r.error || 'model catalog unavailable');
+      const windows = new Map();
+      const bare = new Map();
+      const rates = new Map();
+      for (const m of r.models ?? []) {
+        const key = `${m.provider}/${m.id}`;
+        const window = m.contextWindow ?? 0;
+        windows.set(key, window);
+        rates.set(key, m.cost ?? {});
+        const prev = bare.get(m.id);
+        bare.set(m.id, prev === undefined || prev === window ? window : 0);
+      }
+      modelWindows = windows;
+      modelBareWindows = bare;
+      modelCostRates = rates;
+      modelCatalogAt = Date.now();
+    } catch {
+      modelCatalogFailAt = Date.now();
     }
-    modelWindows = windows;
-    modelCostRates = rates;
-    modelCatalogAt = Date.now();
-  } catch {
-    modelCatalogFailAt = Date.now();
+  })();
+  try {
+    return await modelCatalogInflight;
+  } finally {
+    modelCatalogInflight = null;
   }
 }
 
@@ -685,16 +701,10 @@ async function contextWindowOf(modelId) {
   if (!modelId) return 0;
   await ensureModelCatalog();
   if (modelWindows.size === 0) return 0;
-  if (modelWindows.has(modelId)) return modelWindows.get(modelId);
+  const hit = modelWindows.get(modelId);
+  if (hit !== undefined) return hit;
   const bare = modelId.includes('/') ? modelId.slice(modelId.indexOf('/') + 1) : modelId;
-  let hit = null;
-  for (const [key, window] of modelWindows) {
-    if (key.endsWith(`/${bare}`)) {
-      if (hit !== null) return 0;
-      hit = window;
-    }
-  }
-  return hit ?? 0;
+  return modelBareWindows.get(bare) ?? 0;
 }
 
 async function withContext(info) {

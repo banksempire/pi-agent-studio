@@ -248,6 +248,17 @@
                   "key": "model-detail"
                 }
               ]
+            },
+            {
+              "id": "model-preference",
+              "label": "Preference",
+              "height": "variable",
+              "components": [
+                {
+                  "type": "component",
+                  "key": "model-preference"
+                }
+              ]
             }
           ]
         }

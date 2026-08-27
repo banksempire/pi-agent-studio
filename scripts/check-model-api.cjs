@@ -477,7 +477,8 @@ const STUB_MODELS = [
     await page.locator('.model-catalog-row', { hasText: 'Stub Pro' }).first().click();
     await delay(400);
     const detailText = (await page.locator('.model-detail').textContent()) ?? '';
-    const detailPill = await page.locator('.model-detail .kv-pill--ok').count();
+    const detailPill = await page.locator('.model-detail .kv-pill').count();
+    const prefLabel = await page.locator('.sf-subsection-label', { hasText: 'Preference' }).count();
     report(
       'clicking a catalog row shows full metadata in the right panel',
       detailText.includes('stub-pro') &&
@@ -486,8 +487,10 @@ const STUB_MODELS = [
         detailText.includes('1,049k') &&
         detailText.includes('8,192') &&
         detailText.includes('text + image') &&
-        detailPill === 1,
-      `pill=${detailPill} text=${detailText.slice(0, 80)}`,
+        !detailText.includes('Default') &&
+        detailPill === 0 &&
+        prefLabel === 1,
+      `pill=${detailPill} prefLabel=${prefLabel} text=${detailText.slice(0, 80)}`,
     );
 
     const rightTitle = (await page.locator('.sf-panel--right .sf-panel-title').textContent()) ?? '';
@@ -516,14 +519,14 @@ const STUB_MODELS = [
 
     await page.locator('.model-catalog-row', { hasText: 'Stub Mini' }).first().click();
     await delay(400);
-    const miniSwitchBefore = await page.locator('.model-detail .md-switch').getAttribute('aria-checked');
-    await page.locator('.model-detail .md-switch').click();
+    const miniSwitchBefore = await page.locator('.model-preference .md-switch').getAttribute('aria-checked');
+    await page.locator('.model-preference .md-switch').click();
     await delay(600);
     const togglePost = defaultPosts[defaultPosts.length - 1];
     const badgeRow = await page.locator('.model-catalog-row:has(.model-catalog-badge)').first().textContent();
-    const miniSwitchAfter = await page.locator('.model-detail .md-switch').getAttribute('aria-checked');
-    const miniPills = await page.locator('.model-detail .sf-pill-item').count();
-    const srcNote = await page.locator('.model-detail-src').count();
+    const miniSwitchAfter = await page.locator('.model-preference .md-switch').getAttribute('aria-checked');
+    const miniPills = await page.locator('.model-preference .sf-pill-item').count();
+    const srcNote = await page.locator('.model-preference-src').count();
     report(
       'default-model toggle in the detail panel POSTs provider/id and moves the badge',
       miniSwitchBefore === 'false' &&
@@ -540,14 +543,14 @@ const STUB_MODELS = [
 
     await page.locator('.model-catalog-row', { hasText: 'Stub Pro' }).first().click();
     await delay(400);
-    await page.locator('.model-detail .md-switch').click();
+    await page.locator('.model-preference .md-switch').click();
     await delay(600);
-    const proPills = await page.locator('.model-detail .sf-pill-item').count();
-    const activeBefore = await page.locator('.model-detail .sf-pill-item--on').textContent();
-    await page.locator('.model-detail .sf-pill-item', { hasText: 'high' }).click();
+    const proPills = await page.locator('.model-preference .sf-pill-item').count();
+    const activeBefore = await page.locator('.model-preference .sf-pill-item--on').textContent();
+    await page.locator('.model-preference .sf-pill-item', { hasText: 'high' }).click();
     await delay(600);
     const levelPost = defaultPosts[defaultPosts.length - 1];
-    const activeAfter = await page.locator('.model-detail .sf-pill-item--on').textContent();
+    const activeAfter = await page.locator('.model-preference .sf-pill-item--on').textContent();
     report(
       'thinking-level pills POST thinkLevel with the default model and mark the active level',
       proPills === 3 &&
@@ -559,15 +562,15 @@ const STUB_MODELS = [
       `pills=${proPills} post=${JSON.stringify(levelPost)} active=${activeBefore}->${activeAfter}`,
     );
 
-    await page.locator('.model-detail .md-switch').click();
+    await page.locator('.model-preference .md-switch').click();
     await delay(600);
     const clearPost = defaultPosts[defaultPosts.length - 1];
     const clearBadge = await page
       .locator('.model-catalog-row:has(.model-catalog-badge)')
       .first()
       .textContent();
-    const clearSwitch = await page.locator('.model-detail .md-switch').getAttribute('aria-checked');
-    const clearSrc = await page.locator('.model-detail-src').textContent();
+    const clearSwitch = await page.locator('.model-preference .md-switch').getAttribute('aria-checked');
+    const clearSrc = await page.locator('.model-preference-src').textContent();
     report(
       'unsetting the default POSTs null and falls back to the latest-chat model',
       !!clearPost &&

@@ -9,6 +9,7 @@ import { getHeapStatistics } from 'node:v8';
 import { cronError } from '../../pi-nest/src/cron.mjs';
 import { openJournal } from '../../pi-nest/src/journal.mjs';
 import { createLocalClient } from '../../pi-nest/src/local-client.mjs';
+import { applyImplicitNewChatDefault } from '../../pi-nest/src/models.mjs';
 import { AgentRegistry, WATCHDOG_INTERVAL_MS } from '../../pi-nest/src/registry.mjs';
 import { computeNextDue, Scheduler } from '../../pi-nest/src/scheduler.mjs';
 import { createSessionStates } from './session-states.mjs';
@@ -1421,6 +1422,8 @@ const server = createServer(async (req, res) => {
         sendJson(res, 200, {
           models: r.models ?? [],
           default: r.default ?? null,
+          defaultSource: r.defaultSource ?? 'fallback',
+          defaultThinkingLevel: r.defaultThinkingLevel ?? null,
           current: r.current ?? null,
           currentThinkingLevel: r.currentThinkingLevel ?? null,
         });
@@ -1432,14 +1435,18 @@ const server = createServer(async (req, res) => {
 
     if (p === '/api/models/default' && req.method === 'POST') {
       const body = await readBody(req);
-      if (!body.model) return sendJson(res, 400, { error: 'missing model' });
+      if (!('model' in body) || body.model === undefined) {
+        return sendJson(res, 400, { error: 'missing model' });
+      }
       try {
-        const r = await client.setDefault({ model: String(body.model) });
+        const r = await client.setDefault({ model: body.model, thinkLevel: body.thinkLevel });
         if (!r.ok) return sendJson(res, 400, { error: r.error || 'Failed to set default model' });
         applyModelCatalog(r.models);
         sendJson(res, 200, {
           models: r.models ?? [],
           default: r.default ?? null,
+          defaultSource: r.defaultSource ?? 'fallback',
+          defaultThinkingLevel: r.defaultThinkingLevel ?? null,
           current: null,
           currentThinkingLevel: r.currentThinkingLevel ?? null,
           errors: r.errors ?? [],
@@ -1458,6 +1465,8 @@ const server = createServer(async (req, res) => {
         sendJson(res, 200, {
           models: r.models ?? [],
           default: r.default ?? null,
+          defaultSource: r.defaultSource ?? 'fallback',
+          defaultThinkingLevel: r.defaultThinkingLevel ?? null,
           current: null,
           currentThinkingLevel: r.currentThinkingLevel ?? null,
           errors: r.errors ?? [],
@@ -1514,6 +1523,7 @@ const server = createServer(async (req, res) => {
       const { cwd } = await readBody(req);
       const targetCwd = cwd || NEW_CHAT_CWD;
       const { file } = await client.createSession({ cwd: targetCwd });
+      await applyImplicitNewChatDefault(registry, file);
       sendJson(res, 200, { file, cwd: targetCwd, virtual: true });
       return;
     }

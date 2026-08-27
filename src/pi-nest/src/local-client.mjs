@@ -102,9 +102,9 @@ export function createLocalClient(registry) {
       }
     },
 
-    async setDefault({ model = '' } = {}) {
+    async setDefault({ model = '', thinkLevel = null } = {}) {
       try {
-        const data = await setDefaultModel({ model });
+        const data = await setDefaultModel({ model, thinkLevel });
         return { ok: true, ...data };
       } catch (e) {
         return { ok: false, error: String(e?.message ?? e) };

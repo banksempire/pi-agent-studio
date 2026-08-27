@@ -27,6 +27,7 @@ async function load(force = false) {
       : await loadModelCatalog();
     catalog.value = data;
     refreshErrors.value = data.errors ?? [];
+    store.syncModelDefault(data);
   } catch (e) {
     if (!(e instanceof TypeError)) error.value = String((e as Error)?.message ?? e);
   }

@@ -11,6 +11,12 @@ export const NEW_CHAT_CWD = process.env.PI_STUDIO_CWD ?? '/workspace/sf';
 
 export function findSdkDir() {
   if (process.env.PI_SDK_DIR && existsSync(process.env.PI_SDK_DIR)) return process.env.PI_SDK_DIR;
+  return findRealSdkDir();
+}
+
+export function findRealSdkDir() {
+  if (process.env.PI_REAL_SDK_DIR && existsSync(process.env.PI_REAL_SDK_DIR))
+    return process.env.PI_REAL_SDK_DIR;
   try {
     const root = execSync('npm root -g', { encoding: 'utf8' }).trim();
     const p = path.join(root, '@earendil-works', 'pi-coding-agent');
@@ -26,7 +32,19 @@ if (!sdkDir) {
 }
 const sdk = await import(pathToFileURL(path.join(sdkDir, 'dist', 'index.js')).href);
 
-export { sdk, sdkDir };
+const realSdkDir = findRealSdkDir();
+const settingsSdk =
+  realSdkDir && realSdkDir !== sdkDir
+    ? await import(pathToFileURL(path.join(realSdkDir, 'dist', 'index.js')).href)
+    : sdk;
+let settingsManagerMod = null;
+if (realSdkDir) {
+  settingsManagerMod = await import(
+    pathToFileURL(path.join(realSdkDir, 'dist', 'core', 'settings-manager.js')).href
+  ).catch(() => null);
+}
+
+export { sdk, sdkDir, settingsManagerMod, settingsSdk };
 
 export function hashId(text) {
   let h = 0;

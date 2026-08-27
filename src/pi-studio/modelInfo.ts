@@ -25,6 +25,8 @@ export interface ModelInfo {
 export interface ModelCatalogView {
   models: ModelInfo[];
   default: ModelInfo | null;
+  defaultSource?: 'settings' | 'latest-chat' | 'fallback';
+  defaultThinkingLevel?: string | null;
   current: ModelInfo | null;
   currentThinkingLevel: string | null;
 }
@@ -108,11 +110,14 @@ export async function refreshModelCatalog(): Promise<ModelCatalogView & { errors
   return normalized;
 }
 
-export async function setDefaultModel(model: string): Promise<ModelCatalogView & { errors: string[] }> {
+export async function setDefaultModel(
+  model: string | null,
+  thinkLevel?: string,
+): Promise<ModelCatalogView & { errors: string[] }> {
   const data = await api<ModelCatalogView & { errors?: string[] }>('/api/models/default', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model }),
+    body: JSON.stringify({ model, ...(thinkLevel ? { thinkLevel } : {}) }),
   });
   const normalized = { ...data, errors: data.errors ?? [] };
   globalCache.data = normalized;

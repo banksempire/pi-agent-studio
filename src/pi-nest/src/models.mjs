@@ -1,8 +1,21 @@
-import { NEW_CHAT_CWD, sdk, supportedThinkingLevels } from './sdk-bridge.mjs';
+import { closeSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {
+  NEW_CHAT_CWD,
+  SESSIONS_ROOT,
+  sdk,
+  settingsManagerMod,
+  settingsSdk,
+  supportedThinkingLevels,
+} from './sdk-bridge.mjs';
 
 const CATALOG_TTL_MS = 30 * 1000;
 const CATALOG_MAX_ENTRIES = 8;
 const REFRESH_TIMEOUT_MS = 15 * 1000;
+const VALID_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+const LATEST_CHAT_SCAN_FILES = 8;
+const LATEST_CHAT_TAIL_BYTES = 64 * 1024;
 
 export function serializeModel(m) {
   if (!m) return null;
@@ -97,12 +110,150 @@ async function catalogFor(cwd) {
   }
 }
 
+function agentSettings() {
+  try {
+    const Ctor = settingsSdk?.SettingsManager;
+    if (!Ctor?.create) return null;
+    const sm = Ctor.create(NEW_CHAT_CWD);
+    return sm && typeof sm.getDefaultModel === 'function' ? sm : null;
+  } catch {
+    return null;
+  }
+}
+
+export function explicitDefault() {
+  const sm = agentSettings();
+  if (!sm) return null;
+  try {
+    const provider = sm.getDefaultProvider();
+    const model = sm.getDefaultModel();
+    if (!provider || !model) return null;
+    let level = null;
+    try {
+      level = sm.getDefaultThinkingLevel() ?? null;
+    } catch {}
+    return { provider: String(provider), model: String(model), level };
+  } catch {
+    return null;
+  }
+}
+
+function listSessionFiles(root) {
+  const out = [];
+  for (const ent of readdirSync(root, { withFileTypes: true })) {
+    if (!ent.isDirectory()) continue;
+    const dir = path.join(root, ent.name);
+    let names;
+    try {
+      names = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      if (name.endsWith('.jsonl')) out.push(path.join(dir, name));
+    }
+  }
+  out.sort((a, b) => path.basename(b).localeCompare(path.basename(a)));
+  return out;
+}
+
+export function latestChatModel() {
+  try {
+    for (const file of listSessionFiles(SESSIONS_ROOT).slice(0, LATEST_CHAT_SCAN_FILES)) {
+      const hit = lastAssistantModelIn(file);
+      if (hit) return hit;
+    }
+  } catch {}
+  return null;
+}
+
+function lastAssistantModelIn(file) {
+  let fd = null;
+  try {
+    const size = statSync(file).size;
+    const start = Math.max(0, size - LATEST_CHAT_TAIL_BYTES);
+    fd = openSync(file, 'r');
+    const buf = Buffer.alloc(size - start);
+    readSync(fd, buf, 0, buf.length, start);
+    let hit = null;
+    for (const line of buf.toString('utf8').split('\n')) {
+      let e;
+      try {
+        e = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const m = e?.type === 'message' ? e.message : null;
+      if (m?.role === 'assistant' && m.provider && m.model) {
+        hit = { provider: String(m.provider), model: String(m.model) };
+      }
+    }
+    return hit;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {}
+    }
+  }
+}
+
+function effectiveDefault(cat) {
+  const explicit = explicitDefault();
+  let model = cat.defaultModel ?? null;
+  let source = 'fallback';
+  if (explicit) {
+    const hit =
+      findModel(cat.models, `${explicit.provider}/${explicit.model}`) ??
+      findModel(cat.models, explicit.model);
+    if (hit) {
+      model = hit;
+      source = 'settings';
+    }
+  }
+  if (source !== 'settings') {
+    const latest = latestChatModel();
+    if (latest) {
+      const hit = findModel(cat.models, `${latest.provider}/${latest.model}`);
+      if (hit) {
+        model = hit;
+        source = 'latest-chat';
+      }
+    }
+  }
+  return { model, source, level: explicit?.level ?? null };
+}
+
+function defaultView(cat) {
+  const eff = effectiveDefault(cat);
+  return {
+    default: serializeModel(eff.model) ?? cat.serializedDefault ?? null,
+    defaultSource: eff.source,
+    defaultThinkingLevel: eff.level,
+  };
+}
+
+export async function applyImplicitNewChatDefault(registry, file) {
+  try {
+    const p = registry.pendingInfo(file);
+    if (!p || p.model) return;
+    if (explicitDefault()) return;
+    const latest = latestChatModel();
+    if (!latest) return;
+    const cat = await catalogFor(p.cwd);
+    const hit = findModel(cat.models, `${latest.provider}/${latest.model}`);
+    if (hit) registry.setPendingModel(file, hit, null);
+  } catch {}
+}
+
 export async function getModelsData(registry, file) {
   if (!file) {
     const cat = await catalogFor(NEW_CHAT_CWD);
     return {
       models: cat.serialized,
-      default: cat.serializedDefault,
+      ...defaultView(cat),
       current: null,
       currentThinkingLevel: cat.defaultLevel,
     };
@@ -112,7 +263,7 @@ export async function getModelsData(registry, file) {
     const cat = await catalogFor(pending.cwd);
     return {
       models: cat.serialized,
-      default: cat.serializedDefault,
+      ...defaultView(cat),
       current: serializeModel(pending.model) ?? cat.serializedDefault,
       currentThinkingLevel: pending.thinkLevel ?? cat.defaultLevel,
     };
@@ -150,7 +301,7 @@ export async function refreshCatalog() {
     return {
       errors,
       models: entry.serialized,
-      default: entry.serializedDefault,
+      ...defaultView(entry),
       current: null,
       currentThinkingLevel: entry.defaultLevel,
     };
@@ -161,27 +312,66 @@ export async function refreshCatalog() {
   }
 }
 
-export async function setDefaultModel({ model }) {
-  const t = String(model ?? '').toLowerCase();
-  if (!t.includes('/')) throw new Error('Pass the model as provider/id');
-  const sep = t.indexOf('/');
-  const provider = t.slice(0, sep);
-  const modelId = t.slice(sep + 1);
-  if (!provider || !modelId) throw new Error('Pass the model as provider/id');
-  const sm = sdk.SettingsManager.create(NEW_CHAT_CWD);
-  sm.setDefaultModelAndProvider(provider, modelId);
-  await sm.flush();
-  const errs = sm.drainErrors();
-  if (errs.length) throw new Error(errs.map((e) => e?.message ?? String(e)).join('; '));
+export async function setDefaultModel({ model, thinkLevel }) {
+  const level =
+    thinkLevel === undefined || thinkLevel === null || thinkLevel === '' ? null : String(thinkLevel);
+  if (level && !VALID_LEVELS.includes(level)) throw new Error(`Unknown thinking level "${level}"`);
+  if (model === null || model === undefined || model === '') {
+    clearExplicitDefault();
+  } else {
+    const t = String(model).toLowerCase();
+    if (!t.includes('/')) throw new Error('Pass the model as provider/id');
+    const sep = t.indexOf('/');
+    const provider = t.slice(0, sep);
+    const modelId = t.slice(sep + 1);
+    if (!provider || !modelId) throw new Error('Pass the model as provider/id');
+    const sm = agentSettings();
+    if (!sm) throw new Error('Settings unavailable');
+    sm.setDefaultModelAndProvider(provider, modelId);
+    if (level) {
+      try {
+        sm.setDefaultThinkingLevel(level);
+      } catch {
+        throw new Error(`Unknown thinking level "${level}"`);
+      }
+    }
+    await sm.flush();
+    const errs = sm.drainErrors();
+    if (errs.length) throw new Error(errs.map((e) => e?.message ?? String(e)).join('; '));
+  }
   catalogs.delete(NEW_CHAT_CWD);
   const entry = await catalogFor(NEW_CHAT_CWD);
   return {
     errors: [],
     models: entry.serialized,
-    default: entry.serializedDefault,
+    ...defaultView(entry),
     current: null,
     currentThinkingLevel: entry.defaultLevel,
   };
+}
+
+function clearExplicitDefault() {
+  const Mod = settingsManagerMod;
+  const Storage = Mod?.FileSettingsStorage;
+  if (!Storage) throw new Error('Settings unavailable');
+  const agentDir = process.env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), '.pi', 'agent');
+  const storage = new Storage(NEW_CHAT_CWD, agentDir);
+  storage.withLock('global', (current) => {
+    let s;
+    try {
+      s = JSON.parse(current || '{}');
+    } catch {
+      s = {};
+    }
+    let changed = false;
+    for (const key of ['defaultModel', 'defaultProvider']) {
+      if (key in s) {
+        delete s[key];
+        changed = true;
+      }
+    }
+    return changed ? `${JSON.stringify(s, null, 2)}\n` : undefined;
+  });
 }
 
 export async function setSessionModel(registry, { file, model, thinkLevel }) {

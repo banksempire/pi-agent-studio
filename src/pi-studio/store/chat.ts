@@ -3,7 +3,7 @@ import type { WorkspaceTabDef } from '@sf/types/layout';
 import { readUiValue, removeUiValue, uiEpoch, writeUiValue } from '@sf/uiState';
 import { collectAllTabs, firstTile } from '@sf/workspace/tree';
 import { reactive, ref, watch } from 'vue';
-import type { ModelInfo } from '../modelInfo';
+import type { ModelCatalogView, ModelInfo } from '../modelInfo';
 
 export interface ToolCallView {
   id: string;
@@ -246,6 +246,8 @@ function requestModelPicker() {
 }
 
 const modelDetail = ref<{ model: ModelInfo; isDefault: boolean } | null>(null);
+const modelDefaultLevel = ref<string | null>(null);
+const modelDefaultSource = ref<'settings' | 'latest-chat' | 'fallback'>('fallback');
 
 function requestModelDetail(model: ModelInfo, isDefault: boolean) {
   modelDetail.value = { model, isDefault };
@@ -253,8 +255,21 @@ function requestModelDetail(model: ModelInfo, isDefault: boolean) {
 
 const modelDefaultTick = ref(0);
 
-function applyModelDefault(model: ModelInfo) {
-  modelDetail.value = { model, isDefault: true };
+function syncModelDefault(view: ModelCatalogView) {
+  modelDefaultLevel.value = view.defaultThinkingLevel ?? null;
+  modelDefaultSource.value = view.defaultSource ?? 'fallback';
+}
+
+function applyModelDefault(view: ModelCatalogView) {
+  syncModelDefault(view);
+  const d = modelDetail.value;
+  const key = view.default ? `${view.default.provider}/${view.default.id}` : null;
+  if (d) {
+    const selKey = `${d.model.provider}/${d.model.id}`;
+    modelDetail.value = { model: d.model, isDefault: key === selKey };
+  } else if (view.default) {
+    modelDetail.value = { model: view.default, isDefault: true };
+  }
   modelDefaultTick.value += 1;
 }
 
@@ -2008,6 +2023,7 @@ export const store = {
   requestModelPicker,
   requestModelDetail,
   applyModelDefault,
+  syncModelDefault,
   closeJobEditor,
   renameJobEditorTab,
   compactSession,
@@ -2035,6 +2051,12 @@ export const store = {
   },
   get modelDefaultTick() {
     return modelDefaultTick.value;
+  },
+  get modelDefaultLevel() {
+    return modelDefaultLevel.value;
+  },
+  get modelDefaultSource() {
+    return modelDefaultSource.value;
   },
   get stateFilter() {
     return state.stateFilter;

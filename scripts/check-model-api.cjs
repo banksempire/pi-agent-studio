@@ -205,6 +205,10 @@ const STUB_MODELS = [
       currentId: 'stub-mini',
       currentName: 'Stub Mini',
       currentLevel: 'off',
+      defaultId: 'stub-mini',
+      explicit: true,
+      defLevel: null,
+      latestChatId: 'stub-pro',
       posts: [],
       gets: [],
     };
@@ -234,7 +238,9 @@ const STUB_MODELS = [
         contentType: 'application/json',
         body: JSON.stringify({
           models: STUB_MODELS,
-          default: STUB_MODELS[1],
+          default: STUB_MODELS.find((m) => m.id === state.defaultId) ?? null,
+          defaultSource: state.explicit ? 'settings' : 'latest-chat',
+          defaultThinkingLevel: state.defLevel ?? null,
           current,
           currentThinkingLevel: file ? state.currentLevel : null,
         }),
@@ -310,12 +316,16 @@ const STUB_MODELS = [
     await page.route('**/api/models/refresh', async (route) => {
       refreshCalls += 1;
       state.currentId = 'stub-mini';
+      state.defaultId = 'stub-pro';
+      state.explicit = true;
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
           models: STUB_MODELS,
           default: STUB_MODELS[0],
+          defaultSource: 'settings',
+          defaultThinkingLevel: state.defLevel ?? null,
           current: null,
           currentThinkingLevel: null,
           errors: [],
@@ -327,14 +337,23 @@ const STUB_MODELS = [
     await page.route('**/api/models/default', async (route) => {
       const body = route.request().postDataJSON();
       defaultPosts.push(body);
-      state.defaultId = body.model;
-      const hit = STUB_MODELS.find((m) => `${m.provider}/${m.id}` === body.model) ?? null;
+      if (body.model === null) {
+        state.explicit = false;
+        state.defaultId = state.latestChatId;
+      } else {
+        state.explicit = true;
+        state.defaultId = String(body.model).split('/').pop();
+        if (body.thinkLevel) state.defLevel = body.thinkLevel;
+      }
+      const hit = STUB_MODELS.find((m) => m.id === state.defaultId) ?? null;
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
           models: STUB_MODELS,
           default: hit,
+          defaultSource: state.explicit ? 'settings' : 'latest-chat',
+          defaultThinkingLevel: state.defLevel ?? null,
           current: null,
           currentThinkingLevel: null,
           errors: [],
@@ -497,25 +516,67 @@ const STUB_MODELS = [
 
     await page.locator('.model-catalog-row', { hasText: 'Stub Mini' }).first().click();
     await delay(400);
-    const miniDetail = (await page.locator('.model-detail').textContent()) ?? '';
-    await page.locator('.model-detail-btn', { hasText: 'Set Default' }).click();
+    const miniSwitchBefore = await page.locator('.model-detail .md-switch').getAttribute('aria-checked');
+    await page.locator('.model-detail .md-switch').click();
     await delay(600);
-    const defaultPost = defaultPosts[defaultPosts.length - 1];
+    const togglePost = defaultPosts[defaultPosts.length - 1];
     const badgeRow = await page.locator('.model-catalog-row:has(.model-catalog-badge)').first().textContent();
-    const okPill = await page.locator('.model-detail .kv-pill--ok').count();
-    const btnAfter = await page.locator('.model-detail-btn').count();
+    const miniSwitchAfter = await page.locator('.model-detail .md-switch').getAttribute('aria-checked');
+    const miniPills = await page.locator('.model-detail-pill').count();
+    const srcNote = await page.locator('.model-detail-src').count();
     report(
-      'Set Default lives in the right panel: POSTs provider/id, badge moves, pill flips, button hides',
-      !!defaultPost &&
-        defaultPost.model === 'stub/stub-mini' &&
+      'default-model toggle in the detail panel POSTs provider/id and moves the badge',
+      miniSwitchBefore === 'false' &&
+        !!togglePost &&
+        togglePost.model === 'stub/stub-mini' &&
+        togglePost.thinkLevel === undefined &&
         !!badgeRow &&
         badgeRow.includes('Stub Mini') &&
-        okPill === 1 &&
-        btnAfter === 0 &&
-        miniDetail.includes('stub-mini'),
-      defaultPost
-        ? `${defaultPost.model} badge=${badgeRow ? (badgeRow.includes('Stub Mini') ? 'Mini' : 'other') : '?'} okPill=${okPill} btn=${btnAfter}`
-        : 'no POST',
+        miniSwitchAfter === 'true' &&
+        miniPills === 1 &&
+        srcNote === 0,
+      `before=${miniSwitchBefore} post=${JSON.stringify(togglePost)} badge=${badgeRow ? (badgeRow.includes('Stub Mini') ? 'Mini' : 'other') : '?'} after=${miniSwitchAfter} pills=${miniPills}`,
+    );
+
+    await page.locator('.model-catalog-row', { hasText: 'Stub Pro' }).first().click();
+    await delay(400);
+    await page.locator('.model-detail .md-switch').click();
+    await delay(600);
+    const proPills = await page.locator('.model-detail-pill').count();
+    const activeBefore = await page.locator('.model-detail-pill--on').textContent();
+    await page.locator('.model-detail-pill', { hasText: 'high' }).click();
+    await delay(600);
+    const levelPost = defaultPosts[defaultPosts.length - 1];
+    const activeAfter = await page.locator('.model-detail-pill--on').textContent();
+    report(
+      'thinking-level pills POST thinkLevel with the default model and mark the active level',
+      proPills === 3 &&
+        !!levelPost &&
+        levelPost.model === 'stub/stub-pro' &&
+        levelPost.thinkLevel === 'high' &&
+        (activeAfter ?? '').trim() === 'high' &&
+        (activeBefore ?? '').trim() !== 'high',
+      `pills=${proPills} post=${JSON.stringify(levelPost)} active=${activeBefore}->${activeAfter}`,
+    );
+
+    await page.locator('.model-detail .md-switch').click();
+    await delay(600);
+    const clearPost = defaultPosts[defaultPosts.length - 1];
+    const clearBadge = await page
+      .locator('.model-catalog-row:has(.model-catalog-badge)')
+      .first()
+      .textContent();
+    const clearSwitch = await page.locator('.model-detail .md-switch').getAttribute('aria-checked');
+    const clearSrc = await page.locator('.model-detail-src').textContent();
+    report(
+      'unsetting the default POSTs null and falls back to the latest-chat model',
+      !!clearPost &&
+        clearPost.model === null &&
+        !!clearBadge &&
+        clearBadge.includes('Stub Pro') &&
+        clearSwitch === 'true' &&
+        (clearSrc ?? '').includes('via latest new chat'),
+      `post=${JSON.stringify(clearPost)} badge=${clearBadge ? (clearBadge.includes('Stub Pro') ? 'Pro' : 'other') : '?'} switch=${clearSwitch} src=${clearSrc}`,
     );
 
     await page.locator('.sf-tab-label', { hasText: 'model-api-check' }).first().click({ force: true });
@@ -531,6 +592,143 @@ const STUB_MODELS = [
       `pickerPops=${pickerOpen}`,
     );
     await page.keyboard.press('Escape');
+
+    const sdkPort = await freePort();
+    const sdkSessions = path.join(RUN_ROOT, 'sdk-sessions');
+    const sdkStates = path.join(RUN_ROOT, 'sdk-states.json');
+    const agentHome = path.join(RUN_ROOT, 'agent-home');
+    fs.mkdirSync(sdkSessions, { recursive: true });
+    fs.mkdirSync(agentHome, { recursive: true });
+    const settingsFile = path.join(agentHome, 'settings.json');
+    const sdkBackend = spawnStackProc(
+      spawn,
+      'check-model-api:stack',
+      'node',
+      ['src/pi-studio/server/index.mjs'],
+      {
+        cwd: PRODUCT_ROOT,
+        env: {
+          ...process.env,
+          PI_STUDIO_PORT: String(sdkPort),
+          PI_STUDIO_HOST: '127.0.0.1',
+          PI_STUDIO_SESSIONS: sdkSessions,
+          PI_STUDIO_CWD: RUN_ROOT,
+          PI_STUDIO_STATES_PATH: sdkStates,
+          PI_STUDIO_DB_PATH: path.join(RUN_ROOT, 'sdk-studio.db'),
+          PI_STUDIO_SPILL_PATH: path.join(RUN_ROOT, 'sdk-spill.json'),
+          PI_SDK_DIR: path.join(PRODUCT_ROOT, 'scripts', 'lib', 'stub-sdk'),
+          PI_CODING_AGENT_DIR: agentHome,
+          STUB_STATE_DIR: path.join(RUN_ROOT, 'sdk-stub-state'),
+        },
+        stdio: [
+          'ignore',
+          fs.openSync('/tmp/model-api-check-sdk-backend.log', 'a'),
+          fs.openSync('/tmp/model-api-check-sdk-backend.log', 'a'),
+        ],
+      },
+    );
+    procs.push(sdkBackend);
+    await waitHttp(`http://127.0.0.1:${sdkPort}/api/health`, 'sdk backend');
+    const jfetch = async (p, opts) => {
+      const r = await fetch(`http://127.0.0.1:${sdkPort}${p}`, opts);
+      return { status: r.status, body: await r.json() };
+    };
+
+    let r = await jfetch('/api/models');
+    report(
+      'server default resolution: fallback when no settings and no chat history',
+      r.status === 200 &&
+        r.body.models?.length === 2 &&
+        r.body.default?.id === 'stub-pro' &&
+        r.body.defaultSource === 'fallback' &&
+        r.body.defaultThinkingLevel === null,
+      JSON.stringify({ status: r.status, def: r.body.default?.id, src: r.body.defaultSource }),
+    );
+
+    fs.writeFileSync(
+      settingsFile,
+      `${JSON.stringify({ defaultProvider: 'stub', defaultModel: 'stub-mini', defaultThinkingLevel: 'low' }, null, 2)}\n`,
+    );
+    r = await jfetch('/api/models');
+    report(
+      'server default resolution: explicit settings win',
+      r.body.default?.id === 'stub-mini' &&
+        r.body.defaultSource === 'settings' &&
+        r.body.defaultThinkingLevel === 'low',
+      JSON.stringify({
+        def: r.body.default?.id,
+        src: r.body.defaultSource,
+        lvl: r.body.defaultThinkingLevel,
+      }),
+    );
+
+    r = await jfetch('/api/models/default', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'stub/stub-pro', thinkLevel: 'high' }),
+    });
+    const afterSet = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+    report(
+      'POST /api/models/default persists model and thinking level to settings',
+      r.status === 200 &&
+        afterSet.defaultProvider === 'stub' &&
+        afterSet.defaultModel === 'stub-pro' &&
+        afterSet.defaultThinkingLevel === 'high' &&
+        r.body.default?.id === 'stub-pro' &&
+        r.body.defaultThinkingLevel === 'high',
+      JSON.stringify({ status: r.status, settings: afterSet }),
+    );
+
+    const safeCwd = `--${RUN_ROOT.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}`;
+    const chatDir = path.join(sdkSessions, safeCwd);
+    fs.mkdirSync(chatDir, { recursive: true });
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const chatFile = path.join(chatDir, `${ts}_00000000-0000-4000-8000-000000000001.jsonl`);
+    fs.writeFileSync(
+      chatFile,
+      `${JSON.stringify({
+        type: 'message',
+        id: 'latest-a0',
+        parentId: null,
+        timestamp: new Date().toISOString(),
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'latest chat answer' }],
+          provider: 'stub',
+          model: 'stub-mini',
+          timestamp: Date.now(),
+          stopReason: 'stop',
+        },
+      })}\n`,
+    );
+    r = await jfetch('/api/models/default', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: null }),
+    });
+    const afterClear = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+    r = await jfetch('/api/models');
+    report(
+      'clearing the default falls back to the latest-chat model',
+      r.body.default?.id === 'stub-mini' &&
+        r.body.defaultSource === 'latest-chat' &&
+        !('defaultModel' in afterClear) &&
+        !('defaultProvider' in afterClear),
+      JSON.stringify({ def: r.body.default?.id, src: r.body.defaultSource, settings: afterClear }),
+    );
+
+    r = await jfetch('/api/new-chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cwd: RUN_ROOT }),
+    });
+    const newFile = r.body.file;
+    r = await jfetch(`/api/models?file=${encodeURIComponent(newFile)}`);
+    report(
+      'a new chat inherits the implicit latest-chat default',
+      r.body.current?.id === 'stub-mini' && r.body.defaultSource === 'latest-chat',
+      JSON.stringify({ current: r.body.current?.id, src: r.body.defaultSource }),
+    );
 
     report('no page errors', errors.length === 0, errors.join(' | ').slice(0, 300));
   } catch (e) {

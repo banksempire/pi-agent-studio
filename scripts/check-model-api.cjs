@@ -409,6 +409,30 @@ const STUB_MODELS = [
       `levelsCols=${levelsCols} pro=${proRow ? proRow.slice(0, 60) : '?'}`,
     );
 
+    const aligns = await page.evaluate(() => {
+      const row = document.querySelector('.model-catalog-row');
+      if (!row) return null;
+      const get = (sel) => {
+        const el = row.querySelector(sel);
+        return el ? getComputedStyle(el).textAlign : null;
+      };
+      return {
+        name: get('.model-catalog-name'),
+        input: get('.model-catalog-input'),
+        ctx: get('.model-catalog-ctx'),
+        cost: get('.model-catalog-cost'),
+      };
+    });
+    report(
+      'catalog cells right-aligned except model name',
+      !!aligns &&
+        aligns.name === 'start' &&
+        aligns.input === 'right' &&
+        aligns.ctx === 'right' &&
+        aligns.cost === 'right',
+      aligns ? JSON.stringify(aligns) : 'no row',
+    );
+
     await page.locator('.model-catalog-group-head').click();
     await delay(300);
     const rowsCollapsed = await page.locator('.model-catalog-row').count();

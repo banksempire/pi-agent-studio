@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import KeyValueList from '@sf/components/KeyValueList.vue';
+import PillSelector from '@sf/components/PillSelector.vue';
 import type { KeyValueItem } from '@sf/types/panel';
 import { computed, ref } from 'vue';
 import type { ModelInfo } from '../modelInfo';
@@ -13,6 +14,8 @@ const busy = ref(false);
 const error = ref('');
 
 const levels = computed<string[]>(() => detail.value?.model.thinkingLevels ?? []);
+
+const levelOptions = computed(() => levels.value.map((l) => ({ value: l, label: l })));
 
 const activeLevel = computed<string | null>(() => {
   const lv = store.modelDefaultLevel;
@@ -119,19 +122,11 @@ const rows = computed<KeyValueItem[]>(() => {
       </div>
       <div v-if="detail.isDefault" class="model-detail-levels">
         <span class="model-detail-levels-label">Thinking</span>
-        <div class="model-detail-pills">
-          <button
-            v-for="lvl in levels"
-            :key="lvl"
-            class="model-detail-pill sf-panel-btn"
-            :class="{ 'model-detail-pill--on': lvl === activeLevel }"
-            :disabled="busy"
-            :title="`Default thinking level: ${lvl}`"
-            @click="pickLevel(lvl)"
-          >
-            {{ lvl }}
-          </button>
-        </div>
+        <PillSelector
+          :options="levelOptions"
+          :model-value="activeLevel ?? ''"
+          @update:model-value="(v) => pickLevel(String(v))"
+        />
         <div v-if="store.modelDefaultSource === 'latest-chat'" class="model-detail-src">via latest new chat</div>
       </div>
     </template>
@@ -163,39 +158,6 @@ const rows = computed<KeyValueItem[]>(() => {
   color: var(--sf-text-muted);
   font-size: 16px;
   padding: 4px 0;
-}
-
-.model-detail-pills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.model-detail-pill {
-  border: 1px solid var(--sf-border);
-  border-radius: 10px;
-  color: var(--sf-text-muted);
-  font-size: 14px;
-  padding: 1px 10px;
-  cursor: pointer;
-}
-
-.model-detail-pill:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-.model-detail-pill--on {
-  background: var(--sf-accent);
-  border-color: var(--sf-accent);
-  color: var(--sf-text-on-accent);
-}
-
-@media (hover: hover) {
-  .model-detail-pill:not(:disabled):not(.model-detail-pill--on):hover {
-    box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
-    color: var(--sf-text-bright);
-  }
 }
 
 .model-detail-src {

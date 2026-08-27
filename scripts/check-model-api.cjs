@@ -522,7 +522,7 @@ const STUB_MODELS = [
     const togglePost = defaultPosts[defaultPosts.length - 1];
     const badgeRow = await page.locator('.model-catalog-row:has(.model-catalog-badge)').first().textContent();
     const miniSwitchAfter = await page.locator('.model-detail .md-switch').getAttribute('aria-checked');
-    const miniPills = await page.locator('.model-detail-pill').count();
+    const miniPills = await page.locator('.model-detail .sf-pill-item').count();
     const srcNote = await page.locator('.model-detail-src').count();
     report(
       'default-model toggle in the detail panel POSTs provider/id and moves the badge',
@@ -542,12 +542,12 @@ const STUB_MODELS = [
     await delay(400);
     await page.locator('.model-detail .md-switch').click();
     await delay(600);
-    const proPills = await page.locator('.model-detail-pill').count();
-    const activeBefore = await page.locator('.model-detail-pill--on').textContent();
-    await page.locator('.model-detail-pill', { hasText: 'high' }).click();
+    const proPills = await page.locator('.model-detail .sf-pill-item').count();
+    const activeBefore = await page.locator('.model-detail .sf-pill-item--on').textContent();
+    await page.locator('.model-detail .sf-pill-item', { hasText: 'high' }).click();
     await delay(600);
     const levelPost = defaultPosts[defaultPosts.length - 1];
-    const activeAfter = await page.locator('.model-detail-pill--on').textContent();
+    const activeAfter = await page.locator('.model-detail .sf-pill-item--on').textContent();
     report(
       'thinking-level pills POST thinkLevel with the default model and mark the active level',
       proPills === 3 &&

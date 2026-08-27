@@ -60,6 +60,7 @@ export async function createClient() {
     async slash() { return { ok: true, notice: '' }; },
     async getModels() { return { ok: true, models: [], default: null, current: null, currentThinkingLevel: null }; },
     async setModel() { return { ok: true, notice: '' }; },
+    async refreshCatalog() { return { ok: true, models: [], default: null, current: null, currentThinkingLevel: null, errors: [] }; },
     async listStates() { return { states: liveStates }; },
     async getAgentState() { return { state: null }; },
     subscribe() {

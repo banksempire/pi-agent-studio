@@ -84,6 +84,9 @@ export async function createClient() {
     async setModel() {
       return { ok: true, notice: '' };
     },
+    async refreshCatalog() {
+      return { ok: true, models: [], default: null, current: null, currentThinkingLevel: null, errors: [] };
+    },
     async listStates() {
       return { states: liveStates };
     },

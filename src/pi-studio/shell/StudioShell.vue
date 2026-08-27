@@ -2,6 +2,7 @@
 import Framework, { type FrameworkAction } from '@sf/Framework.vue';
 import { registerUtilityMenu } from '@sf/registry';
 import { layout } from '../layout/loadLayout';
+import { refreshModelCatalog } from '../modelInfo';
 import { type JobsSort, type SessionSyncState, SYNC_STATES, useChatStore } from '../store/chat';
 
 const store = useChatStore();
@@ -40,6 +41,15 @@ function onAction(e: FrameworkAction) {
       break;
     case 'stop-chat':
       if (store.activeChatId) store.stopSession(store.activeChatId);
+      break;
+    case 'change-model':
+      if (store.activeChatId) store.requestModelPicker();
+      break;
+    case 'open-model-catalog':
+      store.openModelCatalog();
+      break;
+    case 'refresh-model-catalog':
+      void refreshModelCatalog().catch(() => {});
       break;
     case 'session-filter':
       if (typeof e.payload === 'string') store.toggleStateFilter(e.payload as SessionSyncState);

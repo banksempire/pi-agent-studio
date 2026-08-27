@@ -298,6 +298,68 @@ const STUB_MODELS = [
       `posts=${postsAfterSlash}`,
     );
 
+    let refreshCalls = 0;
+    await page.route('**/api/models/refresh', async (route) => {
+      refreshCalls += 1;
+      state.currentId = 'stub-mini';
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          models: STUB_MODELS,
+          default: STUB_MODELS[0],
+          current: null,
+          currentThinkingLevel: null,
+          errors: [],
+        }),
+      });
+    });
+
+    await page.locator('.sf-menu-item', { hasText: 'Model' }).click();
+    await page.locator('.sf-menu-row', { hasText: 'Refresh Catalog' }).waitFor({ timeout: 5000 });
+    await page.locator('.sf-menu-row', { hasText: 'Refresh Catalog' }).click();
+    await delay(800);
+    report(
+      'Model menu Refresh Catalog POSTs /api/models/refresh',
+      refreshCalls === 1,
+      `refreshCalls=${refreshCalls}`,
+    );
+
+    await page.locator('.sf-menu-item', { hasText: 'Model' }).click();
+    await page.locator('.sf-menu-row', { hasText: 'Model Catalog…' }).waitFor({ timeout: 5000 });
+    await page.locator('.sf-menu-row', { hasText: 'Model Catalog…' }).click();
+    await page.waitForSelector('.model-catalog', { timeout: 10000 });
+    await page.locator('.model-catalog-row', { hasText: 'Stub Pro' }).first().waitFor({ timeout: 5000 });
+    const catalogGroups = await page.locator('.model-catalog-group').count();
+    const catalogRows = await page.locator('.model-catalog-row').count();
+    const defaultBadge = await page.locator('.model-catalog-badge').count();
+    report(
+      'Model Catalog window lists models grouped by provider with default badge',
+      catalogGroups === 1 && catalogRows === 2 && defaultBadge === 1,
+      `groups=${catalogGroups} rows=${catalogRows} badges=${defaultBadge}`,
+    );
+
+    await page.locator('.model-catalog-filter').fill('mini');
+    await delay(300);
+    const filteredRows = await page.locator('.model-catalog-row').count();
+    report('catalog filter narrows the list', filteredRows === 1, `rows=${filteredRows}`);
+    await page.locator('.model-catalog-filter').fill('');
+    await delay(300);
+
+    await page.locator('.sf-tab-label', { hasText: 'model-api-check' }).first().click({ force: true });
+    await delay(400);
+    await page.locator('.sf-menu-item', { hasText: 'Model' }).click();
+    await page.locator('.sf-menu-row', { hasText: 'Change Model…' }).waitFor({ timeout: 5000 });
+    await page.locator('.sf-menu-row', { hasText: 'Change Model…' }).click();
+    await delay(600);
+    const pickerOpen = await page.locator('.model-menu .sf-menu-pop').count();
+    report(
+      'Change Model… opens the right-panel model picker menu',
+      pickerOpen === 1,
+      `pickerPops=${pickerOpen}`,
+    );
+    await page.keyboard.press('Escape');
+
     report('no page errors', errors.length === 0, errors.join(' | ').slice(0, 300));
   } catch (e) {
     console.error('check-model-api crashed:', e);

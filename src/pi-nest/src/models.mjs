@@ -2,6 +2,7 @@ import { NEW_CHAT_CWD, sdk, supportedThinkingLevels } from './sdk-bridge.mjs';
 
 const CATALOG_TTL_MS = 30 * 1000;
 const CATALOG_MAX_ENTRIES = 8;
+const REFRESH_TIMEOUT_MS = 15 * 1000;
 
 export function serializeModel(m) {
   if (!m) return null;
@@ -62,6 +63,15 @@ async function fetchCatalog(cwd) {
   }
 }
 
+function catalogEntryOf(data) {
+  return {
+    at: Date.now(),
+    ...data,
+    serialized: data.models.map(serializeModel),
+    serializedDefault: serializeModel(data.defaultModel),
+  };
+}
+
 async function catalogFor(cwd) {
   const key = cwd ?? NEW_CHAT_CWD;
   const hit = catalogs.get(key);
@@ -70,12 +80,7 @@ async function catalogFor(cwd) {
   if (pending) return pending;
   const p = (async () => {
     const data = await fetchCatalog(key);
-    const entry = {
-      at: Date.now(),
-      ...data,
-      serialized: data.models.map(serializeModel),
-      serializedDefault: serializeModel(data.defaultModel),
-    };
+    const entry = catalogEntryOf(data);
     catalogs.set(key, entry);
     evictCatalogs();
     return entry;
@@ -116,6 +121,40 @@ export async function getModelsData(registry, file) {
     current: serializeModel(live.session.model),
     currentThinkingLevel: live.session.thinkingLevel ?? null,
   };
+}
+
+export async function refreshCatalog() {
+  const sm = sdk.SessionManager.inMemory(NEW_CHAT_CWD);
+  const { session } = await sdk.createAgentSession({ sessionManager: sm });
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REFRESH_TIMEOUT_MS);
+    let result;
+    try {
+      result = await session.modelRuntime.refresh({ force: true, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+    const errors = [...(result?.errors?.keys() ?? [])];
+    const entry = catalogEntryOf({
+      models: session.modelRuntime.getAvailableSnapshot(),
+      defaultModel: session.model,
+      defaultLevel: session.thinkingLevel ?? null,
+    });
+    catalogs.clear();
+    catalogs.set(NEW_CHAT_CWD, entry);
+    return {
+      errors,
+      models: entry.serialized,
+      default: entry.serializedDefault,
+      current: null,
+      currentThinkingLevel: entry.defaultLevel,
+    };
+  } finally {
+    try {
+      session.dispose();
+    } catch {}
+  }
 }
 
 export async function setSessionModel(registry, { file, model, thinkLevel }) {

@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { getModelsData, setSessionModel } from './models.mjs';
+import { getModelsData, refreshCatalog, setSessionModel } from './models.mjs';
 import { execSlash } from './slash.mjs';
 
 const MAX_IMAGES = 4;
@@ -88,6 +88,15 @@ export function createLocalClient(registry) {
       try {
         const notice = await setSessionModel(registry, { file: file || undefined, model, thinkLevel });
         return { ok: true, notice };
+      } catch (e) {
+        return { ok: false, error: String(e?.message ?? e) };
+      }
+    },
+
+    async refreshCatalog() {
+      try {
+        const data = await refreshCatalog();
+        return { ok: true, ...data };
       } catch (e) {
         return { ok: false, error: String(e?.message ?? e) };
       }

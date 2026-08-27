@@ -93,6 +93,17 @@ export async function loadSessionModels(file: string, force = false): Promise<Mo
   }
 }
 
+export async function refreshModelCatalog(): Promise<ModelCatalogView & { errors: string[] }> {
+  const data = await api<ModelCatalogView & { errors?: string[] }>('/api/models/refresh', {
+    method: 'POST',
+  });
+  const normalized = { ...data, errors: data.errors ?? [] };
+  globalCache.data = normalized;
+  globalCache.at = Date.now();
+  sessionCache.clear();
+  return normalized;
+}
+
 export async function setSessionModel(file: string, model: string, thinkLevel: string): Promise<string> {
   const j = await api<{ ok: boolean; notice?: string; error?: string }>('/api/models', {
     method: 'POST',

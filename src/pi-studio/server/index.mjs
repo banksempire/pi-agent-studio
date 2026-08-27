@@ -662,6 +662,24 @@ let modelCatalogInflight = null;
 const MODEL_CATALOG_TTL_MS = 60 * 1000;
 const MODEL_CATALOG_RETRY_MS = 5 * 1000;
 
+function applyModelCatalog(models) {
+  const windows = new Map();
+  const bare = new Map();
+  const rates = new Map();
+  for (const m of models ?? []) {
+    const key = `${m.provider}/${m.id}`;
+    const window = m.contextWindow ?? 0;
+    windows.set(key, window);
+    rates.set(key, m.cost ?? {});
+    const prev = bare.get(m.id);
+    bare.set(m.id, prev === undefined || prev === window ? window : 0);
+  }
+  modelWindows = windows;
+  modelBareWindows = bare;
+  modelCostRates = rates;
+  modelCatalogAt = Date.now();
+}
+
 async function ensureModelCatalog() {
   const now = Date.now();
   if (now - modelCatalogAt <= MODEL_CATALOG_TTL_MS) return;
@@ -671,21 +689,7 @@ async function ensureModelCatalog() {
     try {
       const r = await client.getModels({ file: '' });
       if (!r.ok) throw new Error(r.error || 'model catalog unavailable');
-      const windows = new Map();
-      const bare = new Map();
-      const rates = new Map();
-      for (const m of r.models ?? []) {
-        const key = `${m.provider}/${m.id}`;
-        const window = m.contextWindow ?? 0;
-        windows.set(key, window);
-        rates.set(key, m.cost ?? {});
-        const prev = bare.get(m.id);
-        bare.set(m.id, prev === undefined || prev === window ? window : 0);
-      }
-      modelWindows = windows;
-      modelBareWindows = bare;
-      modelCostRates = rates;
-      modelCatalogAt = Date.now();
+      applyModelCatalog(r.models);
     } catch {
       modelCatalogFailAt = Date.now();
     }
@@ -1419,6 +1423,24 @@ const server = createServer(async (req, res) => {
           default: r.default ?? null,
           current: r.current ?? null,
           currentThinkingLevel: r.currentThinkingLevel ?? null,
+        });
+      } catch (e) {
+        sendJson(res, 400, { error: String(e?.message ?? e) });
+      }
+      return;
+    }
+
+    if (p === '/api/models/refresh' && req.method === 'POST') {
+      try {
+        const r = await client.refreshCatalog();
+        if (!r.ok) return sendJson(res, 400, { error: r.error || 'Model catalog refresh failed' });
+        applyModelCatalog(r.models);
+        sendJson(res, 200, {
+          models: r.models ?? [],
+          default: r.default ?? null,
+          current: null,
+          currentThinkingLevel: r.currentThinkingLevel ?? null,
+          errors: r.errors ?? [],
         });
       } catch (e) {
         sendJson(res, 400, { error: String(e?.message ?? e) });

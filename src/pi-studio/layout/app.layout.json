@@ -31,6 +31,31 @@
       ]
     },
     {
+      "id": "model",
+      "label": "Model",
+      "items": [
+        {
+          "id": "change-model",
+          "label": "Change Model…",
+          "action": "change-model"
+        },
+        {
+          "id": "model-catalog",
+          "label": "Model Catalog…",
+          "action": "open-model-catalog"
+        },
+        {
+          "separator": true
+        },
+        {
+          "id": "refresh-model-catalog",
+          "label": "Refresh Catalog",
+          "accelerator": "Ctrl+Alt+R",
+          "action": "refresh-model-catalog"
+        }
+      ]
+    },
+    {
       "id": "view",
       "label": "View",
       "items": [

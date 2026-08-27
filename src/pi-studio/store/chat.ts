@@ -2,7 +2,7 @@ import { BLANK_CONTENT, type ExternalDropTarget, type WorkspaceApi } from '@sf/c
 import type { WorkspaceTabDef } from '@sf/types/layout';
 import { readUiValue, removeUiValue, uiEpoch, writeUiValue } from '@sf/uiState';
 import { collectAllTabs, firstTile } from '@sf/workspace/tree';
-import { reactive, watch } from 'vue';
+import { reactive, ref, watch } from 'vue';
 
 export interface ToolCallView {
   id: string;
@@ -157,6 +157,8 @@ export type JobsSort = 'created' | 'next' | 'name';
 
 const JOB_EDITOR_CONTENT = 'job-editor';
 const JOB_TAB_PREFIX = 'job-editor:';
+const MODEL_CATALOG_TAB_ID = 'model-catalog';
+const MODEL_CATALOG_CONTENT = 'model-catalog';
 
 function jobEditorTabId(jobId: string | null): string {
   return JOB_TAB_PREFIX + (jobId ?? 'new');
@@ -234,6 +236,12 @@ function loadStateFilter(): StateFilter {
 
 function saveStateFilter() {
   writePersistedObject('app.chat.stateFilter', STATE_FILTER_KEY, state.stateFilter);
+}
+
+const modelPickerTick = ref(0);
+
+function requestModelPicker() {
+  modelPickerTick.value += 1;
 }
 
 function toggleStateFilter(s: SessionSyncState) {
@@ -754,6 +762,24 @@ function openJobEditor(jobId: string | null) {
     icon: '⏰',
     content: JOB_EDITOR_CONTENT,
     props: { jobId },
+  });
+}
+
+function openModelCatalog() {
+  if (!ws) return;
+  const existing = ws.findTabGlobal(MODEL_CATALOG_TAB_ID);
+  if (existing) {
+    ws.ops.activateTab(existing.id, MODEL_CATALOG_TAB_ID);
+    return;
+  }
+  const tileId = targetTileId();
+  if (!tileId) return;
+  ws.ops.openTab(tileId, {
+    id: MODEL_CATALOG_TAB_ID,
+    label: 'Model Catalog',
+    icon: '🤖',
+    content: MODEL_CATALOG_CONTENT,
+    props: {},
   });
 }
 
@@ -1964,6 +1990,8 @@ export const store = {
   fetchJobRuns,
   setJobsSort,
   openJobEditor,
+  openModelCatalog,
+  requestModelPicker,
   closeJobEditor,
   renameJobEditorTab,
   compactSession,
@@ -1982,6 +2010,9 @@ export const store = {
   },
   get jobsSort() {
     return state.jobsSort;
+  },
+  get modelPickerTick() {
+    return modelPickerTick.value;
   },
   get stateFilter() {
     return state.stateFilter;

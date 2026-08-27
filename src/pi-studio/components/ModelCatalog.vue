@@ -147,9 +147,9 @@ const totalCount = computed(() => {
               {{ m.name || m.id }}
               <span v-if="`${m.provider}/${m.id}` === defaultKey" class="model-catalog-badge">default</span>
             </span>
+            <span class="model-catalog-input">{{ fmtInput(m) }}</span>
             <span class="model-catalog-ctx">{{ fmtContext(m.contextWindow) }}</span>
             <span class="model-catalog-cost">{{ fmtCost(m) }}</span>
-            <span class="model-catalog-input">{{ fmtInput(m) }}</span>
           </div>
         </div>
       </div>
@@ -296,7 +296,7 @@ const totalCount = computed(() => {
 
 .model-catalog-row {
   display: grid;
-  grid-template-columns: minmax(140px, 1.6fr) 70px minmax(130px, 1fr) minmax(90px, 1fr);
+  grid-template-columns: minmax(140px, 1.6fr) minmax(90px, 1fr) 70px minmax(130px, 1fr);
   gap: 8px;
   align-items: baseline;
   padding: 4px 12px;

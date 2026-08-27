@@ -401,6 +401,7 @@ const STUB_MODELS = [
         !!proRow &&
         proRow.includes('text + image') &&
         proRow.includes('1,049k') &&
+        proRow.indexOf('text + image') < proRow.indexOf('1,049k') &&
         !proRow.includes('low, high') &&
         !!miniRow &&
         miniRow.includes('text') &&

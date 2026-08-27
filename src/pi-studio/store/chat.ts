@@ -251,6 +251,13 @@ function requestModelDetail(model: ModelInfo, isDefault: boolean) {
   modelDetail.value = { model, isDefault };
 }
 
+const modelDefaultTick = ref(0);
+
+function applyModelDefault(model: ModelInfo) {
+  modelDetail.value = { model, isDefault: true };
+  modelDefaultTick.value += 1;
+}
+
 function toggleStateFilter(s: SessionSyncState) {
   state.stateFilter = { ...state.stateFilter, [s]: !state.stateFilter[s] };
   saveStateFilter();
@@ -2000,6 +2007,7 @@ export const store = {
   openModelCatalog,
   requestModelPicker,
   requestModelDetail,
+  applyModelDefault,
   closeJobEditor,
   renameJobEditorTab,
   compactSession,
@@ -2024,6 +2032,9 @@ export const store = {
   },
   get modelDetail() {
     return modelDetail.value;
+  },
+  get modelDefaultTick() {
+    return modelDefaultTick.value;
   },
   get stateFilter() {
     return state.stateFilter;

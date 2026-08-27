@@ -404,18 +404,6 @@ const STUB_MODELS = [
       `collapsed=${rowsCollapsed} expanded=${rowsExpanded}`,
     );
 
-    await page.locator('.model-catalog-default-btn', { hasText: 'Set Default' }).first().click();
-    await delay(600);
-    const defaultPost = defaultPosts[defaultPosts.length - 1];
-    const badgeRow = await page.locator('.model-catalog-row:has(.model-catalog-badge)').first().textContent();
-    report(
-      'Set Default POSTs provider/id and moves the default badge',
-      !!defaultPost && defaultPost.model === 'stub/stub-mini' && !!badgeRow && badgeRow.includes('Stub Mini'),
-      defaultPost
-        ? `${defaultPost.model} -> badge row ${badgeRow ? (badgeRow.includes('Stub Mini') ? 'Stub Mini' : 'other') : '?'} `
-        : 'no POST',
-    );
-
     await page.locator('.model-catalog-filter').fill('mini');
     await delay(300);
     const filteredRows = await page.locator('.model-catalog-row').count();
@@ -429,7 +417,7 @@ const STUB_MODELS = [
     await page.locator('.model-catalog-row', { hasText: 'Stub Pro' }).first().click();
     await delay(400);
     const detailText = (await page.locator('.model-detail').textContent()) ?? '';
-    const detailPill = await page.locator('.model-detail .kv-pill--muted').count();
+    const detailPill = await page.locator('.model-detail .kv-pill--ok').count();
     report(
       'clicking a catalog row shows full metadata in the right panel',
       detailText.includes('stub-pro') &&
@@ -464,6 +452,29 @@ const STUB_MODELS = [
         backTitle.trim() === 'Model Catalog' &&
         backDetail.includes('stub-pro'),
       `chatTitle=${chatTitle} chatDetail=${chatDetail} backTitle=${backTitle}`,
+    );
+
+    await page.locator('.model-catalog-row', { hasText: 'Stub Mini' }).first().click();
+    await delay(400);
+    const miniDetail = (await page.locator('.model-detail').textContent()) ?? '';
+    await page.locator('.model-detail-btn', { hasText: 'Set Default' }).click();
+    await delay(600);
+    const defaultPost = defaultPosts[defaultPosts.length - 1];
+    const badgeRow = await page.locator('.model-catalog-row:has(.model-catalog-badge)').first().textContent();
+    const okPill = await page.locator('.model-detail .kv-pill--ok').count();
+    const btnAfter = await page.locator('.model-detail-btn').count();
+    report(
+      'Set Default lives in the right panel: POSTs provider/id, badge moves, pill flips, button hides',
+      !!defaultPost &&
+        defaultPost.model === 'stub/stub-mini' &&
+        !!badgeRow &&
+        badgeRow.includes('Stub Mini') &&
+        okPill === 1 &&
+        btnAfter === 0 &&
+        miniDetail.includes('stub-mini'),
+      defaultPost
+        ? `${defaultPost.model} badge=${badgeRow ? (badgeRow.includes('Stub Mini') ? 'Mini' : 'other') : '?'} okPill=${okPill} btn=${btnAfter}`
+        : 'no POST',
     );
 
     await page.locator('.sf-tab-label', { hasText: 'model-api-check' }).first().click({ force: true });

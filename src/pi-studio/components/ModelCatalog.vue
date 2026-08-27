@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import SvgIcon from '@sf/components/SvgIcon.vue';
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import type { ModelCatalogView, ModelInfo } from '../modelInfo';
-import { loadModelCatalog, refreshModelCatalog, setDefaultModel } from '../modelInfo';
+import { loadModelCatalog, refreshModelCatalog } from '../modelInfo';
 import { useChatStore } from '../store/chat';
 
 const store = useChatStore();
@@ -13,7 +13,11 @@ const error = ref('');
 const refreshErrors = ref<string[]>([]);
 const filter = ref('');
 const collapsed = ref(new Set<string>());
-const defaultBusy = ref('');
+
+watch(
+  () => store.modelDefaultTick,
+  () => void load(),
+);
 
 async function load(force = false) {
   error.value = '';
@@ -53,21 +57,6 @@ function toggleGroup(provider: string) {
 
 function isCollapsed(provider: string): boolean {
   return collapsed.value.has(provider);
-}
-
-async function makeDefault(m: ModelInfo) {
-  if (busy.value || defaultBusy.value) return;
-  defaultBusy.value = `${m.provider}/${m.id}`;
-  error.value = '';
-  try {
-    const data = await setDefaultModel(`${m.provider}/${m.id}`);
-    catalog.value = data;
-    refreshErrors.value = data.errors ?? [];
-  } catch (e) {
-    if (!(e instanceof TypeError)) error.value = String((e as Error)?.message ?? e);
-  } finally {
-    defaultBusy.value = '';
-  }
 }
 
 function fmtContext(window: number): string {
@@ -162,16 +151,6 @@ const totalCount = computed(() => {
             <span class="model-catalog-ctx">{{ fmtContext(m.contextWindow) }}</span>
             <span class="model-catalog-cost">{{ fmtCost(m) }}</span>
             <span class="model-catalog-levels" :title="m.thinkingLevels.join(', ')">{{ fmtLevels(m) }}</span>
-            <button
-              v-if="`${m.provider}/${m.id}` !== defaultKey"
-              class="model-catalog-default-btn"
-              :disabled="defaultBusy !== ''"
-              title="Set as the default model for new chats"
-              @click.stop="makeDefault(m)"
-            >
-              {{ defaultBusy === `${m.provider}/${m.id}` ? 'Setting…' : 'Set Default' }}
-            </button>
-            <span v-else class="model-catalog-default-spacer" />
           </div>
         </div>
       </div>
@@ -318,7 +297,7 @@ const totalCount = computed(() => {
 
 .model-catalog-row {
   display: grid;
-  grid-template-columns: minmax(140px, 1.6fr) 70px minmax(130px, 1fr) minmax(90px, 1fr) 96px;
+  grid-template-columns: minmax(140px, 1.6fr) 70px minmax(130px, 1fr) minmax(90px, 1fr);
   gap: 8px;
   align-items: baseline;
   padding: 4px 12px;
@@ -357,33 +336,6 @@ const totalCount = computed(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.model-catalog-default-btn {
-  justify-self: end;
-  background: none;
-  border: 1px solid var(--sf-border);
-  border-radius: 4px;
-  color: var(--sf-text-muted);
-  font-size: 14px;
-  padding: 2px 8px;
-  cursor: pointer;
-}
-
-.model-catalog-default-btn:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-@media (hover: hover) {
-  .model-catalog-default-btn:not(:disabled):hover {
-    box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
-    color: var(--sf-text-bright);
-  }
-}
-
-.model-catalog-default-spacer {
-  justify-self: end;
 }
 
 .model-catalog-empty {

@@ -3,6 +3,7 @@ import type { WorkspaceTabDef } from '@sf/types/layout';
 import { readUiValue, removeUiValue, uiEpoch, writeUiValue } from '@sf/uiState';
 import { collectAllTabs, firstTile } from '@sf/workspace/tree';
 import { reactive, ref, watch } from 'vue';
+import type { ModelInfo } from '../modelInfo';
 
 export interface ToolCallView {
   id: string;
@@ -242,6 +243,12 @@ const modelPickerTick = ref(0);
 
 function requestModelPicker() {
   modelPickerTick.value += 1;
+}
+
+const modelDetail = ref<{ model: ModelInfo; isDefault: boolean } | null>(null);
+
+function requestModelDetail(model: ModelInfo, isDefault: boolean) {
+  modelDetail.value = { model, isDefault };
 }
 
 function toggleStateFilter(s: SessionSyncState) {
@@ -1992,6 +1999,7 @@ export const store = {
   openJobEditor,
   openModelCatalog,
   requestModelPicker,
+  requestModelDetail,
   closeJobEditor,
   renameJobEditorTab,
   compactSession,
@@ -2013,6 +2021,9 @@ export const store = {
   },
   get modelPickerTick() {
     return modelPickerTick.value;
+  },
+  get modelDetail() {
+    return modelDetail.value;
   },
   get stateFilter() {
     return state.stateFilter;

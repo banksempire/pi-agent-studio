@@ -16,6 +16,10 @@ export interface ModelInfo {
   contextWindow: number;
   cost?: ModelCost;
   thinkingLevels: string[];
+  api?: string | null;
+  baseUrl?: string | null;
+  input?: string[];
+  maxTokens?: number;
 }
 
 export interface ModelCatalogView {

@@ -3,6 +3,9 @@ import SvgIcon from '@sf/components/SvgIcon.vue';
 import { computed, onMounted, ref } from 'vue';
 import type { ModelCatalogView, ModelInfo } from '../modelInfo';
 import { loadModelCatalog, refreshModelCatalog, setDefaultModel } from '../modelInfo';
+import { useChatStore } from '../store/chat';
+
+const store = useChatStore();
 
 const catalog = ref<ModelCatalogView | null>(null);
 const busy = ref(false);
@@ -35,6 +38,10 @@ async function refresh() {
   } finally {
     busy.value = false;
   }
+}
+
+function onRowClick(m: ModelInfo) {
+  store.requestModelDetail(m, `${m.provider}/${m.id}` === defaultKey.value);
 }
 
 function toggleGroup(provider: string) {
@@ -144,8 +151,9 @@ const totalCount = computed(() => {
           <div
             v-for="m in g.models"
             :key="`${m.provider}/${m.id}`"
-            class="model-catalog-row"
+            class="model-catalog-row model-catalog-row--clickable"
             :title="`${m.provider}/${m.id}`"
+            @click="onRowClick(m)"
           >
             <span class="model-catalog-name">
               {{ m.name || m.id }}
@@ -159,7 +167,7 @@ const totalCount = computed(() => {
               class="model-catalog-default-btn"
               :disabled="defaultBusy !== ''"
               title="Set as the default model for new chats"
-              @click="makeDefault(m)"
+              @click.stop="makeDefault(m)"
             >
               {{ defaultBusy === `${m.provider}/${m.id}` ? 'Setting…' : 'Set Default' }}
             </button>
@@ -315,6 +323,16 @@ const totalCount = computed(() => {
   align-items: baseline;
   padding: 4px 12px;
   font-size: 16px;
+}
+
+.model-catalog-row--clickable {
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .model-catalog-row--clickable:hover {
+    box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
+  }
 }
 
 .model-catalog-name {

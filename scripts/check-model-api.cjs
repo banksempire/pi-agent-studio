@@ -110,6 +110,10 @@ const STUB_MODELS = [
     name: 'Stub Pro',
     reasoning: true,
     contextWindow: 200000,
+    maxTokens: 8192,
+    api: 'openai-completions',
+    baseUrl: 'https://stub.example/v1',
+    input: ['text', 'image'],
     thinkingLevels: ['off', 'low', 'high'],
   },
   {
@@ -118,6 +122,10 @@ const STUB_MODELS = [
     name: 'Stub Mini',
     reasoning: false,
     contextWindow: 100000,
+    maxTokens: 4096,
+    api: 'openai-completions',
+    baseUrl: 'https://stub.example/v1',
+    input: ['text'],
     thinkingLevels: ['off'],
   },
 ];
@@ -414,6 +422,25 @@ const STUB_MODELS = [
     report('catalog filter narrows the list', filteredRows === 1, `rows=${filteredRows}`);
     await page.locator('.model-catalog-filter').fill('');
     await delay(300);
+
+    const detailHint = await page.locator('.model-detail-hint').count();
+    report('model detail panel shows hint before selection', detailHint === 1, `hint=${detailHint}`);
+
+    await page.locator('.model-catalog-row', { hasText: 'Stub Pro' }).first().click();
+    await delay(400);
+    const detailText = (await page.locator('.model-detail').textContent()) ?? '';
+    const detailPill = await page.locator('.model-detail .kv-pill--muted').count();
+    report(
+      'clicking a catalog row shows full metadata in the right panel',
+      detailText.includes('stub-pro') &&
+        detailText.includes('openai-completions') &&
+        detailText.includes('https://stub.example/v1') &&
+        detailText.includes('200k') &&
+        detailText.includes('8,192') &&
+        detailText.includes('text + image') &&
+        detailPill === 1,
+      `pill=${detailPill} text=${detailText.slice(0, 80)}`,
+    );
 
     await page.locator('.sf-tab-label', { hasText: 'model-api-check' }).first().click({ force: true });
     await delay(400);

@@ -12,6 +12,7 @@ import DirectoryTree from './components/DirectoryTree.vue';
 import JobEditor from './components/JobEditor.vue';
 import JobsPanel from './components/JobsPanel.vue';
 import ModelCatalog from './components/ModelCatalog.vue';
+import ModelDetail from './components/ModelDetail.vue';
 import ModelPicker from './components/ModelPicker.vue';
 import PrefsPanel from './components/PrefsPanel.vue';
 import SessionStats from './components/SessionStats.vue';
@@ -29,6 +30,7 @@ registerPanelComponent('directory-tree', DirectoryTree);
 registerPanelComponent('session-stats', SessionStats);
 registerStatusComponent('backend-status', BackendStatus);
 registerPanelComponent('model-picker', ModelPicker);
+registerPanelComponent('model-detail', ModelDetail);
 registerPanelComponent('prefs', PrefsPanel);
 registerPanelComponent('jobs-panel', JobsPanel);
 

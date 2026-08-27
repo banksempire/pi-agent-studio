@@ -10,8 +10,12 @@ export function serializeModel(m) {
     id: m.id,
     provider: m.provider,
     name: m.name,
+    api: m.api ?? null,
+    baseUrl: m.baseUrl ?? null,
     reasoning: !!m.reasoning,
+    input: Array.isArray(m.input) ? m.input : [],
     contextWindow: m.contextWindow ?? 0,
+    maxTokens: m.maxTokens ?? 0,
     cost: m.cost
       ? {
           input: m.cost.input ?? 0,

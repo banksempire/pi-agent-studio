@@ -248,6 +248,18 @@
             ]
           },
           {
+            "id": "session-model-detail",
+            "label": "Model Detail",
+            "height": "variable",
+            "minHeight": 120,
+            "components": [
+              {
+                "type": "component",
+                "key": "model-detail"
+              }
+            ]
+          },
+          {
             "id": "session-stats",
             "label": "Stats",
             "height": "fixed",

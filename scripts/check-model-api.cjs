@@ -442,6 +442,30 @@ const STUB_MODELS = [
       `pill=${detailPill} text=${detailText.slice(0, 80)}`,
     );
 
+    const rightTitle = (await page.locator('.sf-panel--right .sf-panel-title').textContent()) ?? '';
+    report(
+      'right panel uses the model-catalog layout while the catalog tab is focused',
+      rightTitle.trim() === 'Model Catalog',
+      `title=${rightTitle}`,
+    );
+
+    await page.locator('.sf-tab-label', { hasText: 'model-api-check' }).first().click({ force: true });
+    await delay(400);
+    const chatTitle = (await page.locator('.sf-panel--right .sf-panel-title').textContent()) ?? '';
+    const chatDetail = await page.locator('.model-detail').count();
+    await page.locator('.sf-tab-label', { hasText: 'Model Catalog' }).first().click({ force: true });
+    await delay(400);
+    const backTitle = (await page.locator('.sf-panel--right .sf-panel-title').textContent()) ?? '';
+    const backDetail = (await page.locator('.model-detail').textContent()) ?? '';
+    report(
+      'right panel follows the focused tab: chat layout on chat tabs, catalog layout on catalog',
+      chatTitle.trim() === 'Chat' &&
+        chatDetail === 0 &&
+        backTitle.trim() === 'Model Catalog' &&
+        backDetail.includes('stub-pro'),
+      `chatTitle=${chatTitle} chatDetail=${chatDetail} backTitle=${backTitle}`,
+    );
+
     await page.locator('.sf-tab-label', { hasText: 'model-api-check' }).first().click({ force: true });
     await delay(400);
     await page.locator('.sf-menu-item', { hasText: 'Model' }).click();

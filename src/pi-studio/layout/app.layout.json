@@ -229,6 +229,31 @@
       }
     }
   ],
+  "rightPanels": {
+    "model-catalog": {
+      "title": "Model Catalog",
+      "sections": [
+        {
+          "id": "model-catalog",
+          "label": "Model Catalog",
+          "subSections": [
+            {
+              "id": "model-detail",
+              "label": "Model Detail",
+              "height": "variable",
+              "minHeight": 120,
+              "components": [
+                {
+                  "type": "component",
+                  "key": "model-detail"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
   "right": {
     "title": "Chat",
     "sections": [
@@ -244,18 +269,6 @@
               {
                 "type": "component",
                 "key": "model-picker"
-              }
-            ]
-          },
-          {
-            "id": "session-model-detail",
-            "label": "Model Detail",
-            "height": "variable",
-            "minHeight": 120,
-            "components": [
-              {
-                "type": "component",
-                "key": "model-detail"
               }
             ]
           },

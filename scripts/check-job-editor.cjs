@@ -221,37 +221,39 @@ function writeSessionFile(name) {
         body: JSON.stringify({ jobs: [CUSTOM_JOB] }),
       }),
     );
+    const STUB_MODELS = [
+      {
+        id: 'stub-pro',
+        provider: 'stub',
+        name: 'Stub Pro',
+        reasoning: true,
+        contextWindow: 200000,
+        thinkingLevels: ['off', 'low', 'high'],
+      },
+      {
+        id: 'stub-mini',
+        provider: 'stub',
+        name: 'Stub Mini',
+        reasoning: false,
+        contextWindow: 100000,
+        thinkingLevels: ['off'],
+      },
+    ];
     await page.route('**/api/models*', async (route) => {
       const url = new URL(route.request().url());
-      if (url.searchParams.get('file')) {
+      if (route.request().method() !== 'GET') {
         await route.continue();
         return;
       }
+      const withFile = url.searchParams.get('file');
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          models: [
-            {
-              id: 'stub-pro',
-              provider: 'stub',
-              name: 'Stub Pro',
-              reasoning: true,
-              contextWindow: 200000,
-              thinkingLevels: ['off', 'low', 'high'],
-            },
-            {
-              id: 'stub-mini',
-              provider: 'stub',
-              name: 'Stub Mini',
-              reasoning: false,
-              contextWindow: 100000,
-              thinkingLevels: ['off'],
-            },
-          ],
+          models: STUB_MODELS,
           default: null,
-          current: null,
-          currentThinkingLevel: null,
+          current: withFile ? STUB_MODELS[0] : null,
+          currentThinkingLevel: withFile ? 'low' : null,
         }),
       });
     });
@@ -310,6 +312,41 @@ function writeSessionFile(name) {
         modelCleared === 'Session default',
       `${modelDefaultText} → ${modelAfter} → ${modelCleared}`,
     );
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.job-editor', { timeout: 20000 });
+    const restoredTitle = await page.locator('.job-editor-title-main').textContent();
+    await page.locator('.je-model-btn').waitFor({ timeout: 10000 });
+    const restoredModelBtn = await page.locator('.je-model-btn-text').textContent();
+    const restoredModelDisabled = await page.locator('.je-model-btn').isDisabled();
+    report(
+      'refresh restores the open job editor tab with a loaded model catalog',
+      restoredTitle === 'New Job' && restoredModelBtn === 'Session default' && !restoredModelDisabled,
+      `title=${restoredTitle} btn=${restoredModelBtn} disabled=${restoredModelDisabled}`,
+    );
+
+    const expandRight = page.locator('.sf-tab-panel-toggle[title="Expand Right Panel"]');
+    if ((await expandRight.count()) > 0) await expandRight.first().click();
+    await page.locator('.sf-tab-label', { hasText: 'job-font-check' }).first().click();
+    await delay(1200);
+    const pickerAfterRefresh = await page.evaluate(() => {
+      const el = document.querySelector('.model-menu');
+      return {
+        text: el ? el.textContent : '',
+        err: document.querySelector('.model-menu-note--err')?.textContent ?? '',
+      };
+    });
+    report(
+      'refresh restores chat tabs and the model picker loads the active session model',
+      pickerAfterRefresh.text.includes('stub') &&
+        pickerAfterRefresh.text.includes('Stub Pro') &&
+        pickerAfterRefresh.text.includes('low') &&
+        !pickerAfterRefresh.text.includes('Open a chat window') &&
+        !pickerAfterRefresh.err,
+      JSON.stringify(pickerAfterRefresh),
+    );
+    await page.locator('.sf-tab-label', { hasText: 'New Job' }).first().click();
+    await delay(400);
 
     const pickerStyle = await page.evaluate(() => {
       const el = document.querySelector('input[type="datetime-local"]');

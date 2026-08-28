@@ -1,39 +1,49 @@
 <script setup lang="ts">
+import PillSelector from '@sf/components/PillSelector.vue';
+import type { SendKeyMode } from '../store/chat';
 import { useChatStore } from '../store/chat';
 
 const store = useChatStore();
+
+const SEND_OPTIONS = [
+  { value: 'enter', label: 'Enter', title: 'Enter sends, Shift+Enter new line' },
+  { value: 'shiftEnter', label: 'Shift+Enter', title: 'Shift+Enter sends, Enter new line' },
+];
+
+const YES_NO = [
+  { value: 'yes', label: 'Yes' },
+  { value: 'no', label: 'No' },
+];
 </script>
 
 <template>
   <div class="prefs-panel">
-    <div class="prefs-row">
+    <div class="prefs-row prefs-row--pill">
       <span class="prefs-key">Send with</span>
       <span class="prefs-right">
-        <span class="prefs-hint">{{ store.prefs.sendKey === 'enter' ? 'Enter ↵' : 'Shift+Enter' }}</span>
-        <button
-          class="md-switch sf-panel-btn"
-          :class="{ 'md-switch--on': store.prefs.sendKey === 'shiftEnter' }"
-          role="switch"
-          :aria-checked="store.prefs.sendKey === 'shiftEnter'"
-          :title="store.prefs.sendKey === 'enter' ? 'Enter sends, Shift+Enter new line' : 'Shift+Enter sends, Enter new line'"
-          @click="store.setSendKey(store.prefs.sendKey === 'enter' ? 'shiftEnter' : 'enter')"
-        ><span class="md-switch-knob" /></button>
+        <PillSelector
+          :options="SEND_OPTIONS"
+          :model-value="store.prefs.sendKey"
+          @update:model-value="(v) => store.setSendKey(v as SendKeyMode)"
+        />
       </span>
     </div>
 
-    <div class="prefs-row">
-      <span class="prefs-key">Markdown</span>
+    <div class="prefs-row prefs-row--pill">
+      <span class="prefs-key">Render Markdown</span>
       <span class="prefs-right">
-        <span class="prefs-hint">{{ store.prefs.renderMarkdown ? 'md' : 'raw' }}</span>
-        <button
-          class="md-switch sf-panel-btn"
-          :class="{ 'md-switch--on': store.prefs.renderMarkdown }"
-          role="switch"
-          :aria-checked="store.prefs.renderMarkdown"
-          :title="store.prefs.renderMarkdown ? 'Markdown rendered — click to show raw text' : 'Raw text — click to render markdown'"
-          @click="store.setRenderMarkdown(!store.prefs.renderMarkdown)"
-        ><span class="md-switch-knob" /></button>
+        <PillSelector
+          :options="YES_NO"
+          :model-value="store.prefs.renderMarkdown ? 'yes' : 'no'"
+          @update:model-value="(v) => store.setRenderMarkdown(v === 'yes')"
+        />
       </span>
     </div>
   </div>
 </template>
+
+<style scoped>
+.prefs-panel {
+  padding: 4px 0;
+}
+</style>

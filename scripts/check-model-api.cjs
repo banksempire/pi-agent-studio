@@ -115,6 +115,7 @@ const STUB_MODELS = [
     baseUrl: 'https://stub.example/v1',
     input: ['text', 'image'],
     thinkingLevels: ['off', 'low', 'high'],
+    cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
   },
   {
     id: 'stub-mini',
@@ -412,20 +413,24 @@ const STUB_MODELS = [
     report('redundant model id column removed', idCols === 0, `idCols=${idCols}`);
 
     const levelsCols = await page.locator('.model-catalog-levels').count();
+    const separateCostCols = await page.locator('.model-catalog-cost, .model-catalog-ctx').count();
     const proRow = await page.locator('.model-catalog-row', { hasText: 'Stub Pro' }).first().textContent();
     const miniRow = await page.locator('.model-catalog-row', { hasText: 'Stub Mini' }).first().textContent();
     report(
-      'catalog rows show name, context, input type, cost only — levels moved to the detail panel',
+      'catalog rows show name, input type and context·cost concatenated — levels moved to the detail panel',
       levelsCols === 0 &&
+        separateCostCols === 0 &&
         !!proRow &&
         proRow.includes('text + image') &&
-        proRow.includes('1,049k') &&
+        proRow.includes('1,049k · $3.00 / $15.00 per M') &&
         proRow.indexOf('text + image') < proRow.indexOf('1,049k') &&
         !proRow.includes('low, high') &&
         !!miniRow &&
         miniRow.includes('text') &&
+        miniRow.includes('100k') &&
+        !miniRow.includes('·') &&
         !miniRow.includes('off'),
-      `levelsCols=${levelsCols} pro=${proRow ? proRow.slice(0, 60) : '?'}`,
+      `levelsCols=${levelsCols} costCols=${separateCostCols} pro=${proRow ? proRow.slice(0, 60) : '?'}`,
     );
 
     const aligns = await page.evaluate(() => {
@@ -438,19 +443,39 @@ const STUB_MODELS = [
       return {
         name: get('.model-catalog-name'),
         input: get('.model-catalog-input'),
-        ctx: get('.model-catalog-ctx'),
-        cost: get('.model-catalog-cost'),
+        meta: get('.model-catalog-meta'),
       };
     });
     report(
       'catalog cells right-aligned except model name',
-      !!aligns &&
-        aligns.name === 'start' &&
-        aligns.input === 'right' &&
-        aligns.ctx === 'right' &&
-        aligns.cost === 'right',
+      !!aligns && aligns.name === 'start' && aligns.input === 'right' && aligns.meta === 'right',
       aligns ? JSON.stringify(aligns) : 'no row',
     );
+
+    await page.setViewportSize({ width: 375, height: 900 });
+    await delay(400);
+    const mobileCatalog = await page.evaluate(() => {
+      const root = document.querySelector('.sf-root');
+      const body = document.querySelector('.model-catalog-body');
+      const meta = document.querySelector('.model-catalog-meta');
+      if (!root || !body || !meta) return null;
+      return {
+        mobile: root.classList.contains('sf-root--mobile'),
+        scrollW: body.scrollWidth,
+        clientW: body.clientWidth,
+        metaText: (meta.textContent || '').trim().replace(/\s+/g, ' '),
+      };
+    });
+    report(
+      'mobile: catalog fits the viewport — no horizontal scroll (cost concatenated with context)',
+      !!mobileCatalog &&
+        mobileCatalog.mobile &&
+        mobileCatalog.scrollW <= mobileCatalog.clientW + 1 &&
+        mobileCatalog.metaText.includes('·'),
+      mobileCatalog ? JSON.stringify(mobileCatalog) : 'not found',
+    );
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await delay(400);
 
     await page.locator('.model-catalog-group-head').click();
     await delay(300);

@@ -415,13 +415,15 @@ const STUB_MODELS = [
     const levelsCols = await page.locator('.model-catalog-levels').count();
     const ctxCells = await page.locator('.model-catalog-ctx').count();
     const costCells = await page.locator('.model-catalog-cost').count();
+    const subCellsDesktop = await page.locator('.model-catalog-sub').count();
     const proRow = await page.locator('.model-catalog-row', { hasText: 'Stub Pro' }).first().textContent();
     const miniRow = await page.locator('.model-catalog-row', { hasText: 'Stub Mini' }).first().textContent();
     report(
-      'catalog rows show name, input type, context and cost cells without the per-M suffix',
+      'desktop rows: name, input, context and cost cells — no per-M, no mobile detail line',
       levelsCols === 0 &&
         ctxCells === 2 &&
         costCells === 2 &&
+        subCellsDesktop === 0 &&
         !!proRow &&
         proRow.includes('text + image') &&
         proRow.includes('1,049k') &&
@@ -434,7 +436,7 @@ const STUB_MODELS = [
         miniRow.includes('text') &&
         miniRow.includes('100k') &&
         !miniRow.includes('off'),
-      `levelsCols=${levelsCols} ctx=${ctxCells} cost=${costCells} pro=${proRow ? proRow.slice(0, 60) : '?'}`,
+      `levelsCols=${levelsCols} ctx=${ctxCells} cost=${costCells} sub=${subCellsDesktop} pro=${proRow ? proRow.slice(0, 60) : '?'}`,
     );
 
     const aligns = await page.evaluate(() => {
@@ -460,6 +462,9 @@ const STUB_MODELS = [
         aligns.cost === 'right',
       aligns ? JSON.stringify(aligns) : 'no row',
     );
+
+    const detailHint = await page.locator('.model-detail-hint').count();
+    report('model detail panel shows hint before selection', detailHint === 1, `hint=${detailHint}`);
 
     await page.setViewportSize({ width: 375, height: 900 });
     await delay(400);
@@ -496,6 +501,66 @@ const STUB_MODELS = [
         mobileCatalog.costTrunc === true,
       mobileCatalog ? JSON.stringify(mobileCatalog) : 'not found',
     );
+
+    await page.locator('.model-catalog-row', { hasText: 'Stub Pro' }).first().click();
+    await delay(300);
+    const mobileSelected = await page.evaluate(() => {
+      const sel = document.querySelector('.model-catalog-row--selected');
+      const row = sel ?? document.querySelector('.model-catalog-row');
+      const sub = document.querySelector('.model-catalog-sub');
+      return {
+        selText: sel ? sel.textContent || '' : null,
+        selCount: document.querySelectorAll('.model-catalog-row--selected').length,
+        rowH: row ? row.getBoundingClientRect().height : 0,
+        subText: sub ? (sub.textContent || '').trim().replace(/\s+/g, ' ') : null,
+        subH: sub ? sub.getBoundingClientRect().height : 0,
+        subDisplay: sub ? getComputedStyle(sub).display : null,
+      };
+    });
+    report(
+      'mobile: tapping a row highlights exactly that row',
+      !!mobileSelected &&
+        mobileSelected.selCount === 1 &&
+        !!mobileSelected.selText &&
+        mobileSelected.selText.includes('Stub Pro'),
+      JSON.stringify({
+        selCount: mobileSelected?.selCount,
+        sel: mobileSelected?.selText ? mobileSelected.selText.slice(0, 40) : null,
+      }),
+    );
+    await page.locator('.model-catalog-row', { hasText: 'Stub Mini' }).first().click();
+    await delay(300);
+    const mobileMoved = await page.evaluate(() => {
+      const sel = document.querySelector('.model-catalog-row--selected');
+      return {
+        text: sel ? sel.textContent || '' : '',
+        count: document.querySelectorAll('.model-catalog-row--selected').length,
+      };
+    });
+    report(
+      'mobile: highlight moves to the newly tapped row',
+      mobileMoved.count === 1 &&
+        mobileMoved.text.includes('Stub Mini') &&
+        !mobileMoved.text.includes('Stub Pro'),
+      JSON.stringify({ count: mobileMoved.count, sel: mobileMoved.text.slice(0, 40) }),
+    );
+    report(
+      'mobile: taller rows show the detail line (provider/id, input, context, max out)',
+      !!mobileSelected &&
+        mobileSelected.rowH >= 50 &&
+        mobileSelected.subH > 0 &&
+        mobileSelected.subDisplay !== 'none' &&
+        !!mobileSelected.subText &&
+        mobileSelected.subText.includes('stub/stub-pro') &&
+        mobileSelected.subText.includes('text + image') &&
+        mobileSelected.subText.includes('1,049k') &&
+        mobileSelected.subText.includes('8,192 out'),
+      JSON.stringify({
+        rowH: mobileSelected?.rowH,
+        subH: mobileSelected?.subH,
+        sub: mobileSelected?.subText,
+      }),
+    );
     await page.setViewportSize({ width: 1440, height: 900 });
     await delay(400);
 
@@ -517,9 +582,6 @@ const STUB_MODELS = [
     report('catalog filter narrows the list', filteredRows === 1, `rows=${filteredRows}`);
     await page.locator('.model-catalog-filter').fill('');
     await delay(300);
-
-    const detailHint = await page.locator('.model-detail-hint').count();
-    report('model detail panel shows hint before selection', detailHint === 1, `hint=${detailHint}`);
 
     await page.locator('.model-catalog-row', { hasText: 'Stub Pro' }).first().click();
     await delay(400);

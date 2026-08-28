@@ -1,11 +1,16 @@
 <script setup lang="ts">
 import SvgIcon from '@sf/components/SvgIcon.vue';
-import { computed, onMounted, ref, watch } from 'vue';
+import { kIsMobile } from '@sf/composables/useWorkspace';
+import type { Ref } from 'vue';
+import { computed, inject, onMounted, ref, watch } from 'vue';
 import type { ModelCatalogView, ModelInfo } from '../modelInfo';
 import { loadModelCatalog, refreshModelCatalog } from '../modelInfo';
 import { useChatStore } from '../store/chat';
 
 const store = useChatStore();
+
+const injectedMobile = inject<Ref<boolean> | null>(kIsMobile, null);
+const isMobile = computed(() => injectedMobile?.value ?? false);
 
 const catalog = ref<ModelCatalogView | null>(null);
 const busy = ref(false);
@@ -13,6 +18,7 @@ const error = ref('');
 const refreshErrors = ref<string[]>([]);
 const filter = ref('');
 const collapsed = ref(new Set<string>());
+const selected = ref('');
 
 watch(
   () => store.modelDefaultTick,
@@ -46,6 +52,7 @@ async function refresh() {
 }
 
 function onRowClick(m: ModelInfo) {
+  selected.value = `${m.provider}/${m.id}`;
   store.requestModelDetail(m, `${m.provider}/${m.id}` === defaultKey.value);
 }
 
@@ -73,6 +80,12 @@ function fmtCost(m: ModelInfo): string {
   const c = m.cost;
   if (!c) return '—';
   return `$${c.input.toFixed(2)} / $${c.output.toFixed(2)}`;
+}
+
+function fmtSub(m: ModelInfo): string {
+  const parts = [`${m.provider}/${m.id}`, fmtInput(m), fmtContext(m.contextWindow)];
+  if (m.maxTokens) parts.push(`${m.maxTokens.toLocaleString()} out`);
+  return parts.join(' · ');
 }
 
 const providers = computed(() => {
@@ -141,6 +154,7 @@ const totalCount = computed(() => {
             v-for="m in g.models"
             :key="`${m.provider}/${m.id}`"
             class="model-catalog-row model-catalog-row--clickable"
+            :class="{ 'model-catalog-row--selected': `${m.provider}/${m.id}` === selected }"
             :title="`${m.provider}/${m.id}`"
             @click="onRowClick(m)"
           >
@@ -151,6 +165,7 @@ const totalCount = computed(() => {
             <span class="model-catalog-input">{{ fmtInput(m) }}</span>
             <span class="model-catalog-ctx">{{ fmtContext(m.contextWindow) }}</span>
             <span class="model-catalog-cost">{{ fmtCost(m) }}</span>
+            <span v-if="isMobile" class="model-catalog-sub">{{ fmtSub(m) }}</span>
           </div>
         </div>
       </div>
@@ -306,6 +321,43 @@ const totalCount = computed(() => {
 
 .model-catalog-row--clickable {
   cursor: pointer;
+}
+
+.model-catalog-row--selected {
+  background: var(--sf-selection);
+}
+
+.sf-root--mobile .model-catalog-row {
+  grid-template:
+    'name cost' auto
+    'sub sub' auto / minmax(0, 1fr) auto;
+  row-gap: 3px;
+  min-height: 56px;
+  padding: 8px 12px;
+  align-content: center;
+}
+
+.sf-root--mobile .model-catalog-name {
+  grid-area: name;
+}
+
+.sf-root--mobile .model-catalog-cost {
+  grid-area: cost;
+}
+
+.sf-root--mobile .model-catalog-input,
+.sf-root--mobile .model-catalog-ctx {
+  display: none;
+}
+
+.sf-root--mobile .model-catalog-sub {
+  grid-area: sub;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--sf-text-muted);
+  font-size: 14px;
 }
 
 @media (hover: hover) {

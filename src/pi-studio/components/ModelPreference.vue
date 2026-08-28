@@ -128,12 +128,6 @@ async function pickLevel(lvl: string) {
   text-align: right;
 }
 
-.model-preference :deep(.sf-pill-track) {
-  flex-wrap: wrap;
-  overflow-x: visible;
-  scrollbar-width: auto;
-}
-
 .model-preference-src {
   grid-column: 1 / -1;
   color: var(--sf-text-muted);

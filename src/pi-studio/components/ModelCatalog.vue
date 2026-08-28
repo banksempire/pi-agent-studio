@@ -388,6 +388,10 @@ const totalCount = computed(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.model-catalog-ctx,
+.model-catalog-cost {
   text-align: right;
 }
 

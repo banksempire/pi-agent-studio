@@ -454,10 +454,10 @@ const STUB_MODELS = [
       };
     });
     report(
-      'catalog cells right-aligned except model name',
+      'catalog cells: input left-aligned, context and cost right-aligned',
       !!aligns &&
         aligns.name === 'start' &&
-        aligns.input === 'right' &&
+        aligns.input === 'start' &&
         aligns.ctx === 'right' &&
         aligns.cost === 'right',
       aligns ? JSON.stringify(aligns) : 'no row',

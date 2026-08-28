@@ -287,6 +287,7 @@ function writeSessionFile(name) {
 
     const modelBtn = page.locator('.je-model-btn');
     await modelBtn.waitFor({ timeout: 10000 });
+    await page.locator('.je-model-btn-text', { hasText: 'Session default' }).waitFor({ timeout: 10000 });
     const modelDefaultText = await page.locator('.je-model-btn-text').textContent();
     await modelBtn.click();
     await page.waitForSelector('.sf-menu-pop', { timeout: 5000 });

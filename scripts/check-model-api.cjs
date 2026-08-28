@@ -558,11 +558,16 @@ const STUB_MODELS = [
     await delay(600);
     const proPills = await page.locator('.model-preference .sf-pill-item').count();
     const pillGap = await page.evaluate(() => {
-      const pill = document.querySelector('.model-preference .sf-pill');
-      if (!pill?.parentElement) return null;
+      const track = document.querySelector('.model-preference .sf-pill-track');
+      if (!track?.parentElement) return null;
       return Math.round(
-        pill.parentElement.getBoundingClientRect().right - pill.getBoundingClientRect().right,
+        track.parentElement.getBoundingClientRect().right - track.getBoundingClientRect().right,
       );
+    });
+    const pillItems = await page.locator('.model-preference .sf-pill-item').count();
+    const itemW = await page.evaluate(() => {
+      const el = document.querySelector('.model-preference .sf-pill-item');
+      return el ? Math.round(el.getBoundingClientRect().width) : 0;
     });
     const activeBefore = await page.locator('.model-preference .sf-pill-item--on').textContent();
     await page.locator('.model-preference .sf-pill-item', { hasText: 'high' }).click();
@@ -574,12 +579,14 @@ const STUB_MODELS = [
       proPills === 3 &&
         pillGap !== null &&
         pillGap <= 2 &&
+        pillItems === proPills &&
+        itemW > 24 &&
         !!levelPost &&
         levelPost.model === 'stub/stub-pro' &&
         levelPost.thinkLevel === 'high' &&
         (activeAfter ?? '').trim() === 'high' &&
         (activeBefore ?? '').trim() !== 'high',
-      `pills=${proPills} gap=${pillGap} post=${JSON.stringify(levelPost)} active=${activeBefore}->${activeAfter}`,
+      `pills=${proPills} gap=${pillGap} itemW=${itemW} post=${JSON.stringify(levelPost)} active=${activeBefore}->${activeAfter}`,
     );
 
     await page.locator('.model-preference .md-switch').click();

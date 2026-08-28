@@ -106,10 +106,10 @@ async function pickLevel(lvl: string) {
 
 .model-preference-levels {
   margin: 2px 8px 6px;
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
+  column-gap: 8px;
 }
 
 .model-preference-key {
@@ -118,10 +118,17 @@ async function pickLevel(lvl: string) {
 }
 
 .model-preference-pills {
-  margin-left: auto;
+  text-align: right;
+}
+
+.model-preference :deep(.sf-pill-track) {
+  flex-wrap: wrap;
+  overflow-x: visible;
+  scrollbar-width: auto;
 }
 
 .model-preference-src {
+  grid-column: 1 / -1;
   color: var(--sf-text-muted);
   font-size: 14px;
   padding: 4px 0 0;

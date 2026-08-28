@@ -454,10 +454,10 @@ const STUB_MODELS = [
       };
     });
     report(
-      'catalog cells: input left-aligned, context and cost right-aligned',
+      'desktop cells: all right-aligned except the model name',
       !!aligns &&
         aligns.name === 'start' &&
-        aligns.input === 'start' &&
+        aligns.input === 'right' &&
         aligns.ctx === 'right' &&
         aligns.cost === 'right',
       aligns ? JSON.stringify(aligns) : 'no row',
@@ -508,6 +508,9 @@ const STUB_MODELS = [
       const sel = document.querySelector('.model-catalog-row--selected');
       const row = sel ?? document.querySelector('.model-catalog-row');
       const sub = document.querySelector('.model-catalog-sub');
+      const subIn = sub ? sub.querySelector('.model-catalog-sub-in') : null;
+      const subCtx = sub ? sub.querySelector('.model-catalog-sub-ctx') : null;
+      const subRect = sub ? sub.getBoundingClientRect() : null;
       return {
         selText: sel ? sel.textContent || '' : null,
         selCount: document.querySelectorAll('.model-catalog-row--selected').length,
@@ -515,6 +518,10 @@ const STUB_MODELS = [
         subText: sub ? (sub.textContent || '').trim().replace(/\s+/g, ' ') : null,
         subH: sub ? sub.getBoundingClientRect().height : 0,
         subDisplay: sub ? getComputedStyle(sub).display : null,
+        inText: subIn ? subIn.textContent : null,
+        ctxText: subCtx ? subCtx.textContent : null,
+        inLeftDelta: subIn && subRect ? subIn.getBoundingClientRect().left - subRect.left : null,
+        ctxRightDelta: subCtx && subRect ? subRect.right - subCtx.getBoundingClientRect().right : null,
       };
     });
     report(
@@ -545,20 +552,27 @@ const STUB_MODELS = [
       JSON.stringify({ count: mobileMoved.count, sel: mobileMoved.text.slice(0, 40) }),
     );
     report(
-      'mobile: taller rows show the detail line (input, context, max out) — no provider/id',
+      'mobile: detail line — input info left-aligned, context/max-out right-aligned',
       !!mobileSelected &&
         mobileSelected.rowH >= 50 &&
         mobileSelected.subH > 0 &&
-        mobileSelected.subDisplay !== 'none' &&
+        mobileSelected.subDisplay === 'flex' &&
+        mobileSelected.inLeftDelta !== null &&
+        mobileSelected.inLeftDelta <= 1 &&
+        mobileSelected.ctxRightDelta !== null &&
+        mobileSelected.ctxRightDelta <= 1 &&
+        mobileSelected.inText === 'text + image' &&
+        mobileSelected.ctxText === '1,049k · 8,192 out' &&
         !!mobileSelected.subText &&
-        !mobileSelected.subText.includes('stub/') &&
-        mobileSelected.subText.includes('text + image') &&
-        mobileSelected.subText.includes('1,049k') &&
-        mobileSelected.subText.includes('8,192 out'),
+        !mobileSelected.subText.includes('stub/'),
       JSON.stringify({
         rowH: mobileSelected?.rowH,
         subH: mobileSelected?.subH,
-        sub: mobileSelected?.subText,
+        display: mobileSelected?.subDisplay,
+        in: mobileSelected?.inText,
+        ctx: mobileSelected?.ctxText,
+        inLeftDelta: mobileSelected?.inLeftDelta,
+        ctxRightDelta: mobileSelected?.ctxRightDelta,
       }),
     );
     await page.setViewportSize({ width: 1440, height: 900 });

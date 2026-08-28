@@ -82,8 +82,12 @@ function fmtCost(m: ModelInfo): string {
   return `$${c.input.toFixed(2)} / $${c.output.toFixed(2)}`;
 }
 
-function fmtSub(m: ModelInfo): string {
-  const parts = [fmtInput(m), fmtContext(m.contextWindow)];
+function fmtSubIn(m: ModelInfo): string {
+  return fmtInput(m);
+}
+
+function fmtSubCtx(m: ModelInfo): string {
+  const parts = [fmtContext(m.contextWindow)];
   if (m.maxTokens) parts.push(`${m.maxTokens.toLocaleString()} out`);
   return parts.join(' · ');
 }
@@ -165,7 +169,10 @@ const totalCount = computed(() => {
             <span class="model-catalog-input">{{ fmtInput(m) }}</span>
             <span class="model-catalog-ctx">{{ fmtContext(m.contextWindow) }}</span>
             <span class="model-catalog-cost">{{ fmtCost(m) }}</span>
-            <span v-if="isMobile" class="model-catalog-sub">{{ fmtSub(m) }}</span>
+            <span v-if="isMobile" class="model-catalog-sub">
+              <span class="model-catalog-sub-in">{{ fmtSubIn(m) }}</span>
+              <span class="model-catalog-sub-ctx">{{ fmtSubCtx(m) }}</span>
+            </span>
           </div>
         </div>
       </div>
@@ -352,12 +359,30 @@ const totalCount = computed(() => {
 
 .sf-root--mobile .model-catalog-sub {
   grid-area: sub;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+  color: var(--sf-text-muted);
+  font-size: 14px;
+}
+
+.sf-root--mobile .model-catalog-sub-in {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--sf-text-muted);
-  font-size: 14px;
+}
+
+.sf-root--mobile .model-catalog-sub-ctx {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
 }
 
 @media (hover: hover) {
@@ -388,10 +413,6 @@ const totalCount = computed(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.model-catalog-ctx,
-.model-catalog-cost {
   text-align: right;
 }
 

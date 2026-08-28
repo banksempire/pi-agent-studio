@@ -12,13 +12,18 @@ import {
   chatScrollOf,
   clearSessionError,
   type DisplayMessage,
+  enqueueMessage,
   fmtTime,
   openGroupsOf,
+  type QueuedChatMessage,
+  queuedMessagesOf,
+  removeQueuedMessage,
   sessionErrorOf,
   setAttachments,
   setOpenGroup,
   setSessionError,
   unsetOpenGroup,
+  updateQueuedMessage,
   useChatStore,
 } from '../store/chat';
 import ImageReview from './ImageReview.vue';
@@ -659,6 +664,61 @@ function send() {
   pinToBottom();
 }
 
+const queue = computed(() => queuedMessagesOf(props.sessionId));
+
+const canQueue = computed(
+  () => session.value?.status === 'running' && !!input.value.trim() && !attachments.value.length,
+);
+
+function queueMessage() {
+  const text = input.value.trim();
+  if (!canQueue.value) return;
+  enqueueMessage(props.sessionId, text);
+  input.value = '';
+  store.noteChatInteraction(props.sessionId);
+  inputEl.value?.focus();
+}
+
+const editingQueue = ref<QueuedChatMessage | null>(null);
+const editingText = ref('');
+const queueEditEl = ref<HTMLTextAreaElement | null>(null);
+
+function editQueued(q: QueuedChatMessage) {
+  editingQueue.value = q;
+  editingText.value = q.text;
+  nextTick(() => {
+    queueEditEl.value?.focus();
+    queueEditEl.value?.select();
+  });
+}
+
+function closeQueueEdit() {
+  editingQueue.value = null;
+  editingText.value = '';
+}
+
+function saveQueueEdit() {
+  const q = editingQueue.value;
+  if (!q || !editingText.value.trim()) return;
+  updateQueuedMessage(props.sessionId, q.id, editingText.value);
+  closeQueueEdit();
+}
+
+function onQueueEditKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    closeQueueEdit();
+  } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault();
+    saveQueueEdit();
+  }
+}
+
+watch(queue, (q) => {
+  const cur = editingQueue.value;
+  if (cur && !q.some((m) => m.id === cur.id)) closeQueueEdit();
+});
+
 const attachments = computed({
   get: () => attachmentsOf(props.sessionId),
   set: (v: ChatAttachment[]) => setAttachments(props.sessionId, v),
@@ -862,6 +922,7 @@ watch(
       review.value = null;
       flash.value = {};
       prevBubbleStatus.clear();
+      closeQueueEdit();
       restoreScroll(newId);
     }
   },
@@ -1044,6 +1105,23 @@ watch(
         <SvgIcon name="⚠" /> {{ windowError }} (click to dismiss)
       </div>
 
+        <div v-if="queue.length" class="chat-queue" data-testid="chat-queue">
+          <div class="chat-queue-caption">Queued — sends when the session finishes</div>
+          <div v-for="q in queue" :key="q.id" class="chat-queue-box" data-testid="chat-queue-box">
+            <span class="chat-queue-text" :title="q.text">{{ q.text }}</span>
+            <button
+              class="chat-queue-act"
+              title="Edit this queued message"
+              @click="editQueued(q)"
+            ><SvgIcon name="✎" /></button>
+            <button
+              class="chat-queue-act"
+              title="Remove from queue"
+              @click="removeQueuedMessage(props.sessionId, q.id)"
+            ><SvgIcon name="✕" /></button>
+          </div>
+        </div>
+
         <div v-if="attachments.length" class="chat-attach-row">
           <div v-for="(a, i) in attachments" :key="i" class="chat-attach-chip">
             <img :src="a.url" class="chat-attach-thumb" alt="attachment" />
@@ -1095,6 +1173,13 @@ watch(
             @change="onFilesChosen"
           />
           <button
+            class="chat-queue-btn"
+            :class="{ 'chat-queue-btn--hidden': !canQueue }"
+            :title="canQueue ? 'Queue this message — it sends automatically when the session finishes' : 'Queue (available while the session is working and the input has text)'"
+            :disabled="!!composerBlock || !canQueue"
+            @click="queueMessage"
+          ><SvgIcon name="🕘" /></button>
+          <button
             v-if="canStop"
             class="chat-send-btn chat-send-btn--stop"
             title="Interrupt generation"
@@ -1113,6 +1198,32 @@ watch(
             <SvgIcon name="⚠" /> {{ composerBlock }}
           </div>
         </div>
+    </div>
+
+    <div
+      v-if="editingQueue"
+      class="chat-queue-edit"
+      data-testid="chat-queue-edit"
+      @click.self="closeQueueEdit"
+    >
+      <div class="chat-queue-edit-card">
+        <div class="chat-queue-edit-title">Edit queued message</div>
+        <textarea
+          ref="queueEditEl"
+          v-model="editingText"
+          class="chat-queue-edit-text"
+          rows="6"
+          @keydown="onQueueEditKeydown"
+        />
+        <div class="chat-queue-edit-actions">
+          <button class="chat-queue-edit-btn" @click="closeQueueEdit">Cancel</button>
+          <button
+            class="chat-queue-edit-btn chat-queue-edit-btn--primary"
+            :disabled="!editingText.trim()"
+            @click="saveQueueEdit"
+          >Save</button>
+        </div>
+      </div>
     </div>
 
     <ImageReview

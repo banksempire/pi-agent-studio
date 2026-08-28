@@ -686,7 +686,18 @@ async function refreshJobs() {
     const { jobs } = await api<{ jobs: JobInfo[] }>('/api/jobs');
     state.jobs = jobs;
     state.jobsLoaded = true;
+    syncJobEditorTabLabels();
   } catch {}
+}
+
+function syncJobEditorTabLabels() {
+  if (!ws) return;
+  for (const [tabId, tab] of Object.entries(ws.tabDefs)) {
+    if (!tabId.startsWith(JOB_TAB_PREFIX)) continue;
+    const jobId = tabId.slice(JOB_TAB_PREFIX.length);
+    const label = jobId === 'new' ? 'New Job' : state.jobs.find((j) => j.id === jobId)?.name;
+    if (label && tab.label !== label) tab.label = label;
+  }
 }
 
 function scheduleJobsRefresh() {
@@ -817,6 +828,7 @@ async function fetchList() {
     state.backend = 'online';
     saveDrafts();
     sweepGhostChatTabs();
+    sweepRestoredChatTabs();
   } catch (_e) {
     state.backend = 'offline';
   }
@@ -827,6 +839,17 @@ function sweepGhostChatTabs() {
   for (const tabId of Object.keys(ws.tabDefs)) {
     if (!tabId.startsWith(TAB_PREFIX)) continue;
     if (ws.tabDefs[tabId].content !== BLANK_CONTENT) continue;
+    if (findSession(tabId.slice(TAB_PREFIX.length))) continue;
+    ws.ops.closeTab(tabId);
+  }
+}
+
+let restoredChatTabs: Set<string> | null = null;
+
+function sweepRestoredChatTabs() {
+  if (!ws || !restoredChatTabs || restoredChatTabs.size === 0) return;
+  for (const tabId of [...restoredChatTabs]) {
+    restoredChatTabs.delete(tabId);
     if (findSession(tabId.slice(TAB_PREFIX.length))) continue;
     ws.ops.closeTab(tabId);
   }
@@ -1289,6 +1312,7 @@ function targetTileId(): string {
 
 export function bindWorkspace(api: WorkspaceApi) {
   ws = api;
+  restoredChatTabs = new Set(Object.keys(api.tabDefs).filter((id) => id.startsWith(TAB_PREFIX)));
 
   api.setWindowStateProvider({
     read: () => {
@@ -1425,12 +1449,19 @@ function reconcileGhostWindows() {
   if (!ws) return;
   for (const id of Object.keys(ws.tabDefs)) {
     if (!id.startsWith(TAB_PREFIX)) continue;
-    if (ws.tabDefs[id].content !== BLANK_CONTENT) continue;
     const s = findSession(id.slice(TAB_PREFIX.length));
-    if (s) {
+    if (!s) continue;
+    const def = ws.tabDefs[id];
+    if (def.content === BLANK_CONTENT) {
       ws.tabDefs[id] = chatTabDef(s);
       syncSessionView(s);
+      continue;
     }
+    const st = tabStatusOf(s);
+    def.icon = st.icon;
+    def.tabClass = statusTabClass(id, s);
+    def.label = s.title;
+    if (!s.messagesLoaded) syncSessionView(s);
   }
 }
 
@@ -1750,9 +1781,12 @@ export function setRenderMarkdown(on: boolean) {
 
 const PAGE_SIZE = 50;
 
+const messagesInflight = new Set<string>();
+
 export async function fetchMessages(sessionId: string) {
   const s = findSession(sessionId);
-  if (!s) return;
+  if (!s || messagesInflight.has(sessionId)) return;
+  messagesInflight.add(sessionId);
   const params = new URLSearchParams({ file: s.file, limit: String(PAGE_SIZE) });
   try {
     const data = await api<any>(`/api/sessions/messages?${params.toString()}`);
@@ -1767,6 +1801,8 @@ export async function fetchMessages(sessionId: string) {
     if (!(e instanceof TypeError)) {
       setSessionError(sessionId, `Failed to load messages: ${e instanceof Error ? e.message : e}`);
     }
+  } finally {
+    messagesInflight.delete(sessionId);
   }
 }
 

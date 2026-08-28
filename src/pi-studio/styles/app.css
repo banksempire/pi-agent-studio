@@ -1235,6 +1235,25 @@
   white-space: nowrap;
 }
 
+.prefs-row--pill {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 12px;
+}
+
+.prefs-row--pill .prefs-right {
+  display: block;
+  margin-left: 0;
+  text-align: right;
+}
+
+.prefs-row--pill .sf-pill-track {
+  flex-wrap: wrap;
+  overflow-x: visible;
+  scrollbar-width: auto;
+}
+
 .session-stats-empty {
   color: var(--sf-text-muted);
   font-size: 16px;

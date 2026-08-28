@@ -530,13 +530,14 @@ const STUB_MODELS = [
 
     await page.locator('.model-catalog-row', { hasText: 'Stub Mini' }).first().click();
     await delay(400);
-    const miniSwitchBefore = await page.locator('.model-preference .md-switch').getAttribute('aria-checked');
-    await page.locator('.model-preference .md-switch').click();
+    const defPill = page.locator('.model-preference .prefs-row .sf-pill-item', { hasText: 'Yes' });
+    const miniSwitchBefore = await defPill.getAttribute('aria-pressed');
+    await defPill.click();
     await delay(600);
     const togglePost = defaultPosts[defaultPosts.length - 1];
     const badgeRow = await page.locator('.model-catalog-row:has(.model-catalog-badge)').first().textContent();
-    const miniSwitchAfter = await page.locator('.model-preference .md-switch').getAttribute('aria-checked');
-    const miniPills = await page.locator('.model-preference .sf-pill-item').count();
+    const miniSwitchAfter = await defPill.getAttribute('aria-pressed');
+    const miniPills = await page.locator('.model-preference-levels .sf-pill-item').count();
     const srcNote = await page.locator('.model-preference-src').count();
     report(
       'default-model toggle in the detail panel POSTs provider/id and moves the badge',
@@ -554,26 +555,26 @@ const STUB_MODELS = [
 
     await page.locator('.model-catalog-row', { hasText: 'Stub Pro' }).first().click();
     await delay(400);
-    await page.locator('.model-preference .md-switch').click();
+    await page.locator('.model-preference .prefs-row .sf-pill-item', { hasText: 'Yes' }).click();
     await delay(600);
-    const proPills = await page.locator('.model-preference .sf-pill-item').count();
+    const proPills = await page.locator('.model-preference-levels .sf-pill-item').count();
     const pillGap = await page.evaluate(() => {
-      const track = document.querySelector('.model-preference .sf-pill-track');
+      const track = document.querySelector('.model-preference .model-preference-levels .sf-pill-track');
       if (!track?.parentElement) return null;
       return Math.round(
         track.parentElement.getBoundingClientRect().right - track.getBoundingClientRect().right,
       );
     });
-    const pillItems = await page.locator('.model-preference .sf-pill-item').count();
+    const pillItems = await page.locator('.model-preference-levels .sf-pill-item').count();
     const itemW = await page.evaluate(() => {
-      const el = document.querySelector('.model-preference .sf-pill-item');
+      const el = document.querySelector('.model-preference-levels .sf-pill-item');
       return el ? Math.round(el.getBoundingClientRect().width) : 0;
     });
-    const activeBefore = await page.locator('.model-preference .sf-pill-item--on').textContent();
-    await page.locator('.model-preference .sf-pill-item', { hasText: 'high' }).click();
+    const activeBefore = await page.locator('.model-preference-levels .sf-pill-item--on').textContent();
+    await page.locator('.model-preference-levels .sf-pill-item', { hasText: 'high' }).click();
     await delay(600);
     const levelPost = defaultPosts[defaultPosts.length - 1];
-    const activeAfter = await page.locator('.model-preference .sf-pill-item--on').textContent();
+    const activeAfter = await page.locator('.model-preference-levels .sf-pill-item--on').textContent();
     report(
       'thinking-level pills POST thinkLevel with the default model and mark the active level',
       proPills === 3 &&
@@ -589,14 +590,16 @@ const STUB_MODELS = [
       `pills=${proPills} gap=${pillGap} itemW=${itemW} post=${JSON.stringify(levelPost)} active=${activeBefore}->${activeAfter}`,
     );
 
-    await page.locator('.model-preference .md-switch').click();
+    await page.locator('.model-preference .prefs-row .sf-pill-item', { hasText: 'No' }).click();
     await delay(600);
     const clearPost = defaultPosts[defaultPosts.length - 1];
     const clearBadge = await page
       .locator('.model-catalog-row:has(.model-catalog-badge)')
       .first()
       .textContent();
-    const clearSwitch = await page.locator('.model-preference .md-switch').getAttribute('aria-checked');
+    const clearSwitch = await page
+      .locator('.model-preference .prefs-row .sf-pill-item', { hasText: 'Yes' })
+      .getAttribute('aria-pressed');
     const clearSrc = await page.locator('.model-preference-src').textContent();
     report(
       'unsetting the default POSTs null and falls back to the latest-chat model',

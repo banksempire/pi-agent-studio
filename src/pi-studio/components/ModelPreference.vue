@@ -20,6 +20,17 @@ const activeLevel = computed<string | null>(() => {
   return levels.value[0] ?? null;
 });
 
+const YES_NO = [
+  { value: 'yes', label: 'Yes' },
+  { value: 'no', label: 'No' },
+];
+
+function onDefaultPick(want: boolean) {
+  const d = detail.value;
+  if (!d || busy.value || want === d.isDefault) return;
+  void toggleDefault();
+}
+
 async function toggleDefault() {
   const d = detail.value;
   if (!d || busy.value) return;
@@ -56,19 +67,14 @@ async function pickLevel(lvl: string) {
 <template>
   <div class="model-preference">
     <template v-if="detail">
-      <div class="prefs-row">
+      <div class="prefs-row prefs-row--pill">
         <span class="prefs-key">Default model</span>
         <span class="prefs-right">
-          <span class="prefs-hint">{{ detail.isDefault ? 'yes' : 'no' }}</span>
-          <button
-            class="md-switch sf-panel-btn"
-            :class="{ 'md-switch--on': detail.isDefault }"
-            role="switch"
-            :aria-checked="detail.isDefault"
-            :disabled="busy"
-            :title="detail.isDefault ? 'This model is the default — click to unset' : 'Set this model as the default for new chats'"
-            @click="toggleDefault"
-          ><span class="md-switch-knob" /></button>
+          <PillSelector
+            :options="YES_NO"
+            :model-value="detail.isDefault ? 'yes' : 'no'"
+            @update:model-value="(v) => onDefaultPick(v === 'yes')"
+          />
         </span>
       </div>
       <div v-if="detail.isDefault" class="model-preference-levels">

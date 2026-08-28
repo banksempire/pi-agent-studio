@@ -40,10 +40,10 @@ const rows = computed<KeyValueItem[]>(() => {
     { key: 'Reasoning', value: m.reasoning ? 'yes' : 'no' },
     { key: 'Context', value: fmtContext(m.contextWindow) },
     { key: 'Max Output', value: fmtTokens(m.maxTokens) },
-    { key: 'Cost In/Out', value: cost ? `${fmtRate(cost.input)} / ${fmtRate(cost.output)} per M` : '—' },
+    { key: 'Cost In/Out', value: cost ? `${fmtRate(cost.input)} / ${fmtRate(cost.output)}` : '—' },
     {
       key: 'Cache R/W',
-      value: cost ? `${fmtRate(cost.cacheRead)} / ${fmtRate(cost.cacheWrite)} per M` : '—',
+      value: cost ? `${fmtRate(cost.cacheRead)} / ${fmtRate(cost.cacheWrite)}` : '—',
     },
     {
       key: 'Thinking',

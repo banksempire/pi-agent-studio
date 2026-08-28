@@ -72,7 +72,7 @@ function fmtInput(m: ModelInfo): string {
 function fmtCost(m: ModelInfo): string {
   const c = m.cost;
   if (!c) return '—';
-  return `$${c.input.toFixed(2)} / $${c.output.toFixed(2)} per M`;
+  return `$${c.input.toFixed(2)} / $${c.output.toFixed(2)}`;
 }
 
 const providers = computed(() => {
@@ -297,7 +297,7 @@ const totalCount = computed(() => {
 
 .model-catalog-row {
   display: grid;
-  grid-template-columns: minmax(140px, 1.6fr) minmax(90px, 1fr) 70px minmax(130px, 1fr);
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 0.7fr) minmax(0, 1fr);
   gap: 8px;
   align-items: baseline;
   padding: 4px 12px;

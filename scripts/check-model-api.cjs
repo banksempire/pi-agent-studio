@@ -413,24 +413,28 @@ const STUB_MODELS = [
     report('redundant model id column removed', idCols === 0, `idCols=${idCols}`);
 
     const levelsCols = await page.locator('.model-catalog-levels').count();
-    const separateCostCols = await page.locator('.model-catalog-cost, .model-catalog-ctx').count();
+    const ctxCells = await page.locator('.model-catalog-ctx').count();
+    const costCells = await page.locator('.model-catalog-cost').count();
     const proRow = await page.locator('.model-catalog-row', { hasText: 'Stub Pro' }).first().textContent();
     const miniRow = await page.locator('.model-catalog-row', { hasText: 'Stub Mini' }).first().textContent();
     report(
-      'catalog rows show name, input type and context·cost concatenated — levels moved to the detail panel',
+      'catalog rows show name, input type, context and cost cells without the per-M suffix',
       levelsCols === 0 &&
-        separateCostCols === 0 &&
+        ctxCells === 2 &&
+        costCells === 2 &&
         !!proRow &&
         proRow.includes('text + image') &&
-        proRow.includes('1,049k · $3.00 / $15.00 per M') &&
+        proRow.includes('1,049k') &&
+        proRow.includes('$3.00 / $15.00') &&
+        !proRow.includes('per M') &&
+        !proRow.includes('·') &&
         proRow.indexOf('text + image') < proRow.indexOf('1,049k') &&
         !proRow.includes('low, high') &&
         !!miniRow &&
         miniRow.includes('text') &&
         miniRow.includes('100k') &&
-        !miniRow.includes('·') &&
         !miniRow.includes('off'),
-      `levelsCols=${levelsCols} costCols=${separateCostCols} pro=${proRow ? proRow.slice(0, 60) : '?'}`,
+      `levelsCols=${levelsCols} ctx=${ctxCells} cost=${costCells} pro=${proRow ? proRow.slice(0, 60) : '?'}`,
     );
 
     const aligns = await page.evaluate(() => {
@@ -443,12 +447,17 @@ const STUB_MODELS = [
       return {
         name: get('.model-catalog-name'),
         input: get('.model-catalog-input'),
-        meta: get('.model-catalog-meta'),
+        ctx: get('.model-catalog-ctx'),
+        cost: get('.model-catalog-cost'),
       };
     });
     report(
       'catalog cells right-aligned except model name',
-      !!aligns && aligns.name === 'start' && aligns.input === 'right' && aligns.meta === 'right',
+      !!aligns &&
+        aligns.name === 'start' &&
+        aligns.input === 'right' &&
+        aligns.ctx === 'right' &&
+        aligns.cost === 'right',
       aligns ? JSON.stringify(aligns) : 'no row',
     );
 
@@ -457,21 +466,34 @@ const STUB_MODELS = [
     const mobileCatalog = await page.evaluate(() => {
       const root = document.querySelector('.sf-root');
       const body = document.querySelector('.model-catalog-body');
-      const meta = document.querySelector('.model-catalog-meta');
-      if (!root || !body || !meta) return null;
+      const row = document.querySelector('.model-catalog-row');
+      if (!root || !body || !row) return null;
+      const truncation = (sel) => {
+        const el = row.querySelector(sel);
+        if (!el) return null;
+        const cs = getComputedStyle(el);
+        return cs.overflow === 'hidden' && cs.textOverflow === 'ellipsis' && cs.whiteSpace === 'nowrap';
+      };
       return {
         mobile: root.classList.contains('sf-root--mobile'),
         scrollW: body.scrollWidth,
         clientW: body.clientWidth,
-        metaText: (meta.textContent || '').trim().replace(/\s+/g, ' '),
+        docScrollW: document.documentElement.scrollWidth,
+        innerW: window.innerWidth,
+        nameTrunc: truncation('.model-catalog-name'),
+        costTrunc: truncation('.model-catalog-cost'),
+        rowW: row.getBoundingClientRect().width,
       };
     });
     report(
-      'mobile: catalog fits the viewport — no horizontal scroll (cost concatenated with context)',
+      'mobile: catalog fits the viewport — no horizontal scroll, cell values truncate',
       !!mobileCatalog &&
         mobileCatalog.mobile &&
         mobileCatalog.scrollW <= mobileCatalog.clientW + 1 &&
-        mobileCatalog.metaText.includes('·'),
+        mobileCatalog.docScrollW <= mobileCatalog.innerW + 1 &&
+        mobileCatalog.rowW <= mobileCatalog.clientW + 1 &&
+        mobileCatalog.nameTrunc === true &&
+        mobileCatalog.costTrunc === true,
       mobileCatalog ? JSON.stringify(mobileCatalog) : 'not found',
     );
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -512,6 +534,8 @@ const STUB_MODELS = [
         detailText.includes('1,049k') &&
         detailText.includes('8,192') &&
         detailText.includes('text + image') &&
+        detailText.includes('$3.00 / $15.00') &&
+        !detailText.includes('per M') &&
         !detailText.includes('Default') &&
         detailPill === 0 &&
         prefLabel === 1,
@@ -793,13 +817,21 @@ const STUB_MODELS = [
     console.error('check-model-api crashed:', e);
     process.exitCode = 1;
   } finally {
-    if (browserRef.current) await browserRef.current.close().catch(() => {});
+    if (browserRef.current) {
+      await Promise.race([browserRef.current.close().catch(() => {}), delay(3000)]);
+    }
     for (const p of procs) {
       try {
-        if (p.exitCode === null) process.kill(-p.pid, 'SIGTERM');
+        if (p.exitCode === null) p.kill('SIGTERM');
       } catch {}
     }
-    await delay(500);
+    await delay(1500);
+    for (const p of procs) {
+      try {
+        if (p.exitCode === null) p.kill('SIGKILL');
+      } catch {}
+    }
   }
   if (isFailed() || process.exitCode) process.exitCode = 1;
+  process.exit(process.exitCode ?? 0);
 })();

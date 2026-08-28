@@ -61,7 +61,7 @@ function isCollapsed(provider: string): boolean {
 }
 
 function fmtContext(window: number): string {
-  if (!window) return '';
+  if (!window) return '—';
   return window >= 1000 ? `${Math.round(window / 1000).toLocaleString()}k` : String(window);
 }
 
@@ -71,13 +71,8 @@ function fmtInput(m: ModelInfo): string {
 
 function fmtCost(m: ModelInfo): string {
   const c = m.cost;
-  if (!c) return '';
+  if (!c) return '—';
   return `$${c.input.toFixed(2)} / $${c.output.toFixed(2)} per M`;
-}
-
-function fmtMeta(m: ModelInfo): string {
-  const parts = [fmtContext(m.contextWindow), fmtCost(m)].filter(Boolean);
-  return parts.join(' · ') || '—';
 }
 
 const providers = computed(() => {
@@ -154,7 +149,8 @@ const totalCount = computed(() => {
               <span v-if="`${m.provider}/${m.id}` === defaultKey" class="model-catalog-badge">default</span>
             </span>
             <span class="model-catalog-input">{{ fmtInput(m) }}</span>
-            <span class="model-catalog-meta">{{ fmtMeta(m) }}</span>
+            <span class="model-catalog-ctx">{{ fmtContext(m.contextWindow) }}</span>
+            <span class="model-catalog-cost">{{ fmtCost(m) }}</span>
           </div>
         </div>
       </div>
@@ -301,7 +297,7 @@ const totalCount = computed(() => {
 
 .model-catalog-row {
   display: grid;
-  grid-template-columns: minmax(90px, 1.6fr) minmax(70px, 1fr) minmax(120px, 1.4fr);
+  grid-template-columns: minmax(140px, 1.6fr) minmax(90px, 1fr) 70px minmax(130px, 1fr);
   gap: 8px;
   align-items: baseline;
   padding: 4px 12px;
@@ -333,7 +329,8 @@ const totalCount = computed(() => {
   font-size: 14px;
 }
 
-.model-catalog-meta,
+.model-catalog-ctx,
+.model-catalog-cost,
 .model-catalog-input {
   color: var(--sf-text-muted);
   overflow: hidden;

@@ -1249,12 +1249,6 @@
   text-align: right;
 }
 
-.prefs-row--pill .sf-pill-track {
-  flex-wrap: wrap;
-  overflow-x: visible;
-  scrollbar-width: auto;
-}
-
 .session-stats-empty {
   color: var(--sf-text-muted);
   font-size: 16px;

@@ -571,7 +571,7 @@ const STUB_MODELS = [
       return el ? Math.round(el.getBoundingClientRect().width) : 0;
     });
     const activeBefore = await page.locator('.model-preference-levels .sf-pill-item--on').textContent();
-    await page.locator('.model-preference-levels .sf-pill-item', { hasText: 'high' }).click();
+    await page.locator('.model-preference-levels .sf-pill-item', { hasText: 'High' }).click();
     await delay(600);
     const levelPost = defaultPosts[defaultPosts.length - 1];
     const activeAfter = await page.locator('.model-preference-levels .sf-pill-item--on').textContent();
@@ -585,8 +585,8 @@ const STUB_MODELS = [
         !!levelPost &&
         levelPost.model === 'stub/stub-pro' &&
         levelPost.thinkLevel === 'high' &&
-        (activeAfter ?? '').trim() === 'high' &&
-        (activeBefore ?? '').trim() !== 'high',
+        (activeAfter ?? '').trim() === 'High' &&
+        (activeBefore ?? '').trim() !== 'High',
       `pills=${proPills} gap=${pillGap} itemW=${itemW} post=${JSON.stringify(levelPost)} active=${activeBefore}->${activeAfter}`,
     );
 

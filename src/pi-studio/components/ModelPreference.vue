@@ -12,7 +12,9 @@ const error = ref('');
 
 const levels = computed<string[]>(() => detail.value?.model.thinkingLevels ?? []);
 
-const levelOptions = computed(() => levels.value.map((l) => ({ value: l, label: l })));
+const levelOptions = computed(() =>
+  levels.value.map((l) => ({ value: l, label: l.charAt(0).toUpperCase() + l.slice(1) })),
+);
 
 const activeLevel = computed<string | null>(() => {
   const lv = store.modelDefaultLevel;
@@ -98,6 +100,9 @@ async function pickLevel(lvl: string) {
 <style scoped>
 .model-preference {
   padding: 4px 0;
+  display: flex;
+  flex-direction: column;
+  row-gap: 10px;
 }
 
 .model-preference-hint {
@@ -106,12 +111,8 @@ async function pickLevel(lvl: string) {
   font-size: 16px;
 }
 
-.model-preference .prefs-row {
-  margin: 6px 8px 0;
-}
-
 .model-preference-levels {
-  margin: 2px 8px 6px;
+  margin: 0 8px 8px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;

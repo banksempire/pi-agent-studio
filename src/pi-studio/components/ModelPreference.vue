@@ -72,8 +72,9 @@ async function pickLevel(lvl: string) {
         </span>
       </div>
       <div v-if="detail.isDefault" class="model-preference-levels">
-        <span class="model-preference-levels-label">Thinking</span>
+        <span class="model-preference-key">Thinking</span>
         <PillSelector
+          class="model-preference-pills"
           :options="levelOptions"
           :model-value="activeLevel ?? ''"
           @update:model-value="(v) => pickLevel(String(v))"
@@ -105,13 +106,19 @@ async function pickLevel(lvl: string) {
 
 .model-preference-levels {
   margin: 2px 8px 6px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
-.model-preference-levels-label {
-  display: block;
+.model-preference-key {
   color: var(--sf-text-muted);
   font-size: 16px;
-  padding: 4px 0;
+}
+
+.model-preference-pills {
+  margin-left: auto;
 }
 
 .model-preference-src {

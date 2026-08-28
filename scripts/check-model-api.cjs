@@ -557,6 +557,13 @@ const STUB_MODELS = [
     await page.locator('.model-preference .md-switch').click();
     await delay(600);
     const proPills = await page.locator('.model-preference .sf-pill-item').count();
+    const pillGap = await page.evaluate(() => {
+      const pill = document.querySelector('.model-preference .sf-pill');
+      if (!pill?.parentElement) return null;
+      return Math.round(
+        pill.parentElement.getBoundingClientRect().right - pill.getBoundingClientRect().right,
+      );
+    });
     const activeBefore = await page.locator('.model-preference .sf-pill-item--on').textContent();
     await page.locator('.model-preference .sf-pill-item', { hasText: 'high' }).click();
     await delay(600);
@@ -565,12 +572,14 @@ const STUB_MODELS = [
     report(
       'thinking-level pills POST thinkLevel with the default model and mark the active level',
       proPills === 3 &&
+        pillGap !== null &&
+        pillGap <= 2 &&
         !!levelPost &&
         levelPost.model === 'stub/stub-pro' &&
         levelPost.thinkLevel === 'high' &&
         (activeAfter ?? '').trim() === 'high' &&
         (activeBefore ?? '').trim() !== 'high',
-      `pills=${proPills} post=${JSON.stringify(levelPost)} active=${activeBefore}->${activeAfter}`,
+      `pills=${proPills} gap=${pillGap} post=${JSON.stringify(levelPost)} active=${activeBefore}->${activeAfter}`,
     );
 
     await page.locator('.model-preference .md-switch').click();

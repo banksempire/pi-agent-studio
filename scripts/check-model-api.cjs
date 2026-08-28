@@ -545,13 +545,13 @@ const STUB_MODELS = [
       JSON.stringify({ count: mobileMoved.count, sel: mobileMoved.text.slice(0, 40) }),
     );
     report(
-      'mobile: taller rows show the detail line (provider/id, input, context, max out)',
+      'mobile: taller rows show the detail line (input, context, max out) — no provider/id',
       !!mobileSelected &&
         mobileSelected.rowH >= 50 &&
         mobileSelected.subH > 0 &&
         mobileSelected.subDisplay !== 'none' &&
         !!mobileSelected.subText &&
-        mobileSelected.subText.includes('stub/stub-pro') &&
+        !mobileSelected.subText.includes('stub/') &&
         mobileSelected.subText.includes('text + image') &&
         mobileSelected.subText.includes('1,049k') &&
         mobileSelected.subText.includes('8,192 out'),

@@ -83,7 +83,7 @@ function fmtCost(m: ModelInfo): string {
 }
 
 function fmtSub(m: ModelInfo): string {
-  const parts = [`${m.provider}/${m.id}`, fmtInput(m), fmtContext(m.contextWindow)];
+  const parts = [fmtInput(m), fmtContext(m.contextWindow)];
   if (m.maxTokens) parts.push(`${m.maxTokens.toLocaleString()} out`);
   return parts.join(' · ');
 }

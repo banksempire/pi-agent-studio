@@ -500,6 +500,17 @@ const STUB_MODELS = [
       `title=${rightTitle}`,
     );
 
+    const layoutDefs = JSON.parse(
+      fs.readFileSync(path.join(PRODUCT_ROOT, 'src/pi-studio/layout/app.layout.json'), 'utf8'),
+    );
+    const catalogSubs = layoutDefs.rightPanels?.['model-catalog']?.sections?.[0]?.subSections ?? [];
+    const detailDef = catalogSubs.find((s) => s.id === 'model-detail');
+    report(
+      'Model Detail subsection is content-fit, not variable-height',
+      detailDef?.height === 'fixed' && detailDef?.minHeight === undefined,
+      JSON.stringify(detailDef ?? null),
+    );
+
     await page.locator('.sf-tab-label', { hasText: 'model-api-check' }).first().click({ force: true });
     await delay(400);
     const chatTitle = (await page.locator('.sf-panel--right .sf-panel-title').textContent()) ?? '';

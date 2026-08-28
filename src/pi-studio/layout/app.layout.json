@@ -240,8 +240,7 @@
             {
               "id": "model-detail",
               "label": "Model Detail",
-              "height": "variable",
-              "minHeight": 120,
+              "height": "fixed",
               "components": [
                 {
                   "type": "component",

@@ -1,16 +1,26 @@
-const { chromium } = require('playwright');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
 const net = require('node:net');
+const os = require('node:os');
 const path = require('node:path');
+const { createRequire } = require('node:module');
+const { chromium } = createRequire(path.join(__dirname, '..', 'package.json'))('playwright');
+const { writeStubClient } = require('./lib/stub-backend.cjs');
+const {
+  assertMemoryHeadroom,
+  installStackCleanup,
+  spawnStackProc,
+  sweepStaleStackProcesses,
+} = require('./lib/suite-stack.cjs');
 
 const PRODUCT_ROOT = path.join(__dirname, '..');
-const ISOLATED_ROOT = '/tmp/mobopen-check-sessions';
+const RUN_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'mobopen-check-'));
+const SESSIONS_ROOT = path.join(RUN_ROOT, 'sessions');
 const TEST_DIR_NAME = '--tmp-mobopen-check--';
-const TEST_SESSIONS_DIR = path.join(ISOLATED_ROOT, TEST_DIR_NAME);
-const TEST_STATES_PATH = '/tmp/mobopen-check-states.json';
-const TEST_CWD = '/tmp/mobopen-check';
+const TEST_SESSIONS_DIR = path.join(SESSIONS_ROOT, TEST_DIR_NAME);
+const TEST_CWD = RUN_ROOT;
+const STACK_STAMP = 'check-mobile-open:stack';
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -32,7 +42,6 @@ async function pickPorts() {
 }
 
 function writeSessions() {
-  fs.rmSync(ISOLATED_ROOT, { recursive: true, force: true });
   fs.mkdirSync(TEST_SESSIONS_DIR, { recursive: true });
   const uid = () => `019f${Math.random().toString(16).slice(2, 14)}`;
   const sessionFile = (name, turns, ageMs) => {
@@ -98,16 +107,8 @@ function writeSessions() {
   sessionFile('Mob-B', 2, 120_000);
 }
 
-function spawnBg(cmd, args, env, log) {
-  return spawn(cmd, args, {
-    cwd: PRODUCT_ROOT,
-    env: { ...process.env, ...env },
-    detached: true,
-    stdio: ['ignore', fs.openSync(log, 'a'), fs.openSync(log, 'a')],
-  });
-}
-
 function killProc(child) {
+  if (!child || child.exitCode !== null) return;
   try {
     process.kill(-child.pid, 'SIGTERM');
   } catch {}
@@ -143,39 +144,53 @@ function makeReporter() {
   return { report, isFailed: () => failed };
 }
 
+const composerIsFocused = (page) =>
+  page.evaluate(
+    () =>
+      document.activeElement instanceof HTMLElement &&
+      document.activeElement.classList.contains('chat-input'),
+  );
+
 (async () => {
   const { report, isFailed } = makeReporter();
+  assertMemoryHeadroom({ label: 'check-mobile-open' });
+  sweepStaleStackProcesses(STACK_STAMP);
   const procs = [];
-  const cleanup = () => {
-    for (const p of procs) killProc(p);
-    fs.rmSync(ISOLATED_ROOT, { recursive: true, force: true });
-    fs.rmSync(TEST_STATES_PATH, { force: true });
-  };
+  const browserRef = { current: null };
+  installStackCleanup({ procs, stamp: STACK_STAMP, browserRef, label: 'check-mobile-open' });
 
   let browser;
   try {
     const ports = await pickPorts();
     console.log(`stack: backend :${ports.backend} vite :${ports.vite}`);
+    const stub = writeStubClient(RUN_ROOT);
     writeSessions();
-    fs.rmSync(TEST_STATES_PATH, { force: true });
 
     procs.push(
-      spawnBg(
-        'node',
-        ['src/pi-studio/server/index.mjs'],
-        {
+      spawnStackProc(spawn, STACK_STAMP, 'node', ['src/pi-studio/server/index.mjs'], {
+        cwd: PRODUCT_ROOT,
+        env: {
+          ...process.env,
           PI_STUDIO_PORT: String(ports.backend),
-          PI_STUDIO_SESSIONS: ISOLATED_ROOT,
-          PI_STUDIO_DB_PATH: path.join(ISOLATED_ROOT, 'studio.db'),
-          PI_STUDIO_STATES_PATH: TEST_STATES_PATH,
+          PI_STUDIO_CLIENT_MODULE: stub.stubPath,
+          STUB_CONTROL_FILE: stub.controlPath,
+          PI_STUDIO_SESSIONS: SESSIONS_ROOT,
+          PI_STUDIO_DB_PATH: path.join(RUN_ROOT, 'studio.db'),
+          PI_STUDIO_STATES_PATH: path.join(RUN_ROOT, 'states.json'),
           PI_STUDIO_CWD: TEST_CWD,
         },
-        '/tmp/mobopen-check-backend.log',
-      ),
+        stdio: [
+          'ignore',
+          fs.openSync('/tmp/mobopen-check-backend.log', 'a'),
+          fs.openSync('/tmp/mobopen-check-backend.log', 'a'),
+        ],
+      }),
     );
     await waitHttp(`http://127.0.0.1:${ports.backend}/api/health`, 'backend');
     procs.push(
-      spawnBg(
+      spawnStackProc(
+        spawn,
+        STACK_STAMP,
         'node',
         [
           'node_modules/.bin/vite',
@@ -186,13 +201,21 @@ function makeReporter() {
           '--port',
           String(ports.vite),
         ],
-        { PI_API_PROXY: `http://127.0.0.1:${ports.backend}` },
-        '/tmp/mobopen-check-vite.log',
+        {
+          cwd: PRODUCT_ROOT,
+          env: { ...process.env, PI_API_PROXY: `http://127.0.0.1:${ports.backend}` },
+          stdio: [
+            'ignore',
+            fs.openSync('/tmp/mobopen-check-vite.log', 'a'),
+            fs.openSync('/tmp/mobopen-check-vite.log', 'a'),
+          ],
+        },
       ),
     );
     await waitHttp(`http://127.0.0.1:${ports.vite}/`, 'vite');
 
     browser = await chromium.launch();
+    browserRef.current = browser;
     const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
     const errors = [];
     page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
@@ -230,6 +253,18 @@ function makeReporter() {
     const label1 = String(await mobileBarLabel());
     report('…and the opened chat becomes the active tab', label1.includes('Mob-A'), `label=${label1}`);
 
+    await page.locator('.chat-input:visible').fill('focus check from mobile');
+    await page.locator('.chat-send-btn:visible').click();
+    await delay(400);
+    report(
+      'mobile: tapping Send does not refocus the composer (keyboard stays closed)',
+      !(await composerIsFocused(page)),
+    );
+    report(
+      '…and the sent message lands in the transcript',
+      await page.locator('.chat-user-bubble', { hasText: 'focus check from mobile' }).first().isVisible(),
+    );
+
     await page.locator('.sf-docker-app[title="Chat"]').click();
     await page.waitForSelector('[data-sub-body="history"] .chat-list-item', { timeout: 30000 });
     await page.locator('.sf-subsection-util[title="New Chat (Ctrl+N)"]').click();
@@ -250,14 +285,19 @@ function makeReporter() {
         (await page.locator('[data-sub-body="history"]').isVisible()),
     );
 
-    report('no console/page errors', errors.length === 0, errors.join('; '));
+    await page.locator('.chat-input:visible').fill('focus check from desktop');
+    await page.locator('.chat-send-btn:visible').click();
+    await delay(400);
+    report('desktop: clicking Send returns focus to the composer', await composerIsFocused(page));
 
-    if (isFailed()) process.exitCode = 1;
+    report('no console/page errors', errors.length === 0, errors.join('; '));
   } catch (e) {
     console.error(e);
     process.exitCode = 1;
   } finally {
     if (browser) await browser.close().catch(() => {});
-    cleanup();
+    for (const p of procs) killProc(p);
+    fs.rmSync(RUN_ROOT, { recursive: true, force: true });
   }
+  process.exit(isFailed() || process.exitCode === 1 ? 1 : 0);
 })();

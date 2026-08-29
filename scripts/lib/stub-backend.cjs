@@ -60,7 +60,13 @@ export async function createClient() {
     async closeAgent() {
       return { ok: true };
     },
-    async prompt() {
+    async prompt(evt) {
+      if (process.env.STUB_PROMPT_LOG) {
+        fs.appendFileSync(
+          process.env.STUB_PROMPT_LOG,
+          JSON.stringify({ agentId: evt && evt.agentId, message: evt && evt.message, interrupt: evt && evt.interrupt }) + '\\n',
+        );
+      }
       return { ok: true };
     },
     async abort(evt) {

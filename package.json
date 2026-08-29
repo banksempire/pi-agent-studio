@@ -17,6 +17,7 @@
     "check:drafts": "node scripts/check-drafts.cjs",
     "check:mobile": "node scripts/check-mobile-open.cjs",
     "check:send-stop": "node scripts/check-send-stop.cjs",
+    "check:queue": "node scripts/check-queue-msg.cjs",
     "check:dockericons": "node scripts/check-docker-icons.cjs",
     "check:jobeditor": "node scripts/check-job-editor.cjs",
     "check:sse": "node scripts/check-sse-flood.cjs",

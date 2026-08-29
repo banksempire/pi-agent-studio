@@ -1703,6 +1703,66 @@ export async function resendMessage(sessionId: string, mid: string) {
   await sendMessage(sessionId, text, { images });
 }
 
+export interface QueuedChatMessage {
+  id: string;
+  text: string;
+}
+
+const sessionQueues = reactive<Record<string, QueuedChatMessage[]>>({});
+
+export function queuedMessagesOf(sessionId: string): QueuedChatMessage[] {
+  let q = sessionQueues[sessionId];
+  if (!q) {
+    q = reactive<QueuedChatMessage[]>([]);
+    sessionQueues[sessionId] = q;
+  }
+  return q;
+}
+
+export function enqueueMessage(sessionId: string, text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  queuedMessagesOf(sessionId).push({
+    id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    text: trimmed,
+  });
+}
+
+export function removeQueuedMessage(sessionId: string, id: string) {
+  const q = sessionQueues[sessionId];
+  if (!q) return;
+  const i = q.findIndex((m) => m.id === id);
+  if (i < 0) return;
+  q.splice(i, 1);
+}
+
+export function updateQueuedMessage(sessionId: string, id: string, text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  const m = sessionQueues[sessionId]?.find((x) => x.id === id);
+  if (!m) return;
+  m.text = trimmed;
+}
+
+const flushingQueues = new Set<string>();
+
+watch(
+  () => state.sessions.map((s) => `${s.id}:${s.status}`).join('|'),
+  () => {
+    for (const s of state.sessions) {
+      const q = sessionQueues[s.id];
+      if (s.status !== 'idle' || !q?.length || flushingQueues.has(s.id)) continue;
+      flushingQueues.add(s.id);
+      const next = q.shift();
+      if (!next) {
+        flushingQueues.delete(s.id);
+        continue;
+      }
+      void sendMessage(s.id, next.text, { wait: true }).finally(() => flushingQueues.delete(s.id));
+    }
+  },
+);
+
 export function markCompactFailed(sessionId: string, reason?: string | null) {
   const s = findSession(sessionId);
   if (!s) return;
@@ -2031,6 +2091,10 @@ export const store = {
   forgetChatScroll,
   attachmentsOf,
   setAttachments,
+  queuedMessagesOf,
+  enqueueMessage,
+  removeQueuedMessage,
+  updateQueuedMessage,
   sessionErrorOf,
   setSessionError,
   clearSessionError,

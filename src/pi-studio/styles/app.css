@@ -728,7 +728,7 @@
 
 .chat-queue-btn {
   min-width: calc(2.5em + 32px);
-  padding: 7px 16px;
+  padding: 7px 6px;
   line-height: normal;
   border: none;
 }

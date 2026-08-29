@@ -288,6 +288,16 @@ function readPrompts() {
       `queue:${JSON.stringify(t4b.queue)} send:${JSON.stringify(t4b.send)}`,
     );
 
+    const t4c = {
+      label: (await queueBtn.innerText()).trim(),
+      icons: await queueBtn.locator('svg').count(),
+    };
+    report(
+      'queue button is text-only (label, no icon)',
+      t4c.label === 'Queue' && t4c.icons === 0,
+      JSON.stringify(t4c),
+    );
+
     await queueBtn.click({ force: true });
     await delay(400);
     report(
@@ -394,6 +404,125 @@ function readPrompts() {
     );
     await delay(1000);
     report('queue empties completely after all messages are sent', (await boxes.count()) === 0);
+
+    stub.emit('session_status', F, { status: 'running' });
+    stub.setStates([{ agentId: F, status: 'running' }]);
+    for (let i = 0; i < 40; i++) {
+      if ((await page.locator('.chat-send-btn--stop').count()) === 1) break;
+      await delay(250);
+    }
+    await input.fill('direct send while running');
+    await delay(300);
+    const directBefore = readPrompts().filter((p) => p.agentId === F).length;
+    await page.locator('.chat-send-btn:not(.chat-send-btn--stop)').click();
+    let directPrompt = null;
+    for (let i = 0; i < 40; i++) {
+      const prompts = readPrompts().filter((p) => p.agentId === F);
+      if (prompts.length > directBefore) {
+        directPrompt = prompts[prompts.length - 1];
+        break;
+      }
+      await delay(250);
+    }
+    report(
+      'normal Send while running always interrupts the current job (interrupt:true)',
+      !!directPrompt &&
+        directPrompt.message === 'direct send while running' &&
+        directPrompt.interrupt === true,
+      JSON.stringify(directPrompt),
+    );
+
+    stub.emit('session_status', F, { status: 'idle' });
+    stub.setStates([]);
+    for (let i = 0; i < 40; i++) {
+      if ((await page.locator('.chat-send-btn--stop').count()) === 0) break;
+      await delay(250);
+    }
+    stub.emit('session_status', F, { status: 'running' });
+    stub.setStates([{ agentId: F, status: 'running' }]);
+    for (let i = 0; i < 40; i++) {
+      if ((await page.locator('.chat-send-btn--stop').count()) === 1) break;
+      await delay(250);
+    }
+    await input.fill('survive alpha');
+    await queueBtn.click({ force: true });
+    await input.fill('survive beta');
+    await queueBtn.click({ force: true });
+    await delay(500);
+    const storedQueues = await page.evaluate(() => localStorage.getItem('sf-chat:queues'));
+    report(
+      'queued messages are persisted to localStorage',
+      !!storedQueues && storedQueues.includes('survive alpha') && storedQueues.includes('survive beta'),
+      (storedQueues || '').slice(0, 120),
+    );
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.chat-window', { timeout: 30000 });
+    for (let i = 0; i < 40; i++) {
+      if ((await boxes.count()) === 2) break;
+      await delay(500);
+    }
+    const reloadedTexts = await boxes.allInnerTexts();
+    report(
+      'queued messages survive a page restart (boxes restored, order kept)',
+      (await boxes.count()) === 2 &&
+        reloadedTexts[0].includes('survive alpha') &&
+        reloadedTexts[1].includes('survive beta'),
+      JSON.stringify(reloadedTexts),
+    );
+    report(
+      'nothing was auto-sent while the session still runs after restart',
+      readPrompts().filter((p) => p.agentId === F && p.message === 'survive alpha').length === 0,
+    );
+
+    stub.emit('session_status', F, { status: 'idle' });
+    stub.setStates([]);
+    let surviveFlush = null;
+    for (let i = 0; i < 40; i++) {
+      surviveFlush = readPrompts().find((p) => p.agentId === F && p.message === 'survive alpha');
+      if (surviveFlush) break;
+      await delay(250);
+    }
+    report(
+      'after the restart the queue still auto-sends on idle (exactly once)',
+      !!surviveFlush &&
+        readPrompts().filter((p) => p.agentId === F && p.message === 'survive alpha').length === 1 &&
+        surviveFlush.interrupt === false,
+      JSON.stringify(surviveFlush),
+    );
+    await delay(1000);
+    report('one box left after the first post-restart flush', (await boxes.count()) === 1);
+
+    stub.emit('session_status', F, { status: 'running' });
+    stub.setStates([{ agentId: F, status: 'running' }]);
+    for (let i = 0; i < 40; i++) {
+      if ((await page.locator('.chat-send-btn--stop').count()) === 1) break;
+      await delay(250);
+    }
+    stub.emit('session_status', F, { status: 'idle' });
+    stub.setStates([]);
+    let surviveFlush2 = null;
+    for (let i = 0; i < 40; i++) {
+      surviveFlush2 = readPrompts().find((p) => p.agentId === F && p.message === 'survive beta');
+      if (surviveFlush2) break;
+      await delay(250);
+    }
+    report(
+      'second queued message flushes after the next finish (exactly once)',
+      !!surviveFlush2 &&
+        readPrompts().filter((p) => p.agentId === F && p.message === 'survive beta').length === 1,
+      JSON.stringify(surviveFlush2),
+    );
+    await delay(1000);
+    const storedAfter = await page.evaluate(() => {
+      const j = JSON.parse(localStorage.getItem('sf-chat:queues') || '{}');
+      return Object.values(j).flat().length;
+    });
+    report(
+      'queue storage is empty once everything is delivered',
+      (await boxes.count()) === 0 && storedAfter === 0,
+      `boxes:${await boxes.count()} storedItems:${storedAfter}`,
+    );
 
     report('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   } catch (e) {

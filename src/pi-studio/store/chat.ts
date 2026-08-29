@@ -1708,7 +1708,65 @@ export interface QueuedChatMessage {
   text: string;
 }
 
-const sessionQueues = reactive<Record<string, QueuedChatMessage[]>>({});
+const QUEUES_KEY = 'sf-chat:queues';
+const QUEUE_CLAIMS_KEY = 'sf-chat:queue-claims';
+const QUEUE_CLAIM_MS = 15000;
+const QUEUE_TAB_ID = `tab-${Math.random().toString(36).slice(2, 10)}`;
+
+function parseStoredQueues(): Record<string, QueuedChatMessage[]> | null {
+  try {
+    const raw = localStorage.getItem(QUEUES_KEY);
+    if (!raw) return null;
+    const j = JSON.parse(raw);
+    if (!j || typeof j !== 'object' || Array.isArray(j)) return null;
+    const out: Record<string, QueuedChatMessage[]> = {};
+    for (const [id, list] of Object.entries(j)) {
+      if (!Array.isArray(list)) continue;
+      const msgs: QueuedChatMessage[] = [];
+      for (const m of list) {
+        if (
+          m &&
+          typeof m === 'object' &&
+          typeof m.id === 'string' &&
+          typeof m.text === 'string' &&
+          m.text.trim()
+        ) {
+          msgs.push({ id: m.id, text: m.text });
+        }
+      }
+      if (msgs.length) out[id] = msgs;
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+const sessionQueues = reactive<Record<string, QueuedChatMessage[]>>(parseStoredQueues() ?? {});
+
+function saveQueues() {
+  const out: Record<string, QueuedChatMessage[]> = {};
+  const known = state.sessions.length > 0 ? new Set(state.sessions.map((s) => s.id)) : null;
+  for (const [id, q] of Object.entries(sessionQueues)) {
+    if (known && !known.has(id)) {
+      delete sessionQueues[id];
+      continue;
+    }
+    if (q.length) out[id] = q.map((m) => ({ id: m.id, text: m.text }));
+  }
+  try {
+    localStorage.setItem(QUEUES_KEY, JSON.stringify(out));
+  } catch {}
+  const claims = readClaims();
+  let claimsDirty = false;
+  for (const id of Object.keys(claims)) {
+    if (!out[id]) {
+      delete claims[id];
+      claimsDirty = true;
+    }
+  }
+  if (claimsDirty) writeClaims(claims);
+}
 
 export function queuedMessagesOf(sessionId: string): QueuedChatMessage[] {
   let q = sessionQueues[sessionId];
@@ -1726,6 +1784,7 @@ export function enqueueMessage(sessionId: string, text: string) {
     id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     text: trimmed,
   });
+  saveQueues();
 }
 
 export function removeQueuedMessage(sessionId: string, id: string) {
@@ -1734,6 +1793,7 @@ export function removeQueuedMessage(sessionId: string, id: string) {
   const i = q.findIndex((m) => m.id === id);
   if (i < 0) return;
   q.splice(i, 1);
+  saveQueues();
 }
 
 export function updateQueuedMessage(sessionId: string, id: string, text: string) {
@@ -1742,9 +1802,72 @@ export function updateQueuedMessage(sessionId: string, id: string, text: string)
   const m = sessionQueues[sessionId]?.find((x) => x.id === id);
   if (!m) return;
   m.text = trimmed;
+  saveQueues();
 }
 
 const flushingQueues = new Set<string>();
+
+function adoptStoredQueues() {
+  const stored = parseStoredQueues();
+  if (!stored) return;
+  for (const id of Object.keys(sessionQueues)) {
+    if (!(id in stored) && !flushingQueues.has(id)) delete sessionQueues[id];
+  }
+  for (const [id, msgs] of Object.entries(stored)) {
+    if (flushingQueues.has(id)) continue;
+    sessionQueues[id] = reactive(msgs.map((m) => ({ ...m })));
+  }
+}
+
+window.addEventListener('storage', (ev) => {
+  if (ev.key === QUEUES_KEY) adoptStoredQueues();
+});
+
+interface QueueFlushClaim {
+  itemId: string;
+  tab: string;
+  at: number;
+}
+
+function readClaims(): Record<string, QueueFlushClaim> {
+  try {
+    const j = JSON.parse(localStorage.getItem(QUEUE_CLAIMS_KEY) || '{}');
+    if (!j || typeof j !== 'object' || Array.isArray(j)) return {};
+    const out: Record<string, QueueFlushClaim> = {};
+    for (const [k, v] of Object.entries(j)) {
+      const c = v as Record<string, unknown> | null;
+      if (c && typeof c.itemId === 'string' && typeof c.tab === 'string' && typeof c.at === 'number') {
+        out[k] = { itemId: c.itemId, tab: c.tab, at: c.at };
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function writeClaims(claims: Record<string, QueueFlushClaim>) {
+  try {
+    localStorage.setItem(QUEUE_CLAIMS_KEY, JSON.stringify(claims));
+  } catch {}
+}
+
+function claimQueueFlush(sessionId: string, itemId: string): boolean {
+  const stored = parseStoredQueues();
+  const entry = stored?.[sessionId];
+  if (!stored || !entry?.length || entry[0].id !== itemId) {
+    adoptStoredQueues();
+    return false;
+  }
+  const claims = readClaims();
+  const c = claims[sessionId];
+  if (c && c.tab !== QUEUE_TAB_ID && c.itemId === itemId && Date.now() - c.at < QUEUE_CLAIM_MS) {
+    return false;
+  }
+  claims[sessionId] = { itemId, tab: QUEUE_TAB_ID, at: Date.now() };
+  writeClaims(claims);
+  return true;
+}
 
 watch(
   () => state.sessions.map((s) => `${s.id}:${s.status}`).join('|'),
@@ -1753,11 +1876,13 @@ watch(
       const q = sessionQueues[s.id];
       if (s.status !== 'idle' || !q?.length || flushingQueues.has(s.id)) continue;
       flushingQueues.add(s.id);
-      const next = q.shift();
-      if (!next) {
+      const next = q[0];
+      if (!next || !claimQueueFlush(s.id, next.id)) {
         flushingQueues.delete(s.id);
         continue;
       }
+      q.shift();
+      saveQueues();
       void sendMessage(s.id, next.text, { wait: true }).finally(() => flushingQueues.delete(s.id));
     }
   },

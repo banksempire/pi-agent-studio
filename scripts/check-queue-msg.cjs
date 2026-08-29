@@ -185,7 +185,8 @@ function readPrompts() {
 
     browser = await chromium.launch();
     browserRef.current = browser;
-    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await context.newPage();
     const errors = [];
     page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
     page.on('console', (m) => {
@@ -273,9 +274,14 @@ function readPrompts() {
         const el = document.querySelector(sel);
         if (!el) return null;
         const r = el.getBoundingClientRect();
-        return { w: +r.width.toFixed(1), h: +r.height.toFixed(1) };
+        return { x: +r.x.toFixed(1), y: +r.y.toFixed(1), w: +r.width.toFixed(1), h: +r.height.toFixed(1) };
       };
-      return { queue: m('.chat-queue-btn'), send: m('.chat-send-btn:not(.chat-send-btn--stop)') };
+      return {
+        scroll: m('.chat-scroll-btn'),
+        image: m('.chat-image-btn'),
+        queue: m('.chat-queue-btn'),
+        send: m('.chat-send-btn:not(.chat-send-btn--stop)'),
+      };
     });
     const sameSize =
       !!t4b.queue &&
@@ -286,6 +292,25 @@ function readPrompts() {
       'queue button is exactly the same size as the send button',
       sameSize,
       `queue:${JSON.stringify(t4b.queue)} send:${JSON.stringify(t4b.send)}`,
+    );
+
+    const rowOk =
+      !!t4b.scroll &&
+      !!t4b.image &&
+      t4b.scroll.x < t4b.image.x &&
+      t4b.image.x < t4b.queue.x &&
+      t4b.queue.x < t4b.send.x &&
+      [t4b.scroll, t4b.image, t4b.queue, t4b.send].every((r) => Math.abs(r.y - t4b.send.y) <= 1);
+    report('button row order is [to bottom][image][queue][send] on one line', rowOk, JSON.stringify(t4b));
+
+    const t4c = {
+      label: (await queueBtn.innerText()).trim(),
+      icons: await queueBtn.locator('svg').count(),
+    };
+    report(
+      'queue button is text-only (label, no icon)',
+      t4c.label === 'Queue' && t4c.icons === 0,
+      JSON.stringify(t4c),
     );
 
     await queueBtn.click({ force: true });
@@ -394,6 +419,350 @@ function readPrompts() {
     );
     await delay(1000);
     report('queue empties completely after all messages are sent', (await boxes.count()) === 0);
+
+    stub.emit('session_status', F, { status: 'running' });
+    stub.setStates([{ agentId: F, status: 'running' }]);
+    for (let i = 0; i < 40; i++) {
+      if ((await page.locator('.chat-send-btn--stop').count()) === 1) break;
+      await delay(250);
+    }
+
+    await input.fill('layout short');
+    await queueBtn.click({ force: true });
+    await input.fill('L'.repeat(400));
+    await queueBtn.click({ force: true });
+    await delay(400);
+
+    const layout = await page.evaluate(() => {
+      const q = document.querySelector('.chat-queue');
+      const inputEl = document.querySelector('.chat-input');
+      const texts = [...document.querySelectorAll('.chat-queue-box .chat-queue-text')];
+      const boxesEls = [...document.querySelectorAll('.chat-queue-box')];
+      const composer = document.querySelector('.chat-composer');
+      const acts = [...document.querySelectorAll('.chat-queue-box .chat-queue-act')].map((b) => ({
+        text: (b.textContent || '').trim(),
+        icons: b.querySelectorAll('svg').length,
+      }));
+      const clampedOne = texts.find((t) => t.scrollWidth > t.clientWidth);
+      return {
+        inComposer: !!q && !!q.closest('.chat-composer'),
+        aboveInput:
+          !!q && !!inputEl && q.getBoundingClientRect().bottom <= inputEl.getBoundingClientRect().top,
+        clamped: !!clampedOne,
+        allNowrap: texts.every((t) => getComputedStyle(t).whiteSpace === 'nowrap'),
+        maxBoxW: Math.max(...boxesEls.map((b) => b.getBoundingClientRect().width), 0),
+        composerW: composer ? composer.getBoundingClientRect().width : 0,
+        actCount: acts.length,
+        boxCount: boxesEls.length,
+        acts,
+      };
+    });
+    report(
+      'queue boxes live inside the input panel, above the input',
+      layout.inComposer && layout.aboveInput,
+    );
+    report(
+      'long queued text is truncated inside its box (no blowout)',
+      layout.clamped && layout.allNowrap && layout.maxBoxW > 0 && layout.maxBoxW <= layout.composerW,
+      `maxBox:${layout.maxBoxW.toFixed(1)} composer:${layout.composerW.toFixed(1)} clamped:${layout.clamped}`,
+    );
+    report(
+      'box actions are icon-only (text first, then edit and cancel per box)',
+      layout.actCount === layout.boxCount * 2 && layout.acts.every((a) => a.text === '' && a.icons === 1),
+      `${layout.actCount} acts / ${layout.boxCount} boxes`,
+    );
+
+    const firstBox = boxes.first();
+    await firstBox.locator('[title="Edit this queued message"]').click();
+    await delay(300);
+    await page.locator('.chat-queue-edit-text').press('Escape');
+    await delay(200);
+    report(
+      'Esc closes the edit popup without changing the message',
+      (await page.locator('.chat-queue-edit').count()) === 0 &&
+        (await firstBox.innerText()).includes('layout short'),
+    );
+    await firstBox.locator('[title="Edit this queued message"]').click();
+    await delay(300);
+    await page.locator('.chat-queue-edit-text').fill('changed but cancelled');
+    await page.locator('.chat-queue-edit-btn:not(.chat-queue-edit-btn--primary)').click();
+    await delay(200);
+    report(
+      'Cancel in the edit popup keeps the original text',
+      (await page.locator('.chat-queue-edit').count()) === 0 &&
+        (await firstBox.innerText()).includes('layout short'),
+    );
+    await firstBox.locator('[title="Edit this queued message"]').click();
+    await delay(300);
+    await page.locator('.chat-queue-edit-text').fill('');
+    report(
+      'Save is disabled for an empty edit',
+      await page.locator('.chat-queue-edit-btn--primary').isDisabled(),
+    );
+    await page.locator('.chat-queue-edit-text').press('Escape');
+    await delay(200);
+    await boxes.nth(1).locator('[title="Remove from queue"]').click();
+    await firstBox.locator('[title="Remove from queue"]').click();
+    await delay(300);
+    report('boxes removed until the queue is empty again', (await boxes.count()) === 0);
+
+    const idleBaseline = readPrompts().filter((p) => p.agentId === F).length;
+    stub.emit('session_status', F, { status: 'idle' });
+    stub.setStates([]);
+    stub.emit('session_status', F, { status: 'running' });
+    stub.setStates([{ agentId: F, status: 'running' }]);
+    stub.emit('session_status', F, { status: 'idle' });
+    stub.setStates([]);
+    await delay(2500);
+    report(
+      'idle transitions with an empty queue never send anything',
+      readPrompts().filter((p) => p.agentId === F).length === idleBaseline,
+    );
+
+    stub.emit('session_status', F, { status: 'running' });
+    stub.setStates([{ agentId: F, status: 'running' }]);
+    for (let i = 0; i < 40; i++) {
+      if ((await page.locator('.chat-send-btn--stop').count()) === 1) break;
+      await delay(250);
+    }
+    const PNG = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    await input.fill('with attachment');
+    await delay(300);
+    await page.setInputFiles('.chat-image-input', {
+      name: 'dot.png',
+      mimeType: 'image/png',
+      buffer: PNG,
+    });
+    for (let i = 0; i < 30; i++) {
+      if ((await page.locator('.chat-attach-chip').count()) === 1) break;
+      await delay(250);
+    }
+    const hiddenWithAttach = await hiddenQueueBtn();
+    report(
+      'queue button hides while an image is attached (running + text)',
+      hiddenWithAttach.hidden && !hiddenWithAttach.visible,
+      JSON.stringify(hiddenWithAttach),
+    );
+    await page.locator('.chat-attach-remove').click();
+    await delay(400);
+    const visibleNoAttach = await hiddenQueueBtn();
+    report(
+      'queue button returns once the attachment is removed',
+      !visibleNoAttach.hidden && visibleNoAttach.visible,
+      JSON.stringify(visibleNoAttach),
+    );
+    await input.fill('');
+
+    stub.emit('session_status', F, { status: 'running' });
+    stub.setStates([{ agentId: F, status: 'running' }]);
+    for (let i = 0; i < 40; i++) {
+      if ((await page.locator('.chat-send-btn--stop').count()) === 1) break;
+      await delay(250);
+    }
+    await input.fill('direct send while running');
+    await delay(300);
+    const directBefore = readPrompts().filter((p) => p.agentId === F).length;
+    await page.locator('.chat-send-btn:not(.chat-send-btn--stop)').click();
+    let directPrompt = null;
+    for (let i = 0; i < 40; i++) {
+      const prompts = readPrompts().filter((p) => p.agentId === F);
+      if (prompts.length > directBefore) {
+        directPrompt = prompts[prompts.length - 1];
+        break;
+      }
+      await delay(250);
+    }
+    report(
+      'normal Send while running always interrupts the current job (interrupt:true)',
+      !!directPrompt &&
+        directPrompt.message === 'direct send while running' &&
+        directPrompt.interrupt === true,
+      JSON.stringify(directPrompt),
+    );
+
+    stub.emit('session_status', F, { status: 'idle' });
+    stub.setStates([]);
+    for (let i = 0; i < 40; i++) {
+      if ((await page.locator('.chat-send-btn--stop').count()) === 0) break;
+      await delay(250);
+    }
+    stub.emit('session_status', F, { status: 'running' });
+    stub.setStates([{ agentId: F, status: 'running' }]);
+    for (let i = 0; i < 40; i++) {
+      if ((await page.locator('.chat-send-btn--stop').count()) === 1) break;
+      await delay(250);
+    }
+    await input.fill('survive alpha');
+    await queueBtn.click({ force: true });
+    await input.fill('survive beta');
+    await queueBtn.click({ force: true });
+    await delay(500);
+    const storedQueues = await page.evaluate(() => localStorage.getItem('sf-chat:queues'));
+    report(
+      'queued messages are persisted to localStorage',
+      !!storedQueues && storedQueues.includes('survive alpha') && storedQueues.includes('survive beta'),
+      (storedQueues || '').slice(0, 120),
+    );
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.chat-window', { timeout: 30000 });
+    for (let i = 0; i < 40; i++) {
+      if ((await boxes.count()) === 2) break;
+      await delay(500);
+    }
+    const reloadedTexts = await boxes.allInnerTexts();
+    report(
+      'queued messages survive a page restart (boxes restored, order kept)',
+      (await boxes.count()) === 2 &&
+        reloadedTexts[0].includes('survive alpha') &&
+        reloadedTexts[1].includes('survive beta'),
+      JSON.stringify(reloadedTexts),
+    );
+    report(
+      'nothing was auto-sent while the session still runs after restart',
+      readPrompts().filter((p) => p.agentId === F && p.message === 'survive alpha').length === 0,
+    );
+
+    stub.emit('session_status', F, { status: 'idle' });
+    stub.setStates([]);
+    let surviveFlush = null;
+    for (let i = 0; i < 40; i++) {
+      surviveFlush = readPrompts().find((p) => p.agentId === F && p.message === 'survive alpha');
+      if (surviveFlush) break;
+      await delay(250);
+    }
+    report(
+      'after the restart the queue still auto-sends on idle (exactly once)',
+      !!surviveFlush &&
+        readPrompts().filter((p) => p.agentId === F && p.message === 'survive alpha').length === 1 &&
+        surviveFlush.interrupt === false,
+      JSON.stringify(surviveFlush),
+    );
+    await delay(1000);
+    report('one box left after the first post-restart flush', (await boxes.count()) === 1);
+
+    stub.emit('session_status', F, { status: 'running' });
+    stub.setStates([{ agentId: F, status: 'running' }]);
+    for (let i = 0; i < 40; i++) {
+      if ((await page.locator('.chat-send-btn--stop').count()) === 1) break;
+      await delay(250);
+    }
+    stub.emit('session_status', F, { status: 'idle' });
+    stub.setStates([]);
+    let surviveFlush2 = null;
+    for (let i = 0; i < 40; i++) {
+      surviveFlush2 = readPrompts().find((p) => p.agentId === F && p.message === 'survive beta');
+      if (surviveFlush2) break;
+      await delay(250);
+    }
+    report(
+      'second queued message flushes after the next finish (exactly once)',
+      !!surviveFlush2 &&
+        readPrompts().filter((p) => p.agentId === F && p.message === 'survive beta').length === 1,
+      JSON.stringify(surviveFlush2),
+    );
+    await delay(1000);
+    const storedAfter = await page.evaluate(() => {
+      const j = JSON.parse(localStorage.getItem('sf-chat:queues') || '{}');
+      return Object.values(j).flat().length;
+    });
+    report(
+      'queue storage is empty once everything is delivered',
+      (await boxes.count()) === 0 && storedAfter === 0,
+      `boxes:${await boxes.count()} storedItems:${storedAfter}`,
+    );
+
+    stub.emit('session_status', F, { status: 'running' });
+    stub.setStates([{ agentId: F, status: 'running' }]);
+    for (let i = 0; i < 40; i++) {
+      if ((await page.locator('.chat-send-btn--stop').count()) === 1) break;
+      await delay(250);
+    }
+    await input.fill('multi one');
+    await queueBtn.click({ force: true });
+    await input.fill('multi two');
+    await queueBtn.click({ force: true });
+    await delay(500);
+
+    const page2 = await context.newPage();
+    page2.on('pageerror', (e) => errors.push(`page2 pageerror: ${e.message}`));
+    page2.on('console', (m) => {
+      if (m.type() === 'error') errors.push(`page2 console: ${m.text()}`);
+    });
+    await page2.goto(`http://127.0.0.1:${vitePort}/`, { waitUntil: 'domcontentloaded' });
+    await page2.waitForSelector('.chat-window', { timeout: 30000 });
+    const boxes2 = page2.locator('.chat-queue-box');
+    for (let i = 0; i < 40; i++) {
+      if ((await boxes2.count()) === 2) break;
+      await delay(500);
+    }
+    report(
+      'a second tab restores the same queue from shared storage',
+      (await boxes2.count()) === 2,
+      `tab2 boxes:${await boxes2.count()}`,
+    );
+
+    await input.fill('multi three');
+    await queueBtn.click({ force: true });
+    let adopted = false;
+    for (let i = 0; i < 20; i++) {
+      if ((await boxes2.count()) === 3) {
+        adopted = true;
+        break;
+      }
+      await delay(500);
+    }
+    report('a queue action in one tab appears in the other (storage event)', adopted);
+
+    stub.emit('session_status', F, { status: 'idle' });
+    stub.setStates([]);
+    let multiOne = null;
+    for (let i = 0; i < 40; i++) {
+      const prompts = readPrompts().filter((p) => p.agentId === F && p.message === 'multi one');
+      if (prompts.length > 0) {
+        multiOne = prompts;
+        break;
+      }
+      await delay(500);
+    }
+    report(
+      'two tabs idle-flush together: the claim guard delivers exactly once',
+      !!multiOne && multiOne.length === 1 && multiOne[0].interrupt === false,
+      `deliveries:${multiOne ? multiOne.length : 0}`,
+    );
+    let bothSynced = false;
+    for (let i = 0; i < 20; i++) {
+      if ((await boxes.count()) === 2 && (await boxes2.count()) === 2) {
+        bothSynced = true;
+        break;
+      }
+      await delay(500);
+    }
+    report('both tabs converge to the same remaining queue', bothSynced);
+
+    await boxes.first().locator('[title="Remove from queue"]').click();
+    await delay(300);
+    let cancelSynced = false;
+    for (let i = 0; i < 20; i++) {
+      if ((await boxes.count()) === 1 && (await boxes2.count()) === 1) {
+        cancelSynced = true;
+        break;
+      }
+      await delay(500);
+    }
+    await boxes.first().locator('[title="Remove from queue"]').click();
+    for (let i = 0; i < 20; i++) {
+      if ((await boxes.count()) === 0 && (await boxes2.count()) === 0) break;
+      await delay(500);
+    }
+    report(
+      'cancelling in one tab clears the boxes in the other too',
+      cancelSynced && (await boxes.count()) === 0 && (await boxes2.count()) === 0,
+    );
+    await page2.close();
 
     report('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   } catch (e) {

@@ -1178,7 +1178,7 @@ watch(
             :title="canQueue ? 'Queue this message — it sends automatically when the session finishes' : 'Queue (available while the session is working and the input has text)'"
             :disabled="!!composerBlock || !canQueue"
             @click="queueMessage"
-          ><SvgIcon name="🕘" /></button>
+          >Queue</button>
           <button
             v-if="canStop"
             class="chat-send-btn chat-send-btn--stop"

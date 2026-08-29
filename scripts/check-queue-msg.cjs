@@ -268,6 +268,26 @@ function readPrompts() {
       `idle:${JSON.stringify(idleRects.image)} running:${JSON.stringify(runningRects.image)}`,
     );
 
+    const t4b = await page.evaluate(() => {
+      const m = (sel) => {
+        const el = document.querySelector(sel);
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return { w: +r.width.toFixed(1), h: +r.height.toFixed(1) };
+      };
+      return { queue: m('.chat-queue-btn'), send: m('.chat-send-btn:not(.chat-send-btn--stop)') };
+    });
+    const sameSize =
+      !!t4b.queue &&
+      !!t4b.send &&
+      Math.abs(t4b.queue.w - t4b.send.w) <= 0.5 &&
+      Math.abs(t4b.queue.h - t4b.send.h) <= 0.5;
+    report(
+      'queue button is exactly the same size as the send button',
+      sameSize,
+      `queue:${JSON.stringify(t4b.queue)} send:${JSON.stringify(t4b.send)}`,
+    );
+
     await queueBtn.click({ force: true });
     await delay(400);
     report(

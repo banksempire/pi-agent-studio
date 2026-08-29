@@ -1852,7 +1852,13 @@ function writeClaims(claims: Record<string, QueueFlushClaim>) {
   } catch {}
 }
 
-function claimQueueFlush(sessionId: string, itemId: string): boolean {
+const QUEUE_CLAIM_VERIFY_MS = 60;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function claimQueueFlush(sessionId: string, itemId: string): Promise<boolean> {
   const stored = parseStoredQueues();
   const entry = stored?.[sessionId];
   if (!stored || !entry?.length || entry[0].id !== itemId) {
@@ -1866,6 +1872,14 @@ function claimQueueFlush(sessionId: string, itemId: string): boolean {
   }
   claims[sessionId] = { itemId, tab: QUEUE_TAB_ID, at: Date.now() };
   writeClaims(claims);
+  await delay(QUEUE_CLAIM_VERIFY_MS);
+  const after = readClaims()[sessionId];
+  if (!after || after.tab !== QUEUE_TAB_ID || after.itemId !== itemId) return false;
+  const stillHead = parseStoredQueues()?.[sessionId]?.[0]?.id === itemId;
+  if (!stillHead) {
+    adoptStoredQueues();
+    return false;
+  }
   return true;
 }
 
@@ -1873,17 +1887,22 @@ watch(
   () => state.sessions.map((s) => `${s.id}:${s.status}`).join('|'),
   () => {
     for (const s of state.sessions) {
-      const q = sessionQueues[s.id];
-      if (s.status !== 'idle' || !q?.length || flushingQueues.has(s.id)) continue;
+      if (s.status !== 'idle' || !sessionQueues[s.id]?.length || flushingQueues.has(s.id)) continue;
       flushingQueues.add(s.id);
-      const next = q[0];
-      if (!next || !claimQueueFlush(s.id, next.id)) {
-        flushingQueues.delete(s.id);
-        continue;
-      }
-      q.shift();
-      saveQueues();
-      void sendMessage(s.id, next.text, { wait: true }).finally(() => flushingQueues.delete(s.id));
+      const sid = s.id;
+      void (async () => {
+        try {
+          const first = sessionQueues[sid]?.[0];
+          if (!first || !(await claimQueueFlush(sid, first.id))) return;
+          const live = sessionQueues[sid];
+          if (!live?.length || live[0].id !== first.id) return;
+          live.splice(0, 1);
+          saveQueues();
+          await sendMessage(sid, first.text, { wait: true });
+        } finally {
+          flushingQueues.delete(sid);
+        }
+      })();
     }
   },
 );

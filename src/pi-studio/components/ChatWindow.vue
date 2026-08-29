@@ -735,7 +735,7 @@ function onComposerInput() {
 function pinToBottom() {
   setSticky(true);
   nextTick(scrollToBottom);
-  inputEl.value?.focus();
+  if (!isMobile.value) inputEl.value?.focus();
 }
 
 function scrollToBottomNow() {

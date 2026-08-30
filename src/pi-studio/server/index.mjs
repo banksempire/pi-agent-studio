@@ -106,12 +106,21 @@ function plainTextOf(content) {
 }
 
 const IMAGE_CHARS = 4800;
+const entryTokenMemo = new WeakMap();
 
 function usageTokensOf(usage) {
   return usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
 }
 
 function estimateEntryTokens(entry) {
+  const cached = entryTokenMemo.get(entry);
+  if (cached !== undefined) return cached;
+  const n = computeEntryTokens(entry);
+  entryTokenMemo.set(entry, n);
+  return n;
+}
+
+function computeEntryTokens(entry) {
   if (entry.type === 'compaction') return Math.ceil((entry.summary ?? '').length / 4);
   if (entry.type !== 'message') return 0;
   const msg = entry.message;
@@ -305,7 +314,11 @@ function estimateContextTokens(chain) {
   return anchor >= 0 ? anchorTokens + trailing : trailing;
 }
 
+const displayMessageMemo = new WeakMap();
+
 function toDisplayMessage(message) {
+  const cached = displayMessageMemo.get(message);
+  if (cached) return cached;
   const d = { role: message.role, text: '', ts: message.timestamp ?? Date.now() };
   if (message.role === 'assistant') {
     d.text = textOf(message.content);
@@ -351,6 +364,7 @@ function toDisplayMessage(message) {
     d.text = textOf(message.content);
     d.customType = message.customType ?? null;
   }
+  displayMessageMemo.set(message, d);
   return d;
 }
 
@@ -755,25 +769,41 @@ async function sessionCwdCounts() {
     } catch {
       continue;
     }
-    for (const f of files) {
-      if (!f.endsWith('.jsonl')) continue;
-      const info = await analyzeSession(path.join(dir, f));
+    const jsonl = files.filter((f) => f.endsWith('.jsonl'));
+    const infos = await Promise.all(jsonl.map((f) => analyzeSession(path.join(dir, f))));
+    for (const info of infos) {
       if (info?.cwd) counts.set(info.cwd, (counts.get(info.cwd) ?? 0) + 1);
     }
   }
   return counts;
 }
 
+const TREE_SCAN_TTL_MS = Number(process.env.PI_STUDIO_TREE_SCAN_TTL_MS ?? 4000);
+const treeScanCache = new Map();
+
+async function childDirsOf(dir) {
+  const now = Date.now();
+  const hit = treeScanCache.get(dir);
+  if (hit && now - hit.at <= TREE_SCAN_TTL_MS) return hit.names;
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const names = [];
+  for (const e of entries) {
+    if (e.isDirectory() && !TREE_SKIP_DIRS.has(e.name)) names.push(e.name);
+  }
+  treeScanCache.set(dir, { at: now, names });
+  return names;
+}
+
 async function buildTree(dir, depth, counts) {
   const node = { name: path.basename(dir), path: dir, count: 0, children: [] };
   if (depth < TREE_MAX_DEPTH) {
-    let entries = [];
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch {}
-    for (const e of entries) {
-      if (!e.isDirectory() || TREE_SKIP_DIRS.has(e.name)) continue;
-      node.children.push(await buildTree(path.join(dir, e.name), depth + 1, counts));
+    for (const name of await childDirsOf(dir)) {
+      node.children.push(await buildTree(path.join(dir, name), depth + 1, counts));
     }
   }
   node.count = (counts.get(dir) ?? 0) + node.children.reduce((t, c) => t + c.count, 0);
@@ -1906,11 +1936,12 @@ async function watchSessionFiles() {
     } catch {
       continue;
     }
-    for (const f of files) {
-      if (!f.endsWith('.jsonl')) continue;
-      const file = path.join(dir, f);
-      const st = await stat(file).catch(() => null);
+    const jsonl = files.filter((f) => f.endsWith('.jsonl'));
+    const stats = await Promise.all(jsonl.map((f) => stat(path.join(dir, f)).catch(() => null)));
+    for (let i = 0; i < jsonl.length; i++) {
+      const st = stats[i];
       if (!st) continue;
+      const file = path.join(dir, jsonl[i]);
       const m = st.mtimeMs;
       if (fileMtimes.get(file) !== m) {
         const known = fileMtimes.has(file);

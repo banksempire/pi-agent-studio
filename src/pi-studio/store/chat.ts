@@ -311,7 +311,9 @@ function loadDrafts(): Record<string, string> {
   } catch {}
   return {};
 }
-function saveDrafts() {
+let draftsFlushTimer: number | null = null;
+
+function saveDraftsNow() {
   if (state.sessions.length > 0) {
     const known = new Set(state.sessions.map((s) => s.id));
     for (const id of Object.keys(state.drafts)) {
@@ -322,6 +324,22 @@ function saveDrafts() {
     localStorage.setItem(DRAFTS_KEY, JSON.stringify(state.drafts));
   } catch {}
 }
+
+function saveDrafts() {
+  if (draftsFlushTimer !== null) return;
+  draftsFlushTimer = window.setTimeout(() => {
+    draftsFlushTimer = null;
+    saveDraftsNow();
+  }, 300);
+}
+
+window.addEventListener('pagehide', () => {
+  if (draftsFlushTimer !== null) {
+    window.clearTimeout(draftsFlushTimer);
+    draftsFlushTimer = null;
+  }
+  saveDraftsNow();
+});
 
 function migrateDraftsOutOfUiStore(): void {
   const v = readUiValue('app.chat.drafts');
@@ -702,6 +720,15 @@ function oldListSignature(s: ChatSession): string {
 }
 
 let listTimer: number | null = null;
+let refreshListTimer: number | null = null;
+
+function scheduleRefreshList() {
+  if (refreshListTimer !== null) return;
+  refreshListTimer = window.setTimeout(() => {
+    refreshListTimer = null;
+    void fetchList();
+  }, 350);
+}
 
 function sameSessionStates(
   a: Record<string, SessionStateInfo>,
@@ -979,9 +1006,15 @@ function byFile(file: string): ChatSession | undefined {
 const pendingSends = new Map<string, { sessionId: string; mid: string; acked: boolean }>();
 
 function upsert(s: ChatSession, m: DisplayMessage) {
-  const i = s.messages.findIndex((x) => x.id === m.id);
-  if (i >= 0) s.messages[i] = m;
-  else s.messages.push(m);
+  const msgs = s.messages;
+  const lastIdx = msgs.length - 1;
+  if (lastIdx >= 0 && msgs[lastIdx].id === m.id) {
+    msgs[lastIdx] = m;
+    return;
+  }
+  const i = msgs.findIndex((x) => x.id === m.id);
+  if (i >= 0) msgs[i] = m;
+  else msgs.push(m);
 }
 
 function lastAssistant(s: ChatSession): DisplayMessage | undefined {
@@ -1121,7 +1154,7 @@ function handleEvent(ev: any) {
     case 'refresh': {
       const s = byFile(ev.file);
       if (s?.messagesLoaded) void syncTail(s.id);
-      void fetchList();
+      scheduleRefreshList();
       break;
     }
     case 'tree': {

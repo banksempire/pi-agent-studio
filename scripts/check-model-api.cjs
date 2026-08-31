@@ -397,15 +397,19 @@ const STUB_MODELS = [
         inputBorder: si.borderTopWidth !== '0px' && si.borderTopStyle !== 'none',
         btnBorder: sb.borderTopWidth !== '0px' && sb.borderTopStyle !== 'none',
         btnBg: sb.backgroundColor,
+        btnText: sb.color,
+        btnLabel: (btn.textContent ?? '').trim(),
       };
     });
     report(
-      'filter input and refresh button use theme colors and borders',
+      'filter input themed; refresh button is a blue accent button labeled Refresh',
       !!themed &&
         themed.inputBg === 'rgb(30, 30, 30)' &&
         themed.inputBorder &&
         themed.btnBorder &&
-        themed.btnBg !== 'rgba(0, 0, 0, 0)',
+        themed.btnBg === 'rgb(0, 122, 204)' &&
+        themed.btnText === 'rgb(255, 255, 255)' &&
+        themed.btnLabel === 'Refresh',
       themed ? JSON.stringify(themed) : 'controls not found',
     );
 

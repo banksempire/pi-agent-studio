@@ -137,7 +137,7 @@ const totalCount = computed(() => {
       >
       <span class="model-catalog-count">{{ totalCount }} models</span>
       <button class="model-catalog-refresh" :disabled="busy" @click="refresh">
-        {{ busy ? 'Refreshing…' : 'Refresh Catalog' }}
+        {{ busy ? 'Refreshing…' : 'Refresh' }}
       </button>
     </div>
     <div v-if="error" class="model-catalog-note model-catalog-note--err">{{ error }}</div>
@@ -226,10 +226,10 @@ const totalCount = computed(() => {
 }
 
 .model-catalog-refresh {
-  background: var(--sf-bar);
-  border: 1px solid var(--sf-border);
+  background: var(--sf-accent);
+  border: 1px solid var(--sf-accent);
   border-radius: 4px;
-  color: var(--sf-text);
+  color: var(--sf-text-on-accent);
   font-size: 16px;
   padding: 5px 14px;
   cursor: pointer;
@@ -243,7 +243,7 @@ const totalCount = computed(() => {
 @media (hover: hover) {
   .model-catalog-refresh:not(:disabled):hover {
     box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
-    color: var(--sf-text-bright);
+    color: var(--sf-text-on-accent);
   }
 }
 

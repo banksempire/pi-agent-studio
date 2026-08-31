@@ -12,6 +12,7 @@ import { createLocalClient } from '../../pi-nest/src/local-client.mjs';
 import { applyImplicitNewChatDefault } from '../../pi-nest/src/models.mjs';
 import { AgentRegistry, WATCHDOG_INTERVAL_MS } from '../../pi-nest/src/registry.mjs';
 import { computeNextDue, Scheduler } from '../../pi-nest/src/scheduler.mjs';
+import { createPeakHoursStore } from './peak-hours.mjs';
 import { createSessionStates } from './session-states.mjs';
 
 const PORT = Number(process.env.PI_STUDIO_PORT ?? 7494);
@@ -28,6 +29,8 @@ const DB_PATH =
   );
 const LEGACY_STATES_PATH =
   process.env.PI_STUDIO_STATES_PATH ?? path.join(STATE_FALLBACK_DIR, 'studio-session-states.json');
+const PEAK_HOURS_PATH =
+  process.env.PI_STUDIO_PEAK_HOURS_PATH ?? path.join(path.dirname(DB_PATH), 'api-peak-hours.json');
 const RESUME_MODE =
   (process.env.PI_STUDIO_RESUME ?? 'on') === 'off' ? 'skip' : (process.env.PI_STUDIO_RESUME_MODE ?? 'nudge');
 
@@ -823,6 +826,8 @@ const sessionStates = createSessionStates({
 });
 sessionStates.load();
 
+const peakHours = createPeakHoursStore({ persistPath: PEAK_HOURS_PATH });
+
 async function resolveFileOutcome(file) {
   if (!existsSync(file)) return 'gone';
   try {
@@ -1519,6 +1524,53 @@ const server = createServer(async (req, res) => {
         sendJson(res, r.ok ? 200 : 400, r);
       } catch (e) {
         sendJson(res, 400, { ok: false, error: String(e?.message ?? e) });
+      }
+      return;
+    }
+
+    if (p === '/api/peak-hours' && req.method === 'GET') {
+      try {
+        sendJson(res, 200, { entries: peakHours.list() });
+      } catch (e) {
+        sendJson(res, 500, { error: String(e?.message ?? e) });
+      }
+      return;
+    }
+
+    if (p === '/api/peak-hours' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const r = peakHours.create(body);
+        if (r.error) return sendJson(res, 400, { error: r.error });
+        sendJson(res, 201, { entry: r.entry });
+      } catch (e) {
+        sendJson(res, 500, { error: String(e?.message ?? e) });
+      }
+      return;
+    }
+
+    if (p.startsWith('/api/peak-hours/') && req.method === 'PATCH') {
+      const id = decodeURIComponent(p.slice('/api/peak-hours/'.length));
+      const body = await readBody(req);
+      try {
+        const r = peakHours.update(id, body);
+        if (r.error === 'peak-hours entry not found') return sendJson(res, 404, { error: r.error });
+        if (r.error) return sendJson(res, 400, { error: r.error });
+        sendJson(res, 200, { entry: r.entry });
+      } catch (e) {
+        sendJson(res, 500, { error: String(e?.message ?? e) });
+      }
+      return;
+    }
+
+    if (p.startsWith('/api/peak-hours/') && req.method === 'DELETE') {
+      const id = decodeURIComponent(p.slice('/api/peak-hours/'.length));
+      try {
+        const ok = peakHours.remove(id);
+        if (!ok) return sendJson(res, 404, { error: 'peak-hours entry not found' });
+        sendJson(res, 200, { ok: true });
+      } catch (e) {
+        sendJson(res, 500, { error: String(e?.message ?? e) });
       }
       return;
     }

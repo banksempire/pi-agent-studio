@@ -258,6 +258,18 @@
                   "key": "model-preference"
                 }
               ]
+            },
+            {
+              "id": "api-peak-hours",
+              "label": "Peak Hours",
+              "height": "variable",
+              "minHeight": 80,
+              "components": [
+                {
+                  "type": "component",
+                  "key": "api-peak-hours"
+                }
+              ]
             }
           ]
         }

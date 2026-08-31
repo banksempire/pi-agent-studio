@@ -1,0 +1,508 @@
+<script setup lang="ts">
+import { computed, onMounted, reactive, ref, watch } from 'vue';
+import type { ModelCatalogView } from '../modelInfo';
+import { loadModelCatalog } from '../modelInfo';
+import {
+  browserUtcOffset,
+  createPeakHours,
+  deletePeakHours,
+  fmtHm,
+  loadPeakHours,
+  OFFSET_OPTIONS,
+  offsetLabel,
+  type PeakHourEntry,
+  parseHm,
+  toLocalMinutes,
+  toUtcMinutes,
+  updatePeakHours,
+} from '../peakHours';
+import { useChatStore } from '../store/chat';
+
+const store = useChatStore();
+
+const entries = ref<PeakHourEntry[]>([]);
+const catalog = ref<ModelCatalogView | null>(null);
+const error = ref('');
+const formError = ref('');
+const busy = ref(false);
+const loaded = ref(false);
+
+const editor = reactive<{
+  open: boolean;
+  id: string | null;
+  api: string;
+  note: string;
+  utcOffset: number;
+}>({ open: false, id: null, api: '', note: '', utcOffset: 0 });
+
+const startField = ref('09:00');
+const endField = ref('17:00');
+const startUtcMin = ref(540);
+const endUtcMin = ref(1020);
+
+async function reload() {
+  try {
+    entries.value = await loadPeakHours();
+    error.value = '';
+  } catch (e) {
+    if (!(e instanceof TypeError)) error.value = String((e as Error)?.message ?? e);
+  } finally {
+    loaded.value = true;
+  }
+}
+
+async function reloadCatalog() {
+  try {
+    catalog.value = await loadModelCatalog();
+  } catch {
+    catalog.value = null;
+  }
+}
+
+onMounted(() => {
+  void reload();
+  void reloadCatalog();
+});
+
+watch(
+  () => store.modelDefaultTick,
+  () => void reloadCatalog(),
+);
+
+const catalogApis = computed(() => {
+  const set = new Set<string>();
+  for (const m of catalog.value?.models ?? []) {
+    if (m.api) set.add(m.api);
+  }
+  return set;
+});
+
+const apiOptions = computed(() => {
+  const set = new Set(catalogApis.value);
+  for (const e of entries.value) set.add(e.api);
+  if (editor.api.trim()) set.add(editor.api.trim());
+  return [...set].sort();
+});
+
+function recomputeUtcFromFields() {
+  const s = parseHm(startField.value);
+  const e = parseHm(endField.value);
+  if (s !== null) startUtcMin.value = toUtcMinutes(s, editor.utcOffset);
+  if (e !== null) endUtcMin.value = toUtcMinutes(e, editor.utcOffset);
+}
+
+function rederiveFieldsFromUtc() {
+  startField.value = fmtHm(toLocalMinutes(startUtcMin.value, editor.utcOffset));
+  endField.value = fmtHm(toLocalMinutes(endUtcMin.value, editor.utcOffset));
+}
+
+function openAdd() {
+  editor.open = true;
+  editor.id = null;
+  editor.api = store.modelDetail?.model?.api ?? '';
+  editor.note = '';
+  editor.utcOffset = browserUtcOffset();
+  startField.value = '09:00';
+  endField.value = '17:00';
+  recomputeUtcFromFields();
+  formError.value = '';
+}
+
+function openEdit(e: PeakHourEntry) {
+  editor.open = true;
+  editor.id = e.id;
+  editor.api = e.api;
+  editor.note = e.note;
+  editor.utcOffset = e.utcOffset;
+  startUtcMin.value = parseHm(e.startUtc) ?? 540;
+  endUtcMin.value = parseHm(e.endUtc) ?? 1020;
+  rederiveFieldsFromUtc();
+  formError.value = '';
+}
+
+function closeEditor() {
+  editor.open = false;
+  editor.id = null;
+  formError.value = '';
+}
+
+const wraps = computed(() => startUtcMin.value !== endUtcMin.value && endUtcMin.value < startUtcMin.value);
+
+const liveHint = computed(
+  () =>
+    `= ${fmtHm(startUtcMin.value)}–${fmtHm(endUtcMin.value)} UTC${wraps.value ? ' · wraps midnight' : ''}`,
+);
+
+const problems = computed<string[]>(() => {
+  const list: string[] = [];
+  if (!editor.api.trim()) list.push('api');
+  if (parseHm(startField.value) === null) list.push('start time');
+  if (parseHm(endField.value) === null) list.push('end time');
+  if (parseHm(startField.value) !== null && parseHm(endField.value) !== null) {
+    if (startUtcMin.value === endUtcMin.value) list.push('a window (start ≠ end)');
+  }
+  return list;
+});
+
+const canSave = computed(() => problems.value.length === 0 && !busy.value);
+
+async function save() {
+  if (!canSave.value) return;
+  busy.value = true;
+  formError.value = '';
+  try {
+    const input = {
+      api: editor.api.trim(),
+      start: startField.value,
+      end: endField.value,
+      utcOffset: editor.utcOffset,
+      note: editor.note.trim(),
+    };
+    if (editor.id) await updatePeakHours(editor.id, input);
+    else await createPeakHours(input);
+    await reload();
+    closeEditor();
+  } catch (e) {
+    if (!(e instanceof TypeError)) formError.value = String((e as Error)?.message ?? e);
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function toggle(e: PeakHourEntry) {
+  error.value = '';
+  try {
+    await updatePeakHours(e.id, { enabled: !e.enabled });
+    await reload();
+  } catch (err) {
+    if (!(err instanceof TypeError)) error.value = String((err as Error)?.message ?? err);
+  }
+}
+
+async function remove(e: PeakHourEntry) {
+  if (!window.confirm(`Delete peak hours for ${e.api}?`)) return;
+  error.value = '';
+  try {
+    await deletePeakHours(e.id);
+    if (editor.id === e.id) closeEditor();
+    await reload();
+  } catch (err) {
+    if (!(err instanceof TypeError)) error.value = String((err as Error)?.message ?? err);
+  }
+}
+
+function windowText(e: PeakHourEntry): string {
+  return `${e.start}–${e.end} ${offsetLabel(e.utcOffset)}`;
+}
+
+function utcText(e: PeakHourEntry): string {
+  return `${e.startUtc}–${e.endUtc} UTC${e.wrapsMidnightUtc ? ' ↻' : ''}`;
+}
+</script>
+
+<template>
+  <div class="aph">
+    <div v-if="error" class="aph-error">{{ error }}</div>
+
+    <template v-if="!editor.open">
+      <div class="aph-head">
+        <span class="aph-hint">off-peak windows per API</span>
+        <button class="sf-panel-btn aph-add" title="Add peak hours" @click="openAdd">＋ add</button>
+      </div>
+      <div v-if="!entries.length && loaded && !error" class="aph-empty">
+        No peak hours yet — add a window to keep heavy runs off an API's peak.
+      </div>
+      <div v-for="e in entries" :key="e.id" class="aph-row" :class="{ 'aph-row--off': !e.enabled }">
+        <div class="aph-row-top">
+          <button
+            class="md-switch sf-panel-btn aph-switch"
+            :class="{ 'md-switch--on': e.enabled }"
+            role="switch"
+            :aria-checked="e.enabled"
+            :title="e.enabled ? 'Disable window' : 'Enable window'"
+            @click="toggle(e)"
+          ><span class="md-switch-knob" /></button>
+          <span class="aph-api" :title="e.api">{{ e.api }}</span>
+          <span
+            v-if="!catalogApis.has(e.api)"
+            class="aph-unknown"
+            title="No model in the current catalog uses this API — the window is kept"
+          >not in catalog</span>
+          <span class="aph-actions">
+            <button class="sf-panel-btn" title="Edit window" @click="openEdit(e)">✎</button>
+            <button class="sf-panel-btn aph-danger" title="Delete window" @click="remove(e)">✕</button>
+          </span>
+        </div>
+        <div class="aph-window" :title="`peak ${e.start}–${e.end} ${offsetLabel(e.utcOffset)}`">
+          {{ windowText(e) }}
+        </div>
+        <div class="aph-utc" :title="e.wrapsMidnightUtc ? 'window crosses midnight UTC' : ''">
+          {{ utcText(e) }}
+        </div>
+        <div v-if="e.note" class="aph-note" :title="e.note">{{ e.note }}</div>
+      </div>
+    </template>
+
+    <div v-else class="aph-editor">
+      <div class="aph-field">
+        <label class="aph-label" for="aph-api">API</label>
+        <input
+          id="aph-api"
+          v-model="editor.api"
+          class="aph-input"
+          list="aph-api-options"
+          placeholder="anthropic"
+          spellcheck="false"
+        >
+        <datalist id="aph-api-options">
+          <option v-for="a in apiOptions" :key="a" :value="a" />
+        </datalist>
+      </div>
+      <div class="aph-times">
+        <div class="aph-field">
+          <label class="aph-label" for="aph-start">Peak start</label>
+          <input
+            id="aph-start"
+            v-model="startField"
+            class="aph-input aph-time"
+            type="time"
+            @input="recomputeUtcFromFields"
+          >
+        </div>
+        <div class="aph-field">
+          <label class="aph-label" for="aph-end">Peak end</label>
+          <input
+            id="aph-end"
+            v-model="endField"
+            class="aph-input aph-time"
+            type="time"
+            @input="recomputeUtcFromFields"
+          >
+        </div>
+      </div>
+      <div class="aph-field">
+        <label class="aph-label" for="aph-tz">Timezone</label>
+        <select id="aph-tz" v-model.number="editor.utcOffset" class="aph-input" @change="rederiveFieldsFromUtc">
+          <option v-for="o in OFFSET_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
+        </select>
+      </div>
+      <div class="aph-live" :title="liveHint">{{ liveHint }}</div>
+      <div class="aph-field">
+        <label class="aph-label" for="aph-note">Note</label>
+        <input id="aph-note" v-model="editor.note" class="aph-input" placeholder="rate-limit window" >
+      </div>
+      <div v-if="formError" class="aph-error">{{ formError }}</div>
+      <div v-else-if="problems.length" class="aph-live aph-live--warn">needs {{ problems.join(', ') }}</div>
+      <div class="aph-editor-actions">
+        <button class="sf-panel-btn aph-save" :disabled="!canSave" @click="save">
+          {{ busy ? 'Saving…' : 'Save' }}
+        </button>
+        <button class="sf-panel-btn" :disabled="busy" @click="closeEditor">Cancel</button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.aph {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  min-height: 0;
+}
+
+.aph-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+}
+
+.aph-hint {
+  flex: 1;
+  min-width: 0;
+  color: var(--sf-text-muted);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.aph-add {
+  flex-shrink: 0;
+}
+
+.aph-empty {
+  padding: 8px 2px;
+  color: var(--sf-text-muted);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.aph-row {
+  border: 1px solid var(--sf-border);
+  border-radius: 6px;
+  padding: 5px 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.aph-row--off {
+  opacity: 0.55;
+}
+
+.aph-row-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.aph-switch {
+  padding: 0;
+}
+
+.aph-api {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.aph-unknown {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--sf-text-muted);
+  border: 1px solid var(--sf-border);
+  border-radius: 4px;
+  padding: 0 3px;
+  white-space: nowrap;
+}
+
+.aph-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.aph-danger:hover {
+  color: var(--sf-danger, #ff6d6d);
+}
+
+.aph-window {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.aph-utc {
+  font-size: 12px;
+  color: var(--sf-text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.aph-note {
+  font-size: 12px;
+  color: var(--sf-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aph-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.aph-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.aph-label {
+  font-size: 12px;
+  color: var(--sf-text-muted);
+}
+
+.aph-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--sf-bg);
+  border: 1px solid var(--sf-border);
+  border-radius: 4px;
+  color: var(--sf-text);
+  font-family: var(--sf-font);
+  font-size: 14px;
+  padding: 4px 6px;
+  outline: none;
+}
+
+.aph-input:focus {
+  border-color: var(--sf-accent);
+}
+
+.aph-times {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.aph-time {
+  font-variant-numeric: tabular-nums;
+}
+
+.aph-live {
+  font-size: 12px;
+  color: var(--sf-text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.aph-live--warn {
+  color: var(--sf-danger, #ff6d6d);
+  opacity: 0.85;
+}
+
+.aph-editor-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.aph-save {
+  background: var(--sf-accent);
+  color: var(--sf-text-on-accent);
+  border-color: var(--sf-accent);
+}
+
+.aph-save:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .aph-save:not(:disabled):hover {
+    box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
+    color: var(--sf-text-on-accent);
+  }
+}
+
+.aph-error {
+  padding: 5px 7px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: rgba(255, 82, 82, 0.12);
+  color: var(--sf-danger, #ff6d6d);
+  word-break: break-word;
+}
+</style>

@@ -50,6 +50,7 @@ Run as `npm run studio -- …` from this repo or `node pi-agent-studio/bin/studi
 | mobile shell | `check:mobile` |
 | SSE robustness | `check:sse` |
 | model picker / models API | `check:modelapi` |
+| model catalog peak hours (unit + CRUD UI + persistence) | `check:peakhours` |
 | scheduler (unit: cron math, fire, missed policy, catch-up) | `check:scheduler` |
 | job editor UI | `check:jobeditor` |
 | journal drain/recover (unit) | `check:registry` |

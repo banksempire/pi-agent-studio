@@ -4,6 +4,7 @@ import './styles/app.css';
 
 import WorkspacePanel from '@sf/components/WorkspacePanel.vue';
 import { registerPanelComponent, registerStatusComponent, registerTabContent } from '@sf/registry';
+import ApiPeakHours from './components/ApiPeakHours.vue';
 import BackendStatus from './components/BackendStatus.vue';
 import ChatHistory from './components/ChatHistory.vue';
 import ChatSessions from './components/ChatSessions.vue';
@@ -33,6 +34,7 @@ registerStatusComponent('backend-status', BackendStatus);
 registerPanelComponent('model-picker', ModelPicker);
 registerPanelComponent('model-detail', ModelDetail);
 registerPanelComponent('model-preference', ModelPreference);
+registerPanelComponent('api-peak-hours', ApiPeakHours);
 registerPanelComponent('prefs', PrefsPanel);
 registerPanelComponent('jobs-panel', JobsPanel);
 

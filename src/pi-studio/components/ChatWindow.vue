@@ -666,17 +666,29 @@ function send() {
 
 const queue = computed(() => queuedMessagesOf(props.sessionId));
 
-const canQueue = computed(
-  () => session.value?.status === 'running' && !!input.value.trim() && !attachments.value.length,
-);
-
 function queueMessage() {
+  if (actionMode.value !== 'queue') return;
   const text = input.value.trim();
-  if (!canQueue.value) return;
-  enqueueMessage(props.sessionId, text);
+  const imgs = attachments.value.map((a) => ({ data: a.data, mimeType: a.mimeType }));
+  if (!text && !imgs.length) return;
+  enqueueMessage(props.sessionId, text, imgs);
   input.value = '';
+  attachments.value = [];
   store.noteChatInteraction(props.sessionId);
   inputEl.value?.focus();
+}
+
+const queueReview = ref<QueuedChatMessage | null>(null);
+
+function openQueueReview(q: QueuedChatMessage) {
+  if (!q.images?.length) return;
+  queueReview.value = q;
+}
+
+function queueBoxTitle(q: QueuedChatMessage): string {
+  const n = q.images?.length ?? 0;
+  if (!n) return q.text;
+  return `${q.text || 'Image'} · ${n} image${n === 1 ? '' : 's'} — click to view`;
 }
 
 const editingQueue = ref<QueuedChatMessage | null>(null);
@@ -717,6 +729,7 @@ function onQueueEditKeydown(e: KeyboardEvent) {
 watch(queue, (q) => {
   const cur = editingQueue.value;
   if (cur && !q.some((m) => m.id === cur.id)) closeQueueEdit();
+  if (queueReview.value && !q.some((m) => m.id === queueReview.value?.id)) queueReview.value = null;
 });
 
 const attachments = computed({
@@ -725,9 +738,9 @@ const attachments = computed({
 });
 const fileInput = ref<HTMLInputElement | null>(null);
 
-const canStop = computed(
-  () => session.value?.status === 'running' && !input.value.trim() && !attachments.value.length,
-);
+const running = computed(() => session.value?.status === 'running');
+const hasContent = computed(() => !!input.value.trim() || attachments.value.length > 0);
+const actionMode = computed(() => (running.value ? (hasContent.value ? 'queue' : 'stop') : 'send'));
 
 function stopGeneration() {
   void store.stopSession(props.sessionId);
@@ -784,7 +797,8 @@ function onKeydown(e: KeyboardEvent) {
     e.key === 'Enter' && !e.isComposing && (store.prefs.sendKey === 'enter' ? !realShift : realShift);
   if (sendPressed) {
     e.preventDefault();
-    send();
+    if (actionMode.value === 'queue') queueMessage();
+    else send();
   }
 }
 
@@ -920,6 +934,7 @@ watch(
     }
     if (newId) {
       review.value = null;
+      queueReview.value = null;
       flash.value = {};
       prevBubbleStatus.clear();
       closeQueueEdit();
@@ -1107,20 +1122,28 @@ watch(
 
         <div v-if="queue.length" class="chat-queue" data-testid="chat-queue">
           <div class="chat-queue-caption">Queued — sends when the session finishes</div>
-          <div v-for="q in queue" :key="q.id" class="chat-queue-box" data-testid="chat-queue-box">
+          <div
+            v-for="q in queue"
+            :key="q.id"
+            class="chat-queue-box"
+            :class="{ 'chat-queue-box--viewable': !!q.images?.length }"
+            :title="queueBoxTitle(q)"
+            data-testid="chat-queue-box"
+            @click="openQueueReview(q)"
+          >
+            <SvgIcon v-if="q.images?.length" name="🖼" class="chat-queue-img-ind" />
             <span class="chat-queue-text" :title="q.text">{{ q.text }}</span>
             <button
               class="chat-queue-act"
               title="Edit this queued message"
-              @click="editQueued(q)"
+              @click.stop="editQueued(q)"
             ><SvgIcon name="✎" /></button>
             <button
               class="chat-queue-act"
               title="Remove from queue"
-              @click="removeQueuedMessage(props.sessionId, q.id)"
+              @click.stop="removeQueuedMessage(props.sessionId, q.id)"
             ><SvgIcon name="✕" /></button>
-          </div>
-        </div>
+          </div>        </div>
 
         <div v-if="attachments.length" class="chat-attach-row">
           <div v-for="(a, i) in attachments" :key="i" class="chat-attach-chip">
@@ -1173,22 +1196,22 @@ watch(
             @change="onFilesChosen"
           />
           <button
-            class="chat-queue-btn"
-            :class="{ 'chat-queue-btn--hidden': !canQueue }"
-            :title="canQueue ? 'Queue this message — it sends automatically when the session finishes' : 'Queue (available while the session is working and the input has text)'"
-            :disabled="!!composerBlock || !canQueue"
-            @click="queueMessage"
-          >Queue</button>
-          <button
-            v-if="canStop"
+            v-if="actionMode === 'stop'"
             class="chat-send-btn chat-send-btn--stop"
             title="Interrupt generation"
             @click="stopGeneration"
           >Stop</button>
           <button
+            v-else-if="actionMode === 'queue'"
+            class="chat-send-btn chat-send-btn--queue"
+            title="Queue this message — it sends automatically when the session finishes"
+            :disabled="!!composerBlock"
+            @click="queueMessage"
+          >Queue</button>
+          <button
             v-else
             class="chat-send-btn"
-            :disabled="!!composerBlock || (!input.trim() && !attachments.length)"
+            :disabled="!!composerBlock || !hasContent"
             @click="send"
           >Send</button>
         </div>
@@ -1231,6 +1254,14 @@ watch(
       :images="review.images"
       :start="review.start"
       @close="review = null"
+    />
+
+    <ImageReview
+      v-if="queueReview"
+      :images="queueReview.images ?? []"
+      :start="0"
+      :text="queueReview.text"
+      @close="queueReview = null"
     />
   </div>
 </template>

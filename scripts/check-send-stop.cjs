@@ -236,10 +236,16 @@ function writeSessionFile(name) {
         await page.locator('.chat-input').fill('queued message while running');
         await delay(400);
         const stopGone = (await stopBtn.count()) === 0;
-        const sendBack = (await sendBtn.count()) === 1 && !(await sendBtn.isDisabled());
-        return { ok: stopGone && sendBack, why: `stop-hidden:${stopGone} send-back-enabled:${sendBack}` };
+        const queueBtn = page.locator('.chat-send-btn--queue');
+        const queueShown = (await queueBtn.count()) === 1;
+        const label = queueShown ? ((await queueBtn.innerText()) || '').trim() : '';
+        const enabled = queueShown ? !(await queueBtn.isDisabled()) : false;
+        return {
+          ok: stopGone && queueShown && /Queue/.test(label) && enabled,
+          why: `stop-hidden:${stopGone} queue-shown:${queueShown} label:"${label}" enabled:${enabled}`,
+        };
       })();
-      report(`${tag} running + typed text → Send returns (queueing)`, t4.ok, t4.why);
+      report(`${tag} running + typed text → Send becomes Queue`, t4.ok, t4.why);
 
       const t5 = await (async () => {
         await page.locator('.chat-input').fill('');

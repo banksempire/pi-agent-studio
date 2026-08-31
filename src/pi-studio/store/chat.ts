@@ -1739,6 +1739,7 @@ export async function resendMessage(sessionId: string, mid: string) {
 export interface QueuedChatMessage {
   id: string;
   text: string;
+  images?: { data: string; mimeType: string }[];
 }
 
 const QUEUES_KEY = 'sf-chat:queues';
@@ -1757,15 +1758,24 @@ function parseStoredQueues(): Record<string, QueuedChatMessage[]> | null {
       if (!Array.isArray(list)) continue;
       const msgs: QueuedChatMessage[] = [];
       for (const m of list) {
-        if (
-          m &&
-          typeof m === 'object' &&
-          typeof m.id === 'string' &&
-          typeof m.text === 'string' &&
-          m.text.trim()
-        ) {
-          msgs.push({ id: m.id, text: m.text });
+        if (!(m && typeof m === 'object' && typeof m.id === 'string' && typeof m.text === 'string')) {
+          continue;
         }
+        const rawImages: unknown[] = Array.isArray(m.images) ? m.images : [];
+        const images = rawImages
+          .filter((im): im is { data: string; mimeType: string } => {
+            const x = im as { data?: unknown; mimeType?: unknown } | null | undefined;
+            return (
+              !!x &&
+              typeof x.data === 'string' &&
+              typeof x.mimeType === 'string' &&
+              x.data !== '' &&
+              /^image\//.test(x.mimeType)
+            );
+          })
+          .slice(0, 4);
+        if (!m.text.trim() && !images.length) continue;
+        msgs.push({ id: m.id, text: m.text, ...(images.length ? { images } : {}) });
       }
       if (msgs.length) out[id] = msgs;
     }
@@ -1777,6 +1787,18 @@ function parseStoredQueues(): Record<string, QueuedChatMessage[]> | null {
 
 const sessionQueues = reactive<Record<string, QueuedChatMessage[]>>(parseStoredQueues() ?? {});
 
+function persistQueues(out: Record<string, QueuedChatMessage[]>) {
+  try {
+    localStorage.setItem(QUEUES_KEY, JSON.stringify(out));
+    return;
+  } catch {}
+  const lean: Record<string, QueuedChatMessage[]> = {};
+  for (const [id, q] of Object.entries(out)) lean[id] = q.map((m) => ({ id: m.id, text: m.text }));
+  try {
+    localStorage.setItem(QUEUES_KEY, JSON.stringify(lean));
+  } catch {}
+}
+
 function saveQueues() {
   const out: Record<string, QueuedChatMessage[]> = {};
   const known = state.sessions.length > 0 ? new Set(state.sessions.map((s) => s.id)) : null;
@@ -1785,11 +1807,15 @@ function saveQueues() {
       delete sessionQueues[id];
       continue;
     }
-    if (q.length) out[id] = q.map((m) => ({ id: m.id, text: m.text }));
+    if (q.length) {
+      out[id] = q.map((m) => ({
+        id: m.id,
+        text: m.text,
+        ...(m.images?.length ? { images: m.images } : {}),
+      }));
+    }
   }
-  try {
-    localStorage.setItem(QUEUES_KEY, JSON.stringify(out));
-  } catch {}
+  persistQueues(out);
   const claims = readClaims();
   let claimsDirty = false;
   for (const id of Object.keys(claims)) {
@@ -1810,12 +1836,17 @@ export function queuedMessagesOf(sessionId: string): QueuedChatMessage[] {
   return q;
 }
 
-export function enqueueMessage(sessionId: string, text: string) {
+export function enqueueMessage(
+  sessionId: string,
+  text: string,
+  images: { data: string; mimeType: string }[] = [],
+) {
   const trimmed = text.trim();
-  if (!trimmed) return;
+  if (!trimmed && !images.length) return;
   queuedMessagesOf(sessionId).push({
     id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     text: trimmed,
+    ...(images.length ? { images } : {}),
   });
   saveQueues();
 }
@@ -1931,7 +1962,7 @@ watch(
           if (!live?.length || live[0].id !== first.id) return;
           live.splice(0, 1);
           saveQueues();
-          await sendMessage(sid, first.text, { wait: true });
+          await sendMessage(sid, first.text, { wait: true, images: first.images ?? [] });
         } finally {
           flushingQueues.delete(sid);
         }

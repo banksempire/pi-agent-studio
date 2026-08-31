@@ -199,19 +199,30 @@ function readPrompts() {
     await page.waitForSelector('.chat-window', { timeout: 20000 });
     await delay(1500);
 
-    const queueBtn = page.locator('.chat-queue-btn');
     const input = page.locator('.chat-input');
     const boxes = page.locator('.chat-queue-box');
+    const legacyQueueBtn = page.locator('.chat-queue-btn');
+    const stopBtn = page.locator('.chat-send-btn--stop');
+    const queueBtn = page.locator('.chat-send-btn--queue');
 
-    const hiddenQueueBtn = async () => {
-      const el = await queueBtn.evaluate((node) => {
-        const cls = node.getAttribute('class') || '';
-        return {
-          hidden: cls.includes('chat-queue-btn--hidden'),
-          visible: getComputedStyle(node).visibility !== 'hidden',
-        };
-      });
-      return el;
+    const setStatus = async (st) => {
+      stub.emit('session_status', F, { status: st });
+      stub.setStates(st === 'running' ? [{ agentId: F, status: 'running' }] : []);
+    };
+    const waitCount = async (locator, want, tries = 40) => {
+      for (let i = 0; i < tries; i++) {
+        if ((await locator.count()) === want) return true;
+        await delay(250);
+      }
+      return (await locator.count()) === want;
+    };
+    const runUntilStop = async () => {
+      await setStatus('running');
+      return waitCount(stopBtn, 1);
+    };
+    const idleUntilSend = async () => {
+      await setStatus('idle');
+      return waitCount(stopBtn, 0);
     };
 
     const actionRects = () =>
@@ -220,7 +231,7 @@ function readPrompts() {
           const el = document.querySelector(sel);
           if (!el) return null;
           const r = el.getBoundingClientRect();
-          return { x: +r.x.toFixed(1), y: +r.y.toFixed(1) };
+          return { x: +r.x.toFixed(1), y: +r.y.toFixed(1), w: +r.width.toFixed(1), h: +r.height.toFixed(1) };
         };
         return {
           scroll: pick('.chat-scroll-btn'),
@@ -229,89 +240,106 @@ function readPrompts() {
         };
       });
 
-    const t1 = await hiddenQueueBtn();
-    report('idle + empty input → queue button hidden', t1.hidden && !t1.visible, JSON.stringify(t1));
+    const t1 = await page.evaluate(() => {
+      const el = document.querySelector('.chat-send-btn');
+      return {
+        label: (el?.innerText || '').trim(),
+        disabled: !!el?.disabled,
+      };
+    });
+    report(
+      'idle + empty input → single disabled Send button',
+      t1.label === 'Send' && t1.disabled,
+      JSON.stringify(t1),
+    );
+    report(
+      'dedicated queue button is gone from the DOM (no reserved space)',
+      (await legacyQueueBtn.count()) === 0,
+    );
 
     await input.fill('idle text');
     await delay(300);
-    const t2 = await hiddenQueueBtn();
-    report('idle + text → queue button still hidden', t2.hidden && !t2.visible, JSON.stringify(t2));
-
+    const t2 = await page.evaluate(() => {
+      const el = document.querySelector('.chat-send-btn');
+      return { label: (el?.innerText || '').trim(), disabled: !!el?.disabled };
+    });
+    report('idle + text → Send enabled', t2.label === 'Send' && !t2.disabled, JSON.stringify(t2));
     const idleRects = await actionRects();
 
-    stub.emit('session_status', F, { status: 'running' });
-    stub.setStates([{ agentId: F, status: 'running' }]);
-    await input.fill('');
-    for (let i = 0; i < 40; i++) {
-      const stop = await page.locator('.chat-send-btn--stop').count();
-      if (stop === 1) break;
-      await delay(250);
-    }
-    report('session running (Stop button shows)', (await page.locator('.chat-send-btn--stop').count()) === 1);
-
+    report(
+      'session running + empty input → Stop button',
+      await (async () => {
+        await input.fill('');
+        return runUntilStop();
+      })(),
+    );
     await delay(300);
-    const t3 = await hiddenQueueBtn();
-    report('running + empty input → queue button hidden', t3.hidden && !t3.visible, JSON.stringify(t3));
+    const stopInfo = await page.evaluate(() => {
+      const el = document.querySelector('.chat-send-btn');
+      return { label: (el?.innerText || '').trim(), disabled: !!el?.disabled };
+    });
+    report(
+      'running + empty input → button is enabled Stop',
+      stopInfo.label === 'Stop' && !stopInfo.disabled,
+      JSON.stringify(stopInfo),
+    );
+    report('still no dedicated queue button while running', (await legacyQueueBtn.count()) === 0);
 
     await input.fill('first queued message');
     await delay(300);
-    const t4 = await hiddenQueueBtn();
-    report('running + text → queue button visible', !t4.hidden && t4.visible, JSON.stringify(t4));
-
-    const runningRects = await actionRects();
-    const samePos =
-      idleRects.scroll.x === runningRects.scroll.x &&
-      idleRects.image.x === runningRects.image.x &&
-      idleRects.image.y === runningRects.image.y;
-    report(
-      'other buttons keep their position when the queue button hides/shows',
-      samePos,
-      `idle:${JSON.stringify(idleRects.image)} running:${JSON.stringify(runningRects.image)}`,
-    );
-
-    const t4b = await page.evaluate(() => {
-      const m = (sel) => {
-        const el = document.querySelector(sel);
-        if (!el) return null;
-        const r = el.getBoundingClientRect();
-        return { x: +r.x.toFixed(1), y: +r.y.toFixed(1), w: +r.width.toFixed(1), h: +r.height.toFixed(1) };
-      };
+    const queueInfo = await page.evaluate(() => {
+      const el = document.querySelector('.chat-send-btn');
       return {
-        scroll: m('.chat-scroll-btn'),
-        image: m('.chat-image-btn'),
-        queue: m('.chat-queue-btn'),
-        send: m('.chat-send-btn:not(.chat-send-btn--stop)'),
+        cls: el?.getAttribute('class') || '',
+        label: (el?.innerText || '').trim(),
+        disabled: !!el?.disabled,
+        icons: el ? el.querySelectorAll('svg').length : -1,
       };
     });
+    report(
+      'running + text → Send becomes text-only enabled Queue button',
+      /chat-send-btn--queue/.test(queueInfo.cls) &&
+        queueInfo.label === 'Queue' &&
+        !queueInfo.disabled &&
+        queueInfo.icons === 0,
+      JSON.stringify(queueInfo),
+    );
+    report('running + text → no Stop button alongside', (await stopBtn.count()) === 0);
+
+    const runningRects = await actionRects();
+    const gapOf = (r) => (r?.send && r.image ? +(r.send.x - (r.image.x + r.image.w)).toFixed(1) : null);
+    const idleGap = gapOf(idleRects);
+    const runningGap = gapOf(runningRects);
+    const sameRow =
+      idleGap !== null &&
+      runningGap !== null &&
+      Math.abs(idleGap - runningGap) <= 1 &&
+      Math.abs(idleRects.image.y - runningRects.image.y) <= 1;
+    report(
+      'action button sits right after the image button in every mode (space removed)',
+      sameRow,
+      `gap idle:${idleGap} running:${runningGap}`,
+    );
     const sameSize =
-      !!t4b.queue &&
-      !!t4b.send &&
-      Math.abs(t4b.queue.w - t4b.send.w) <= 0.5 &&
-      Math.abs(t4b.queue.h - t4b.send.h) <= 0.5;
+      !!idleRects.send &&
+      !!runningRects.send &&
+      Math.abs(idleRects.send.w - runningRects.send.w) <= 0.5 &&
+      Math.abs(idleRects.send.h - runningRects.send.h) <= 0.5;
     report(
-      'queue button is exactly the same size as the send button',
+      'Queue button is exactly the same size as the Send button',
       sameSize,
-      `queue:${JSON.stringify(t4b.queue)} send:${JSON.stringify(t4b.send)}`,
+      `send:${JSON.stringify(idleRects.send)} queue:${JSON.stringify(runningRects.send)}`,
     );
-
     const rowOk =
-      !!t4b.scroll &&
-      !!t4b.image &&
-      t4b.scroll.x < t4b.image.x &&
-      t4b.image.x < t4b.queue.x &&
-      t4b.queue.x < t4b.send.x &&
-      [t4b.scroll, t4b.image, t4b.queue, t4b.send].every((r) => Math.abs(r.y - t4b.send.y) <= 1);
-    report('button row order is [to bottom][image][queue][send] on one line', rowOk, JSON.stringify(t4b));
-
-    const t4c = {
-      label: (await queueBtn.innerText()).trim(),
-      icons: await queueBtn.locator('svg').count(),
-    };
-    report(
-      'queue button is text-only (label, no icon)',
-      t4c.label === 'Queue' && t4c.icons === 0,
-      JSON.stringify(t4c),
-    );
+      !!runningRects.scroll &&
+      !!runningRects.image &&
+      !!runningRects.send &&
+      runningRects.scroll.x < runningRects.image.x &&
+      runningRects.image.x < runningRects.send.x &&
+      [runningRects.scroll, runningRects.image, runningRects.send].every(
+        (r) => Math.abs(r.y - runningRects.send.y) <= 1,
+      );
+    report('button row order is [to bottom][image][action] on one line', rowOk, JSON.stringify(runningRects));
 
     await queueBtn.click({ force: true });
     await delay(400);
@@ -364,8 +392,7 @@ function readPrompts() {
     await delay(300);
     report('queue holds two messages before the flush', (await boxes.count()) === 2);
 
-    stub.emit('session_status', F, { status: 'idle' });
-    stub.setStates([]);
+    await idleUntilSend();
     let flushed = null;
     for (let i = 0; i < 40; i++) {
       const prompts = readPrompts().filter((p) => p.agentId === F);
@@ -395,14 +422,8 @@ function readPrompts() {
       .count();
     report('flushed message appears in the transcript as a sent user message', sentBubble === 1);
 
-    stub.emit('session_status', F, { status: 'running' });
-    stub.setStates([{ agentId: F, status: 'running' }]);
-    for (let i = 0; i < 40; i++) {
-      if ((await page.locator('.chat-send-btn--stop').count()) === 1) break;
-      await delay(250);
-    }
-    stub.emit('session_status', F, { status: 'idle' });
-    stub.setStates([]);
+    await runUntilStop();
+    await idleUntilSend();
     let secondFlush = null;
     for (let i = 0; i < 40; i++) {
       const prompts = readPrompts().filter((p) => p.agentId === F);
@@ -420,13 +441,7 @@ function readPrompts() {
     await delay(1000);
     report('queue empties completely after all messages are sent', (await boxes.count()) === 0);
 
-    stub.emit('session_status', F, { status: 'running' });
-    stub.setStates([{ agentId: F, status: 'running' }]);
-    for (let i = 0; i < 40; i++) {
-      if ((await page.locator('.chat-send-btn--stop').count()) === 1) break;
-      await delay(250);
-    }
-
+    await runUntilStop();
     await input.fill('layout short');
     await queueBtn.click({ force: true });
     await input.fill('L'.repeat(400));
@@ -507,102 +522,161 @@ function readPrompts() {
     report('boxes removed until the queue is empty again', (await boxes.count()) === 0);
 
     const idleBaseline = readPrompts().filter((p) => p.agentId === F).length;
-    stub.emit('session_status', F, { status: 'idle' });
-    stub.setStates([]);
-    stub.emit('session_status', F, { status: 'running' });
-    stub.setStates([{ agentId: F, status: 'running' }]);
-    stub.emit('session_status', F, { status: 'idle' });
-    stub.setStates([]);
+    await idleUntilSend();
+    await runUntilStop();
+    await idleUntilSend();
     await delay(2500);
     report(
       'idle transitions with an empty queue never send anything',
       readPrompts().filter((p) => p.agentId === F).length === idleBaseline,
     );
 
-    stub.emit('session_status', F, { status: 'running' });
-    stub.setStates([{ agentId: F, status: 'running' }]);
-    for (let i = 0; i < 40; i++) {
-      if ((await page.locator('.chat-send-btn--stop').count()) === 1) break;
-      await delay(250);
-    }
+    await runUntilStop();
     const PNG = Buffer.from(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
       'base64',
     );
+    const attachOne = async () => {
+      await page.setInputFiles('.chat-image-input', {
+        name: 'dot.png',
+        mimeType: 'image/png',
+        buffer: PNG,
+      });
+      for (let i = 0; i < 30; i++) {
+        if ((await page.locator('.chat-attach-chip').count()) === 1) break;
+        await delay(250);
+      }
+    };
+
     await input.fill('with attachment');
     await delay(300);
-    await page.setInputFiles('.chat-image-input', {
-      name: 'dot.png',
-      mimeType: 'image/png',
-      buffer: PNG,
-    });
-    for (let i = 0; i < 30; i++) {
-      if ((await page.locator('.chat-attach-chip').count()) === 1) break;
-      await delay(250);
-    }
-    const hiddenWithAttach = await hiddenQueueBtn();
-    report(
-      'queue button hides while an image is attached (running + text)',
-      hiddenWithAttach.hidden && !hiddenWithAttach.visible,
-      JSON.stringify(hiddenWithAttach),
-    );
-    await page.locator('.chat-attach-remove').click();
-    await delay(400);
-    const visibleNoAttach = await hiddenQueueBtn();
-    report(
-      'queue button returns once the attachment is removed',
-      !visibleNoAttach.hidden && visibleNoAttach.visible,
-      JSON.stringify(visibleNoAttach),
-    );
-    await input.fill('');
-
-    stub.emit('session_status', F, { status: 'running' });
-    stub.setStates([{ agentId: F, status: 'running' }]);
-    for (let i = 0; i < 40; i++) {
-      if ((await page.locator('.chat-send-btn--stop').count()) === 1) break;
-      await delay(250);
-    }
-    await input.fill('direct send while running');
+    await attachOne();
     await delay(300);
-    const directBefore = readPrompts().filter((p) => p.agentId === F).length;
-    await page.locator('.chat-send-btn:not(.chat-send-btn--stop)').click();
-    let directPrompt = null;
+    report(
+      'running + text + image attachment → button stays Queue (queue holds images)',
+      (await queueBtn.count()) === 1 && (await stopBtn.count()) === 0,
+    );
+    await queueBtn.click({ force: true });
+    await delay(400);
+    const imgBox = await page.evaluate(() => {
+      const box = document.querySelector('.chat-queue-box');
+      return {
+        exists: !!box,
+        indicator: !!box?.querySelector('.chat-queue-img-ind'),
+        text: (box?.querySelector('.chat-queue-text')?.textContent || '').trim(),
+      };
+    });
+    report(
+      'queued image message shows an image indicator in its box, input and chips cleared',
+      imgBox.exists &&
+        imgBox.indicator &&
+        imgBox.text === 'with attachment' &&
+        (await input.inputValue()) === '' &&
+        (await page.locator('.chat-attach-chip').count()) === 0,
+      JSON.stringify(imgBox),
+    );
+
+    await boxes.first().click({ force: true });
+    await delay(300);
+    const viewer = await page.evaluate(() => {
+      const rev = document.querySelector('.img-review');
+      return {
+        open: !!rev,
+        img: !!rev?.querySelector('.img-review-main'),
+        text: (rev?.querySelector('.img-review-text')?.textContent || '').trim(),
+      };
+    });
+    report(
+      'clicking the box opens the viewer with the image and the queued text',
+      viewer.open && viewer.img && viewer.text === 'with attachment',
+      JSON.stringify(viewer),
+    );
+    await page.keyboard.press('Escape');
+    await delay(200);
+    report('Esc closes the queue viewer', (await page.locator('.img-review').count()) === 0);
+
+    await idleUntilSend();
+    let imgFlush = null;
     for (let i = 0; i < 40; i++) {
-      const prompts = readPrompts().filter((p) => p.agentId === F);
-      if (prompts.length > directBefore) {
-        directPrompt = prompts[prompts.length - 1];
-        break;
-      }
+      imgFlush = readPrompts().find((p) => p.agentId === F && p.message === 'with attachment');
+      if (imgFlush) break;
       await delay(250);
     }
     report(
-      'normal Send while running always interrupts the current job (interrupt:true)',
-      !!directPrompt &&
-        directPrompt.message === 'direct send while running' &&
-        directPrompt.interrupt === true,
-      JSON.stringify(directPrompt),
+      'flush delivers the queued message with its image, without interrupting',
+      !!imgFlush && imgFlush.images === 1 && imgFlush.interrupt === false,
+      JSON.stringify(imgFlush),
     );
+    await delay(1000);
+    report('image queue box is gone after delivery', (await boxes.count()) === 0);
 
-    stub.emit('session_status', F, { status: 'idle' });
-    stub.setStates([]);
+    await runUntilStop();
+    await attachOne();
+    await delay(300);
+    report(
+      'running + image-only input → button is Queue (attachments count as content)',
+      (await queueBtn.count()) === 1 && (await stopBtn.count()) === 0,
+    );
+    await queueBtn.click({ force: true });
+    await delay(400);
+    const onlyImg = await page.evaluate(() => {
+      const box = document.querySelector('.chat-queue-box');
+      return {
+        exists: !!box,
+        indicator: !!box?.querySelector('.chat-queue-img-ind'),
+        text: (box?.querySelector('.chat-queue-text')?.textContent || '').trim(),
+      };
+    });
+    report(
+      'image-only queued message shows the indicator with no text',
+      onlyImg.exists && onlyImg.indicator && onlyImg.text === '',
+      JSON.stringify(onlyImg),
+    );
+    await idleUntilSend();
+    let onlyImgFlush = null;
     for (let i = 0; i < 40; i++) {
-      if ((await page.locator('.chat-send-btn--stop').count()) === 0) break;
+      onlyImgFlush = readPrompts().find((p) => p.agentId === F && p.images === 1 && p.message === '');
+      if (onlyImgFlush) break;
       await delay(250);
     }
-    stub.emit('session_status', F, { status: 'running' });
-    stub.setStates([{ agentId: F, status: 'running' }]);
-    for (let i = 0; i < 40; i++) {
-      if ((await page.locator('.chat-send-btn--stop').count()) === 1) break;
-      await delay(250);
-    }
+    report(
+      'image-only queued message flushes with the image and an empty text',
+      !!onlyImgFlush &&
+        onlyImgFlush.message === '' &&
+        onlyImgFlush.images === 1 &&
+        onlyImgFlush.interrupt === false,
+      JSON.stringify(onlyImgFlush),
+    );
+    await delay(1000);
+    report('image-only box cleared after flush', (await boxes.count()) === 0);
+
+    await runUntilStop();
+    await input.fill('via enter');
+    await delay(300);
+    const promptsBeforeEnter = readPrompts().filter((p) => p.agentId === F).length;
+    await input.press('Enter');
+    await delay(500);
+    report(
+      'Enter while running queues the text instead of sending',
+      (await boxes.count()) === 1 && (await boxes.first().innerText()).includes('via enter'),
+    );
+    report(
+      'queued-by-enter text never reaches the backend (no interrupting send)',
+      readPrompts().filter((p) => p.agentId === F).length === promptsBeforeEnter,
+    );
+    await boxes.first().locator('[title="Remove from queue"]').click();
+    await delay(300);
+
     await input.fill('survive alpha');
+    await attachOne();
+    await delay(300);
     await queueBtn.click({ force: true });
     await input.fill('survive beta');
     await queueBtn.click({ force: true });
     await delay(500);
     const storedQueues = await page.evaluate(() => localStorage.getItem('sf-chat:queues'));
     report(
-      'queued messages are persisted to localStorage',
+      'queued messages (images included) are persisted to localStorage',
       !!storedQueues && storedQueues.includes('survive alpha') && storedQueues.includes('survive beta'),
       (storedQueues || '').slice(0, 120),
     );
@@ -614,11 +688,15 @@ function readPrompts() {
       await delay(500);
     }
     const reloadedTexts = await boxes.allInnerTexts();
+    const reloadedIndicator = await page.evaluate(
+      () => !!document.querySelector('.chat-queue-box .chat-queue-img-ind'),
+    );
     report(
-      'queued messages survive a page restart (boxes restored, order kept)',
+      'queued messages survive a page restart (boxes restored, order kept, image kept)',
       (await boxes.count()) === 2 &&
         reloadedTexts[0].includes('survive alpha') &&
-        reloadedTexts[1].includes('survive beta'),
+        reloadedTexts[1].includes('survive beta') &&
+        reloadedIndicator,
       JSON.stringify(reloadedTexts),
     );
     report(
@@ -626,8 +704,7 @@ function readPrompts() {
       readPrompts().filter((p) => p.agentId === F && p.message === 'survive alpha').length === 0,
     );
 
-    stub.emit('session_status', F, { status: 'idle' });
-    stub.setStates([]);
+    await idleUntilSend();
     let surviveFlush = null;
     for (let i = 0; i < 40; i++) {
       surviveFlush = readPrompts().find((p) => p.agentId === F && p.message === 'survive alpha');
@@ -635,23 +712,18 @@ function readPrompts() {
       await delay(250);
     }
     report(
-      'after the restart the queue still auto-sends on idle (exactly once)',
+      'after the restart the queue still auto-sends on idle (exactly once, image included)',
       !!surviveFlush &&
         readPrompts().filter((p) => p.agentId === F && p.message === 'survive alpha').length === 1 &&
-        surviveFlush.interrupt === false,
+        surviveFlush.interrupt === false &&
+        surviveFlush.images === 1,
       JSON.stringify(surviveFlush),
     );
     await delay(1000);
     report('one box left after the first post-restart flush', (await boxes.count()) === 1);
 
-    stub.emit('session_status', F, { status: 'running' });
-    stub.setStates([{ agentId: F, status: 'running' }]);
-    for (let i = 0; i < 40; i++) {
-      if ((await page.locator('.chat-send-btn--stop').count()) === 1) break;
-      await delay(250);
-    }
-    stub.emit('session_status', F, { status: 'idle' });
-    stub.setStates([]);
+    await runUntilStop();
+    await idleUntilSend();
     let surviveFlush2 = null;
     for (let i = 0; i < 40; i++) {
       surviveFlush2 = readPrompts().find((p) => p.agentId === F && p.message === 'survive beta');
@@ -675,12 +747,7 @@ function readPrompts() {
       `boxes:${await boxes.count()} storedItems:${storedAfter}`,
     );
 
-    stub.emit('session_status', F, { status: 'running' });
-    stub.setStates([{ agentId: F, status: 'running' }]);
-    for (let i = 0; i < 40; i++) {
-      if ((await page.locator('.chat-send-btn--stop').count()) === 1) break;
-      await delay(250);
-    }
+    await runUntilStop();
     await input.fill('multi one');
     await queueBtn.click({ force: true });
     await input.fill('multi two');
@@ -717,8 +784,7 @@ function readPrompts() {
     }
     report('a queue action in one tab appears in the other (storage event)', adopted);
 
-    stub.emit('session_status', F, { status: 'idle' });
-    stub.setStates([]);
+    await idleUntilSend();
     let multiOne = null;
     for (let i = 0; i < 40; i++) {
       const prompts = readPrompts().filter((p) => p.agentId === F && p.message === 'multi one');

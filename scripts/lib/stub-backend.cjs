@@ -64,7 +64,7 @@ export async function createClient() {
       if (process.env.STUB_PROMPT_LOG) {
         fs.appendFileSync(
           process.env.STUB_PROMPT_LOG,
-          JSON.stringify({ agentId: evt && evt.agentId, message: evt && evt.message, interrupt: evt && evt.interrupt }) + '\\n',
+          JSON.stringify({ agentId: evt && evt.agentId, message: evt && evt.message, interrupt: evt && evt.interrupt, images: evt && evt.images ? evt.images.length : 0 }) + '\\n',
         );
       }
       return { ok: true };

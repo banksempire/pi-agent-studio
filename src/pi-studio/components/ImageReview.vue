@@ -3,7 +3,7 @@ import SvgIcon from '@sf/components/SvgIcon.vue';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import type { MessageImage } from './MessageImages.vue';
 
-const props = defineProps<{ images: MessageImage[]; start: number }>();
+const props = defineProps<{ images: MessageImage[]; start: number; text?: string }>();
 const emit = defineEmits<{ close: [] }>();
 
 const idx = ref(Math.min(Math.max(0, props.start), props.images.length - 1));
@@ -26,6 +26,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
 <template>
   <div class="img-review" @click.self="emit('close')">
     <button class="img-review-close" title="Close (Esc)" @click="emit('close')"><SvgIcon name="✕" /></button>
+    <div v-if="text" class="img-review-text">{{ text }}</div>
     <div class="img-review-stage">
       <img :src="urls[idx]" class="img-review-main" alt="reviewed image" />
     </div>
@@ -87,6 +88,20 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
 }
 .img-review-close:hover {
   background: rgba(255, 255, 255, 0.22);
+}
+.img-review-text {
+  margin: 40px 24px 0;
+  padding: 10px 14px;
+  max-height: 30vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--sf-text, #e8e8ea);
+  font-family: var(--sf-font, inherit);
+  font-size: 15px;
+  line-height: 1.5;
 }
 .img-review-gallery {
   display: flex;

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import SvgIcon from '@sf/components/SvgIcon.vue';
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import type { ModelCatalogView } from '../modelInfo';
 import { loadModelCatalog } from '../modelInfo';
 import {
@@ -39,6 +40,9 @@ const startField = ref('09:00');
 const endField = ref('17:00');
 const startUtcMin = ref(540);
 const endUtcMin = ref(1020);
+const apiSelect = ref<HTMLSelectElement | null>(null);
+
+const dialogTarget = ref<HTMLElement | 'body'>('body');
 
 async function reload() {
   try {
@@ -60,6 +64,7 @@ async function reloadCatalog() {
 }
 
 onMounted(() => {
+  dialogTarget.value = (document.querySelector('.sf-root') as HTMLElement | null) ?? 'body';
   void reload();
   void reloadCatalog();
 });
@@ -80,7 +85,6 @@ const catalogApis = computed(() => {
 const apiOptions = computed(() => {
   const set = new Set(catalogApis.value);
   for (const e of entries.value) set.add(e.api);
-  if (editor.api.trim()) set.add(editor.api.trim());
   return [...set].sort();
 });
 
@@ -96,19 +100,21 @@ function rederiveFieldsFromUtc() {
   endField.value = fmtHm(toLocalMinutes(endUtcMin.value, editor.utcOffset));
 }
 
-function openAdd() {
+async function openAdd() {
   editor.open = true;
   editor.id = null;
-  editor.api = store.modelDetail?.model?.api ?? '';
+  editor.api = store.modelDetail?.model?.api ?? apiOptions.value[0] ?? '';
   editor.note = '';
   editor.utcOffset = browserUtcOffset();
   startField.value = '09:00';
   endField.value = '17:00';
   recomputeUtcFromFields();
   formError.value = '';
+  await nextTick();
+  apiSelect.value?.focus();
 }
 
-function openEdit(e: PeakHourEntry) {
+async function openEdit(e: PeakHourEntry) {
   editor.open = true;
   editor.id = e.id;
   editor.api = e.api;
@@ -118,6 +124,8 @@ function openEdit(e: PeakHourEntry) {
   endUtcMin.value = parseHm(e.endUtc) ?? 1020;
   rederiveFieldsFromUtc();
   formError.value = '';
+  await nextTick();
+  apiSelect.value?.focus();
 }
 
 function closeEditor() {
@@ -125,6 +133,17 @@ function closeEditor() {
   editor.id = null;
   formError.value = '';
 }
+
+function onDocKey(e: KeyboardEvent) {
+  if (e.key === 'Escape' && editor.open) closeEditor();
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('keydown', onDocKey);
+  onUnmounted(() => window.removeEventListener('keydown', onDocKey));
+}
+
+const dialogTitle = computed(() => (editor.id ? `Edit peak hours — ${editor.api}` : 'Add peak hours'));
 
 const wraps = computed(() => startUtcMin.value !== endUtcMin.value && endUtcMin.value < startUtcMin.value);
 
@@ -191,6 +210,10 @@ async function remove(e: PeakHourEntry) {
   }
 }
 
+function onBackdropDown(e: MouseEvent) {
+  if (e.target === e.currentTarget) closeEditor();
+}
+
 function windowText(e: PeakHourEntry): string {
   return `${e.start}–${e.end} ${offsetLabel(e.utcOffset)}`;
 }
@@ -204,102 +227,118 @@ function utcText(e: PeakHourEntry): string {
   <div class="aph">
     <div v-if="error" class="aph-error">{{ error }}</div>
 
-    <template v-if="!editor.open">
-      <div class="aph-head">
-        <span class="aph-hint">off-peak windows per API</span>
-        <button class="sf-panel-btn aph-add" title="Add peak hours" @click="openAdd">＋ add</button>
-      </div>
-      <div v-if="!entries.length && loaded && !error" class="aph-empty">
-        No peak hours yet — add a window to keep heavy runs off an API's peak.
-      </div>
-      <div v-for="e in entries" :key="e.id" class="aph-row" :class="{ 'aph-row--off': !e.enabled }">
-        <div class="aph-row-top">
-          <button
-            class="md-switch sf-panel-btn aph-switch"
-            :class="{ 'md-switch--on': e.enabled }"
-            role="switch"
-            :aria-checked="e.enabled"
-            :title="e.enabled ? 'Disable window' : 'Enable window'"
-            @click="toggle(e)"
-          ><span class="md-switch-knob" /></button>
-          <span class="aph-api" :title="e.api">{{ e.api }}</span>
-          <span
-            v-if="!catalogApis.has(e.api)"
-            class="aph-unknown"
-            title="No model in the current catalog uses this API — the window is kept"
-          >not in catalog</span>
-          <span class="aph-actions">
-            <button class="sf-panel-btn" title="Edit window" @click="openEdit(e)">✎</button>
-            <button class="sf-panel-btn aph-danger" title="Delete window" @click="remove(e)">✕</button>
-          </span>
-        </div>
-        <div class="aph-window" :title="`peak ${e.start}–${e.end} ${offsetLabel(e.utcOffset)}`">
-          {{ windowText(e) }}
-        </div>
-        <div class="aph-utc" :title="e.wrapsMidnightUtc ? 'window crosses midnight UTC' : ''">
-          {{ utcText(e) }}
-        </div>
-        <div v-if="e.note" class="aph-note" :title="e.note">{{ e.note }}</div>
-      </div>
-    </template>
-
-    <div v-else class="aph-editor">
-      <div class="aph-field">
-        <label class="aph-label" for="aph-api">API</label>
-        <input
-          id="aph-api"
-          v-model="editor.api"
-          class="aph-input"
-          list="aph-api-options"
-          placeholder="anthropic"
-          spellcheck="false"
-        >
-        <datalist id="aph-api-options">
-          <option v-for="a in apiOptions" :key="a" :value="a" />
-        </datalist>
-      </div>
-      <div class="aph-times">
-        <div class="aph-field">
-          <label class="aph-label" for="aph-start">Peak start</label>
-          <input
-            id="aph-start"
-            v-model="startField"
-            class="aph-input aph-time"
-            type="time"
-            @input="recomputeUtcFromFields"
-          >
-        </div>
-        <div class="aph-field">
-          <label class="aph-label" for="aph-end">Peak end</label>
-          <input
-            id="aph-end"
-            v-model="endField"
-            class="aph-input aph-time"
-            type="time"
-            @input="recomputeUtcFromFields"
-          >
-        </div>
-      </div>
-      <div class="aph-field">
-        <label class="aph-label" for="aph-tz">Timezone</label>
-        <select id="aph-tz" v-model.number="editor.utcOffset" class="aph-input" @change="rederiveFieldsFromUtc">
-          <option v-for="o in OFFSET_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
-        </select>
-      </div>
-      <div class="aph-live" :title="liveHint">{{ liveHint }}</div>
-      <div class="aph-field">
-        <label class="aph-label" for="aph-note">Note</label>
-        <input id="aph-note" v-model="editor.note" class="aph-input" placeholder="rate-limit window" >
-      </div>
-      <div v-if="formError" class="aph-error">{{ formError }}</div>
-      <div v-else-if="problems.length" class="aph-live aph-live--warn">needs {{ problems.join(', ') }}</div>
-      <div class="aph-editor-actions">
-        <button class="sf-panel-btn aph-save" :disabled="!canSave" @click="save">
-          {{ busy ? 'Saving…' : 'Save' }}
-        </button>
-        <button class="sf-panel-btn" :disabled="busy" @click="closeEditor">Cancel</button>
-      </div>
+    <div class="aph-head">
+      <span class="aph-hint">off-peak windows per API</span>
+      <button class="aph-btn aph-btn--accent aph-add" title="Add peak hours" @click="openAdd">
+        <SvgIcon name="＋" />add
+      </button>
     </div>
+    <div v-if="!entries.length && loaded && !error" class="aph-empty">
+      No peak hours yet — add a window to keep heavy runs off an API's peak.
+    </div>
+    <div v-for="e in entries" :key="e.id" class="aph-row" :class="{ 'aph-row--off': !e.enabled }">
+      <div class="aph-row-top">
+        <button
+          class="md-switch sf-panel-btn aph-switch"
+          :class="{ 'md-switch--on': e.enabled }"
+          role="switch"
+          :aria-checked="e.enabled"
+          :title="e.enabled ? 'Disable window' : 'Enable window'"
+          @click="toggle(e)"
+        ><span class="md-switch-knob" /></button>
+        <span class="aph-api" :title="e.api">{{ e.api }}</span>
+        <span
+          v-if="!catalogApis.has(e.api)"
+          class="aph-unknown"
+          title="No model in the current catalog uses this API — the window is kept"
+        >not in catalog</span>
+        <span class="aph-actions">
+          <button class="aph-btn aph-iconbtn" title="Edit window" @click="openEdit(e)">
+            <SvgIcon name="✎" />
+          </button>
+          <button class="aph-btn aph-iconbtn aph-iconbtn--danger" title="Delete window" @click="remove(e)">
+            <SvgIcon name="✕" />
+          </button>
+        </span>
+      </div>
+      <div class="aph-window" :title="`peak ${e.start}–${e.end} ${offsetLabel(e.utcOffset)}`">
+        {{ windowText(e) }}
+      </div>
+      <div class="aph-utc" :title="e.wrapsMidnightUtc ? 'window crosses midnight UTC' : ''">
+        {{ utcText(e) }}
+      </div>
+      <div v-if="e.note" class="aph-note" :title="e.note">{{ e.note }}</div>
+    </div>
+
+    <Teleport :to="dialogTarget">
+      <div v-if="editor.open" class="aph-dialog-backdrop" @mousedown="onBackdropDown">
+        <div class="aph-dialog" role="dialog" aria-modal="true" :aria-label="dialogTitle">
+          <header class="aph-dialog-head">
+            <span class="aph-dialog-title">{{ dialogTitle }}</span>
+            <button class="aph-btn aph-iconbtn aph-dialog-close" title="Close" @click="closeEditor">
+              <SvgIcon name="✕" />
+            </button>
+          </header>
+          <div class="aph-dialog-body">
+            <div class="aph-field">
+              <label class="aph-label" for="aph-api">API</label>
+              <select id="aph-api" ref="apiSelect" v-model="editor.api" class="aph-input">
+                <option v-for="a in apiOptions" :key="a" :value="a">{{ a }}</option>
+              </select>
+              <span class="aph-field-note">applies to every model served by this API</span>
+            </div>
+            <div class="aph-times">
+              <div class="aph-field">
+                <label class="aph-label" for="aph-start">Peak start</label>
+                <input
+                  id="aph-start"
+                  v-model="startField"
+                  class="aph-input aph-time"
+                  type="time"
+                  @input="recomputeUtcFromFields"
+                >
+              </div>
+              <div class="aph-field">
+                <label class="aph-label" for="aph-end">Peak end</label>
+                <input
+                  id="aph-end"
+                  v-model="endField"
+                  class="aph-input aph-time"
+                  type="time"
+                  @input="recomputeUtcFromFields"
+                >
+              </div>
+            </div>
+            <div class="aph-field">
+              <label class="aph-label" for="aph-tz">Timezone</label>
+              <select
+                id="aph-tz"
+                v-model.number="editor.utcOffset"
+                class="aph-input"
+                @change="rederiveFieldsFromUtc"
+              >
+                <option v-for="o in OFFSET_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
+              </select>
+            </div>
+            <div class="aph-live" :title="liveHint">{{ liveHint }}</div>
+            <div class="aph-field">
+              <label class="aph-label" for="aph-note">Note</label>
+              <input id="aph-note" v-model="editor.note" class="aph-input" placeholder="rate-limit window" >
+            </div>
+            <div v-if="formError" class="aph-error">{{ formError }}</div>
+            <div v-else-if="problems.length" class="aph-live aph-live--warn">
+              needs {{ problems.join(', ') }}
+            </div>
+          </div>
+          <footer class="aph-dialog-foot">
+            <button class="aph-btn aph-cancel" :disabled="busy" @click="closeEditor">Cancel</button>
+            <button class="aph-btn aph-btn--accent aph-save" :disabled="!canSave" @click="save">
+              {{ busy ? 'Saving…' : 'Save' }}
+            </button>
+          </footer>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -316,7 +355,7 @@ function utcText(e: PeakHourEntry): string {
   display: flex;
   align-items: center;
   gap: 6px;
-  min-height: 22px;
+  min-height: 24px;
 }
 
 .aph-hint {
@@ -329,10 +368,6 @@ function utcText(e: PeakHourEntry): string {
   text-overflow: ellipsis;
 }
 
-.aph-add {
-  flex-shrink: 0;
-}
-
 .aph-empty {
   padding: 8px 2px;
   color: var(--sf-text-muted);
@@ -340,9 +375,57 @@ function utcText(e: PeakHourEntry): string {
   line-height: 1.4;
 }
 
+.aph-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: var(--sf-bg);
+  border: 1px solid var(--sf-border);
+  border-radius: var(--sf-radius-sm);
+  color: var(--sf-text);
+  font-family: var(--sf-font);
+  font-size: 13px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.aph-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .aph-btn:not(:disabled):hover {
+    box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
+  }
+}
+
+.aph-btn--accent {
+  background: var(--sf-accent);
+  border-color: var(--sf-accent);
+  color: var(--sf-text-on-accent);
+}
+
+@media (hover: hover) {
+  .aph-btn--accent:not(:disabled):hover {
+    box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
+    color: var(--sf-text-on-accent);
+  }
+}
+
+.aph-iconbtn {
+  padding: 2px 5px;
+  background: var(--sf-bar);
+}
+
+.aph-iconbtn--danger:hover {
+  color: var(--sf-danger);
+}
+
 .aph-row {
   border: 1px solid var(--sf-border);
-  border-radius: 6px;
+  border-radius: var(--sf-radius);
   padding: 5px 7px;
   display: flex;
   flex-direction: column;
@@ -378,7 +461,7 @@ function utcText(e: PeakHourEntry): string {
   font-size: 10px;
   color: var(--sf-text-muted);
   border: 1px solid var(--sf-border);
-  border-radius: 4px;
+  border-radius: var(--sf-radius-sm);
   padding: 0 3px;
   white-space: nowrap;
 }
@@ -388,10 +471,6 @@ function utcText(e: PeakHourEntry): string {
   display: flex;
   gap: 4px;
   flex-shrink: 0;
-}
-
-.aph-danger:hover {
-  color: var(--sf-danger, #ff6d6d);
 }
 
 .aph-window {
@@ -415,20 +494,84 @@ function utcText(e: PeakHourEntry): string {
   white-space: nowrap;
 }
 
-.aph-editor {
+.aph-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+}
+
+.aph-dialog {
+  width: min(440px, 100%);
+  background: var(--sf-bg-lighter);
+  border: 1px solid var(--sf-border);
+  border-radius: var(--sf-radius);
+  box-shadow: var(--sf-shadow);
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  max-height: calc(100vh - 24px);
+}
+
+.aph-dialog-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--sf-border);
+}
+
+.aph-dialog-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--sf-text-bright);
+}
+
+.aph-dialog-close {
+  flex-shrink: 0;
+}
+
+.aph-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 12px 14px;
+  overflow-y: auto;
+}
+
+.aph-dialog-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--sf-border);
+}
+
+.aph-save {
+  min-width: 88px;
 }
 
 .aph-field {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
 }
 
 .aph-label {
+  font-size: 12px;
+  color: var(--sf-text-muted);
+}
+
+.aph-field-note {
   font-size: 12px;
   color: var(--sf-text-muted);
 }
@@ -438,11 +581,11 @@ function utcText(e: PeakHourEntry): string {
   box-sizing: border-box;
   background: var(--sf-bg);
   border: 1px solid var(--sf-border);
-  border-radius: 4px;
+  border-radius: var(--sf-radius-sm);
   color: var(--sf-text);
   font-family: var(--sf-font);
   font-size: 14px;
-  padding: 4px 6px;
+  padding: 5px 7px;
   outline: none;
 }
 
@@ -453,7 +596,7 @@ function utcText(e: PeakHourEntry): string {
 .aph-times {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 6px;
+  gap: 10px;
 }
 
 .aph-time {
@@ -470,39 +613,15 @@ function utcText(e: PeakHourEntry): string {
 }
 
 .aph-live--warn {
-  color: var(--sf-danger, #ff6d6d);
-  opacity: 0.85;
-}
-
-.aph-editor-actions {
-  display: flex;
-  gap: 6px;
-}
-
-.aph-save {
-  background: var(--sf-accent);
-  color: var(--sf-text-on-accent);
-  border-color: var(--sf-accent);
-}
-
-.aph-save:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-
-@media (hover: hover) {
-  .aph-save:not(:disabled):hover {
-    box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
-    color: var(--sf-text-on-accent);
-  }
+  color: var(--sf-danger);
 }
 
 .aph-error {
   padding: 5px 7px;
-  border-radius: 6px;
+  border-radius: var(--sf-radius-sm);
   font-size: 12px;
-  background: rgba(255, 82, 82, 0.12);
-  color: var(--sf-danger, #ff6d6d);
+  background: color-mix(in srgb, var(--sf-danger) 14%, transparent);
+  color: var(--sf-danger);
   word-break: break-word;
 }
 </style>

@@ -423,23 +423,73 @@ async function unitChecks({ report }) {
     await delay(300);
 
     await page.locator('.aph-add').click();
-    await page.waitForSelector('.aph-editor', { timeout: 5000 });
+    await page.waitForSelector('.aph-dialog', { timeout: 5000 });
+    const dialogInfo = await page.locator('.aph-dialog').evaluate((el) => {
+      const cs = getComputedStyle(el);
+      const r = el.getBoundingClientRect();
+      const back = el.parentElement;
+      const bcs = back ? getComputedStyle(back) : null;
+      return {
+        bg: cs.backgroundColor,
+        border: cs.borderTopStyle === 'solid' && cs.borderTopWidth !== '0px',
+        radius: cs.borderTopLeftRadius,
+        shadow: cs.boxShadow !== 'none',
+        inSubsection: !!el.closest('.sf-subsection'),
+        centeredX: r.left > 0 && r.right < window.innerWidth,
+        centeredY: r.top > 0 && r.bottom < window.innerHeight,
+        backdropFixed: bcs ? bcs.position === 'fixed' && bcs.inset === '0px' : null,
+      };
+    });
+    report(
+      'editing opens as a centered themed popup, not inside the subsection',
+      dialogInfo.bg === 'rgb(45, 45, 45)' &&
+        dialogInfo.bg === 'rgb(45, 45, 45)' &&
+        dialogInfo.border &&
+        dialogInfo.radius === '6px' &&
+        dialogInfo.shadow &&
+        dialogInfo.inSubsection === false &&
+        dialogInfo.centeredX &&
+        dialogInfo.centeredY &&
+        dialogInfo.backdropFixed === true,
+      JSON.stringify(dialogInfo),
+    );
+
+    await page.keyboard.press('Escape');
+    await delay(200);
+    const closedByEscape = (await page.locator('.aph-dialog').count()) === 0;
+    await page.locator('.aph-add').click();
+    await page.waitForSelector('.aph-dialog', { timeout: 5000 });
+    report('Escape closes the popup', closedByEscape, `closed=${closedByEscape}`);
+
     const prefill = await page.locator('#aph-api').inputValue();
     report(
       'add form prefills the API of the selected catalog model',
       prefill === 'stub-api-a',
       `prefill=${prefill}`,
     );
-    const optionVals = await page
-      .locator('#aph-api-options option')
-      .evaluateAll((els) => els.map((e) => e.value));
+    const optionVals = await page.locator('#aph-api option').evaluateAll((els) => els.map((e) => e.value));
     report(
-      'API datalist offers the catalog APIs',
+      'API field is a select offering the catalog APIs',
       optionVals.includes('stub-api-a') && optionVals.includes('stub-api-b'),
       JSON.stringify(optionVals),
     );
 
-    await page.fill('#aph-api', 'stub-api-a');
+    const addBtnTheme = await page.evaluate(() => {
+      const el = document.querySelector('.aph-add');
+      if (!el) return null;
+      const cs = getComputedStyle(el);
+      return { bg: cs.backgroundColor, color: cs.color, border: cs.borderTopStyle === 'solid' };
+    });
+    report(
+      'add button is a themed accent button',
+      !!addBtnTheme &&
+        addBtnTheme.bg === 'rgb(0, 122, 204)' &&
+        addBtnTheme.color === 'rgb(255, 255, 255)' &&
+        addBtnTheme.border,
+      JSON.stringify(addBtnTheme),
+    );
+
+    await page.selectOption('#aph-api', 'stub-api-a');
     await page.selectOption('#aph-tz', '120');
     await page.fill('#aph-start', '09:00');
     await page.fill('#aph-end', '17:00');
@@ -450,6 +500,7 @@ async function unitChecks({ report }) {
       `hint=${liveHint}`,
     );
     await page.locator('.aph-save').click();
+    await page.waitForSelector('.aph-dialog', { state: 'detached', timeout: 10000 });
     await page.locator('.aph-row').waitFor({ timeout: 10000 });
 
     let row = await page.locator('.aph-row').first().textContent();
@@ -481,9 +532,9 @@ async function unitChecks({ report }) {
 
     await page
       .locator('.aph-row', { hasText: 'stub-api-a' })
-      .locator('.aph-actions button', { hasText: '✎' })
+      .locator('.aph-actions button[title="Edit window"]')
       .click();
-    await page.waitForSelector('.aph-editor', { timeout: 5000 });
+    await page.waitForSelector('.aph-dialog', { timeout: 5000 });
     await page.selectOption('#aph-tz', '0');
     const editStart = await page.locator('#aph-start').inputValue();
     const editEnd = await page.locator('#aph-end').inputValue();
@@ -494,6 +545,7 @@ async function unitChecks({ report }) {
       `start=${editStart} end=${editEnd} hint=${editHint}`,
     );
     await page.locator('.aph-save').click();
+    await page.waitForSelector('.aph-dialog', { state: 'detached', timeout: 10000 });
     await page.locator('.aph-row').waitFor({ timeout: 10000 });
     r = await jfetch('/api/peak-hours');
     report(
@@ -510,24 +562,8 @@ async function unitChecks({ report }) {
       `row=${row}`,
     );
 
-    await page.locator('.aph-add').click();
-    await page.waitForSelector('.aph-editor', { timeout: 5000 });
-    await page.fill('#aph-api', 'ghost-api');
-    await page.fill('#aph-start', '22:00');
-    await page.fill('#aph-end', '02:00');
-    await page.selectOption('#aph-tz', '0');
-    await page.locator('.aph-save').click();
-    await page.locator('.aph-row', { hasText: 'ghost-api' }).waitFor({ timeout: 10000 });
-    const ghostRow = await page.locator('.aph-row', { hasText: 'ghost-api' }).textContent();
-    const ghostChip = await page.locator('.aph-unknown').count();
-    report(
-      'entries for APIs absent from the catalog are kept and flagged',
-      ghostRow.includes('22:00–02:00') && ghostRow.includes('↻') && ghostChip === 1,
-      `row=${ghostRow} chips=${ghostChip}`,
-    );
-
-    await page.locator('.aph-row .aph-actions button', { hasText: '✎' }).first().click();
-    await page.waitForSelector('.aph-editor', { timeout: 5000 });
+    await page.locator('.aph-row .aph-actions button[title="Edit window"]').first().click();
+    await page.waitForSelector('.aph-dialog', { timeout: 5000 });
     await page.fill('#aph-start', '09:00');
     await page.fill('#aph-end', '09:00');
     const saveDisabled = await page.locator('.aph-save').isDisabled();
@@ -537,10 +573,36 @@ async function unitChecks({ report }) {
       saveDisabled && needs.includes('window'),
       `disabled=${saveDisabled} needs=${needs}`,
     );
-    await page.locator('.aph-editor button', { hasText: 'Cancel' }).click();
+    await page.locator('.aph-cancel').click();
     await delay(300);
     const rowsAfterCancel = await page.locator('.aph-row').count();
-    report('cancel leaves the list untouched', rowsAfterCancel === 2, `rows=${rowsAfterCancel}`);
+    report('cancel leaves the list untouched', rowsAfterCancel === 1, `rows=${rowsAfterCancel}`);
+
+    r = await jfetch('/api/peak-hours', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api: 'ghost-api', start: '22:00', end: '02:00', utcOffset: 0 }),
+    });
+    report(
+      'an API absent from the catalog can still receive a window via the API',
+      r.status === 201 && r.body.entry?.wrapsMidnightUtc === true,
+      JSON.stringify(r.body),
+    );
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.sf-docker', { timeout: 60000 });
+    await page.locator('.sf-menu-item', { hasText: 'Model' }).click();
+    await page.locator('.sf-menu-row', { hasText: 'Model Catalog…' }).waitFor({ timeout: 5000 });
+    await page.locator('.sf-menu-row', { hasText: 'Model Catalog…' }).click();
+    await page.waitForSelector('.aph-row', { timeout: 10000 });
+    await page.locator('.aph-row', { hasText: 'ghost-api' }).waitFor({ timeout: 5000 });
+    const ghostRow = await page.locator('.aph-row', { hasText: 'ghost-api' }).textContent();
+    const ghostChip = await page.locator('.aph-unknown').count();
+    report(
+      'entries for APIs absent from the catalog are kept and flagged',
+      ghostRow.includes('22:00–02:00') && ghostRow.includes('↻') && ghostChip === 1,
+      `row=${ghostRow} chips=${ghostChip}`,
+    );
 
     await page.locator('.aph-row', { hasText: 'stub-api-a' }).locator('.aph-switch').click();
     await delay(600);
@@ -554,7 +616,7 @@ async function unitChecks({ report }) {
 
     await page
       .locator('.aph-row', { hasText: 'stub-api-a' })
-      .locator('.aph-actions button', { hasText: '✕' })
+      .locator('.aph-actions button[title="Delete window"]')
       .click();
     await delay(800);
     const rowsAfterDelete = await page.locator('.aph-row').count();

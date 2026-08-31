@@ -260,14 +260,14 @@
               ]
             },
             {
-              "id": "api-peak-hours",
+              "id": "peak-hours",
               "label": "Peak Hours",
               "height": "variable",
               "minHeight": 80,
               "components": [
                 {
                   "type": "component",
-                  "key": "api-peak-hours"
+                  "key": "peak-hours"
                 }
               ]
             }

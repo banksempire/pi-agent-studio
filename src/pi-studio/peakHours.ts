@@ -2,7 +2,9 @@ import { api } from './store/chat';
 
 export interface PeakHourEntry {
   id: string;
-  api: string;
+  provider: string;
+  model: string;
+  key: string;
   startUtc: string;
   endUtc: string;
   start: string;
@@ -16,7 +18,8 @@ export interface PeakHourEntry {
 }
 
 export interface PeakHourInput {
-  api: string;
+  provider: string;
+  model: string;
   start: string;
   end: string;
   utcOffset: number;
@@ -63,6 +66,13 @@ export function toLocalMinutes(utcMinutes: number, offset: number): number {
 export function fmtHm(minutes: number): string {
   const m = ((minutes % 1440) + 1440) % 1440;
   return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+}
+
+export function splitModelKey(key: string): { provider: string; model: string } | null {
+  const t = key.trim();
+  const sep = t.indexOf('/');
+  if (sep <= 0 || sep >= t.length - 1) return null;
+  return { provider: t.slice(0, sep), model: t.slice(sep + 1) };
 }
 
 export async function loadPeakHours(): Promise<PeakHourEntry[]> {

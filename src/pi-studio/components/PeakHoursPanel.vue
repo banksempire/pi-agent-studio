@@ -13,6 +13,7 @@ import {
   offsetLabel,
   type PeakHourEntry,
   parseHm,
+  splitModelKey,
   toLocalMinutes,
   toUtcMinutes,
   updatePeakHours,
@@ -31,16 +32,16 @@ const loaded = ref(false);
 const editor = reactive<{
   open: boolean;
   id: string | null;
-  api: string;
+  modelKey: string;
   note: string;
   utcOffset: number;
-}>({ open: false, id: null, api: '', note: '', utcOffset: 0 });
+}>({ open: false, id: null, modelKey: '', note: '', utcOffset: 0 });
 
 const startField = ref('09:00');
 const endField = ref('17:00');
 const startUtcMin = ref(540);
 const endUtcMin = ref(1020);
-const apiSelect = ref<HTMLSelectElement | null>(null);
+const modelSelect = ref<HTMLSelectElement | null>(null);
 
 const dialogTarget = ref<HTMLElement | 'body'>('body');
 
@@ -74,17 +75,17 @@ watch(
   () => void reloadCatalog(),
 );
 
-const catalogApis = computed(() => {
+const catalogModelKeys = computed(() => {
   const set = new Set<string>();
   for (const m of catalog.value?.models ?? []) {
-    if (m.api) set.add(m.api);
+    set.add(`${m.provider}/${m.id}`);
   }
   return set;
 });
 
-const apiOptions = computed(() => {
-  const set = new Set(catalogApis.value);
-  for (const e of entries.value) set.add(e.api);
+const modelOptions = computed(() => {
+  const set = new Set(catalogModelKeys.value);
+  for (const e of entries.value) set.add(e.key);
   return [...set].sort();
 });
 
@@ -103,7 +104,8 @@ function rederiveFieldsFromUtc() {
 async function openAdd() {
   editor.open = true;
   editor.id = null;
-  editor.api = store.modelDetail?.model?.api ?? apiOptions.value[0] ?? '';
+  const d = store.modelDetail;
+  editor.modelKey = d ? `${d.model.provider}/${d.model.id}` : (modelOptions.value[0] ?? '');
   editor.note = '';
   editor.utcOffset = browserUtcOffset();
   startField.value = '09:00';
@@ -111,13 +113,13 @@ async function openAdd() {
   recomputeUtcFromFields();
   formError.value = '';
   await nextTick();
-  apiSelect.value?.focus();
+  modelSelect.value?.focus();
 }
 
 async function openEdit(e: PeakHourEntry) {
   editor.open = true;
   editor.id = e.id;
-  editor.api = e.api;
+  editor.modelKey = e.key;
   editor.note = e.note;
   editor.utcOffset = e.utcOffset;
   startUtcMin.value = parseHm(e.startUtc) ?? 540;
@@ -125,7 +127,7 @@ async function openEdit(e: PeakHourEntry) {
   rederiveFieldsFromUtc();
   formError.value = '';
   await nextTick();
-  apiSelect.value?.focus();
+  modelSelect.value?.focus();
 }
 
 function closeEditor() {
@@ -143,7 +145,7 @@ if (typeof window !== 'undefined') {
   onUnmounted(() => window.removeEventListener('keydown', onDocKey));
 }
 
-const dialogTitle = computed(() => (editor.id ? `Edit peak hours — ${editor.api}` : 'Add peak hours'));
+const dialogTitle = computed(() => (editor.id ? `Edit peak hours — ${editor.modelKey}` : 'Add peak hours'));
 
 const wraps = computed(() => startUtcMin.value !== endUtcMin.value && endUtcMin.value < startUtcMin.value);
 
@@ -154,7 +156,7 @@ const liveHint = computed(
 
 const problems = computed<string[]>(() => {
   const list: string[] = [];
-  if (!editor.api.trim()) list.push('api');
+  if (!splitModelKey(editor.modelKey)) list.push('model');
   if (parseHm(startField.value) === null) list.push('start time');
   if (parseHm(endField.value) === null) list.push('end time');
   if (parseHm(startField.value) !== null && parseHm(endField.value) !== null) {
@@ -167,11 +169,14 @@ const canSave = computed(() => problems.value.length === 0 && !busy.value);
 
 async function save() {
   if (!canSave.value) return;
+  const key = splitModelKey(editor.modelKey);
+  if (!key) return;
   busy.value = true;
   formError.value = '';
   try {
     const input = {
-      api: editor.api.trim(),
+      provider: key.provider,
+      model: key.model,
       start: startField.value,
       end: endField.value,
       utcOffset: editor.utcOffset,
@@ -199,7 +204,7 @@ async function toggle(e: PeakHourEntry) {
 }
 
 async function remove(e: PeakHourEntry) {
-  if (!window.confirm(`Delete peak hours for ${e.api}?`)) return;
+  if (!window.confirm(`Delete peak hours for ${e.key}?`)) return;
   error.value = '';
   try {
     await deletePeakHours(e.id);
@@ -228,13 +233,13 @@ function utcText(e: PeakHourEntry): string {
     <div v-if="error" class="aph-error">{{ error }}</div>
 
     <div class="aph-head">
-      <span class="aph-hint">off-peak windows per API</span>
+      <span class="aph-hint">rush-hour price windows per model</span>
       <button class="aph-btn aph-btn--accent aph-add" title="Add peak hours" @click="openAdd">
         <SvgIcon name="＋" />add
       </button>
     </div>
     <div v-if="!entries.length && loaded && !error" class="aph-empty">
-      No peak hours yet — add a window to keep heavy runs off an API's peak.
+      No peak hours yet — add a window for a model that doubles its price on rush hours.
     </div>
     <div v-for="e in entries" :key="e.id" class="aph-row" :class="{ 'aph-row--off': !e.enabled }">
       <div class="aph-row-top">
@@ -246,11 +251,11 @@ function utcText(e: PeakHourEntry): string {
           :title="e.enabled ? 'Disable window' : 'Enable window'"
           @click="toggle(e)"
         ><span class="md-switch-knob" /></button>
-        <span class="aph-api" :title="e.api">{{ e.api }}</span>
+        <span class="aph-api" :title="e.key">{{ e.key }}</span>
         <span
-          v-if="!catalogApis.has(e.api)"
+          v-if="!catalogModelKeys.has(e.key)"
           class="aph-unknown"
-          title="No model in the current catalog uses this API — the window is kept"
+          title="This model is not in the current catalog — the window is kept"
         >not in catalog</span>
         <span class="aph-actions">
           <button class="aph-btn aph-iconbtn" title="Edit window" @click="openEdit(e)">
@@ -281,11 +286,11 @@ function utcText(e: PeakHourEntry): string {
           </header>
           <div class="aph-dialog-body">
             <div class="aph-field">
-              <label class="aph-label" for="aph-api">API</label>
-              <select id="aph-api" ref="apiSelect" v-model="editor.api" class="aph-input">
-                <option v-for="a in apiOptions" :key="a" :value="a">{{ a }}</option>
+              <label class="aph-label" for="aph-model">Model</label>
+              <select id="aph-model" ref="modelSelect" v-model="editor.modelKey" class="aph-input">
+                <option v-for="k in modelOptions" :key="k" :value="k">{{ k }}</option>
               </select>
-              <span class="aph-field-note">applies to every model served by this API</span>
+              <span class="aph-field-note">double-price rush hours of this provider/model</span>
             </div>
             <div class="aph-times">
               <div class="aph-field">

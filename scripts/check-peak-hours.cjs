@@ -19,7 +19,7 @@ const PRODUCT_ROOT = path.join(__dirname, '..');
 const RUN_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'peak-hours-check-'));
 const SESSIONS_ROOT = path.join(RUN_ROOT, 'sessions');
 const STATES_PATH = path.join(RUN_ROOT, 'states.json');
-const PEAK_HOURS_PATH = path.join(RUN_ROOT, 'api-peak-hours.json');
+const PEAK_HOURS_PATH = path.join(RUN_ROOT, 'peak-hours.json');
 fs.mkdirSync(SESSIONS_ROOT, { recursive: true });
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -140,10 +140,19 @@ async function unitChecks({ report }) {
   const unitPath = path.join(RUN_ROOT, 'unit-peak.json');
   const store = mod.createPeakHoursStore({ persistPath: unitPath });
 
-  const r1 = store.create({ api: 'anthropic', start: '09:00', end: '17:00', utcOffset: 120 });
+  const r1 = store.create({
+    provider: 'anthropic',
+    model: 'claude-opus-4',
+    start: '09:00',
+    end: '17:00',
+    utcOffset: 120,
+  });
   report(
-    'unit: create stores canonical UTC and renders both clocks',
+    'unit: create stores canonical UTC, key and both clocks',
     !!r1.entry &&
+      r1.entry.provider === 'anthropic' &&
+      r1.entry.model === 'claude-opus-4' &&
+      r1.entry.key === 'anthropic/claude-opus-4' &&
       r1.entry.startUtc === '07:00' &&
       r1.entry.endUtc === '15:00' &&
       r1.entry.start === '09:00' &&
@@ -164,7 +173,13 @@ async function unitChecks({ report }) {
     JSON.stringify(r2.entry ?? r2),
   );
 
-  const r3 = store.create({ api: 'openai-completions', start: '22:00', end: '02:00', utcOffset: 0 });
+  const r3 = store.create({
+    provider: 'openai',
+    model: 'gpt-x',
+    start: '22:00',
+    end: '02:00',
+    utcOffset: 0,
+  });
   report(
     'unit: wrap-midnight window stores end < start and flags it',
     !!r3.entry && r3.entry.startUtc === '22:00' && r3.entry.endUtc === '02:00' && r3.entry.wrapsMidnightUtc,
@@ -184,6 +199,13 @@ async function unitChecks({ report }) {
     'unit: isPeakAt matches the wrap window with inclusive start and exclusive end',
     wrapPeaks.every(([h, m, want]) => mod.windowIsPeakAt(1320, 120, at(h, m)) === want),
   );
+  const oneWindow = [{ provider: 'openai', model: 'gpt-x', enabled: true, startUtc: 1320, endUtc: 120 }];
+  report(
+    'unit: isPeakAt matches provider/model, not neighbors',
+    mod.isPeakAt(oneWindow, 'openai', 'gpt-x', at(23, 30)) === true &&
+      mod.isPeakAt(oneWindow, 'openai', 'gpt-other', at(23, 30)) === false &&
+      mod.isPeakAt(oneWindow, 'anthropic', 'gpt-x', at(23, 30)) === false,
+  );
   report(
     'unit: disabled entries never peak',
     store.list().length === 2 &&
@@ -192,11 +214,19 @@ async function unitChecks({ report }) {
   );
 
   const bad = [
-    [{ api: 'x', start: '09:00', end: '09:00', utcOffset: 0 }, 'start and end must differ'],
-    [{ api: 'x', start: '09:00', end: '17:00', utcOffset: 900 }, 'utcOffset'],
-    [{ api: '   ', start: '09:00', end: '17:00', utcOffset: 0 }, 'api is required'],
-    [{ api: 'x', start: '9pm', end: '17:00', utcOffset: 0 }, 'start must be'],
-    [{ api: 'x', start: '09:00', end: '17:00', utcOffset: 0, note: 'n'.repeat(201) }, 'note must be'],
+    [{ provider: 'x', model: 'y', start: '09:00', end: '09:00', utcOffset: 0 }, 'start and end must differ'],
+    [{ provider: 'x', model: 'y', start: '09:00', end: '17:00', utcOffset: 900 }, 'utcOffset'],
+    [{ provider: '   ', model: 'y', start: '09:00', end: '17:00', utcOffset: 0 }, 'provider is required'],
+    [{ provider: 'x', model: '', start: '09:00', end: '17:00', utcOffset: 0 }, 'model is required'],
+    [
+      { provider: 'x/y', model: 'z', start: '09:00', end: '17:00', utcOffset: 0 },
+      'provider must not contain',
+    ],
+    [{ provider: 'x', model: 'y', start: '9pm', end: '17:00', utcOffset: 0 }, 'start must be'],
+    [
+      { provider: 'x', model: 'y', start: '09:00', end: '17:00', utcOffset: 0, note: 'n'.repeat(201) },
+      'note must be',
+    ],
   ];
   report(
     'unit: create rejects invalid input',
@@ -207,9 +237,15 @@ async function unitChecks({ report }) {
     JSON.stringify(bad.map(([input, want]) => store.create(input).error ?? `accepted:${want}`)),
   );
 
-  const dup = store.create({ api: 'anthropic', start: '07:00', end: '15:00', utcOffset: 0 });
+  const dup = store.create({
+    provider: 'anthropic',
+    model: 'claude-opus-4',
+    start: '07:00',
+    end: '15:00',
+    utcOffset: 0,
+  });
   report(
-    'unit: identical window for the same api is rejected',
+    'unit: identical window for the same model is rejected',
     !!dup.error && /identical/.test(dup.error),
     JSON.stringify(dup),
   );
@@ -217,8 +253,8 @@ async function unitChecks({ report }) {
   const again = mod.createPeakHoursStore({ persistPath: unitPath });
   report(
     'unit: store reloads persisted entries from disk',
-    again.list().length === 2 && again.list().every((e) => e.id && e.api),
-    JSON.stringify(again.list().map((e) => e.api)),
+    again.list().length === 2 && again.list().every((e) => e.id && e.key),
+    JSON.stringify(again.list().map((e) => e.key)),
   );
 
   fs.writeFileSync(unitPath, '{not json');
@@ -233,7 +269,8 @@ async function unitChecks({ report }) {
       entries: [
         {
           id: 'good1',
-          api: 'ok-api',
+          provider: 'ok',
+          model: 'model-1',
           startUtc: 480,
           endUtc: 1020,
           utcOffset: 0,
@@ -244,7 +281,8 @@ async function unitChecks({ report }) {
         },
         {
           id: 'bad1',
-          api: '',
+          provider: '',
+          model: 'm',
           startUtc: 0,
           endUtc: 10,
           utcOffset: 0,
@@ -255,7 +293,8 @@ async function unitChecks({ report }) {
         },
         {
           id: 'bad2',
-          api: 'x',
+          provider: 'x',
+          model: 'y',
           startUtc: 90,
           endUtc: 90,
           utcOffset: 0,
@@ -406,12 +445,12 @@ async function unitChecks({ report }) {
       fs.readFileSync(path.join(PRODUCT_ROOT, 'src/pi-studio/layout/app.layout.json'), 'utf8'),
     );
     const catalogSubs = layoutDefs.rightPanels?.['model-catalog']?.sections?.[0]?.subSections ?? [];
-    const peakDef = catalogSubs.find((s) => s.id === 'api-peak-hours');
+    const peakDef = catalogSubs.find((s) => s.id === 'peak-hours');
     report(
-      'layout: api-peak-hours subsection is variable-height with a minHeight',
+      'layout: peak-hours subsection is variable-height with a minHeight',
       peakDef?.height === 'variable' &&
         peakDef?.minHeight === 80 &&
-        peakDef?.components?.[0]?.key === 'api-peak-hours',
+        peakDef?.components?.[0]?.key === 'peak-hours',
       JSON.stringify(peakDef ?? null),
     );
 
@@ -461,16 +500,12 @@ async function unitChecks({ report }) {
     await page.waitForSelector('.aph-dialog', { timeout: 5000 });
     report('Escape closes the popup', closedByEscape, `closed=${closedByEscape}`);
 
-    const prefill = await page.locator('#aph-api').inputValue();
+    const prefill = await page.locator('#aph-model').inputValue();
+    report('add form prefills the selected catalog model', prefill === 'stub/stub-pro', `prefill=${prefill}`);
+    const optionVals = await page.locator('#aph-model option').evaluateAll((els) => els.map((e) => e.value));
     report(
-      'add form prefills the API of the selected catalog model',
-      prefill === 'stub-api-a',
-      `prefill=${prefill}`,
-    );
-    const optionVals = await page.locator('#aph-api option').evaluateAll((els) => els.map((e) => e.value));
-    report(
-      'API field is a select offering the catalog APIs',
-      optionVals.includes('stub-api-a') && optionVals.includes('stub-api-b'),
+      'Model field is a select offering the catalog models',
+      optionVals.includes('stub/stub-pro') && optionVals.includes('stub/stub-mini'),
       JSON.stringify(optionVals),
     );
 
@@ -489,7 +524,7 @@ async function unitChecks({ report }) {
       JSON.stringify(addBtnTheme),
     );
 
-    await page.selectOption('#aph-api', 'stub-api-a');
+    await page.selectOption('#aph-model', 'stub/stub-pro');
     await page.selectOption('#aph-tz', '120');
     await page.fill('#aph-start', '09:00');
     await page.fill('#aph-end', '17:00');
@@ -506,7 +541,7 @@ async function unitChecks({ report }) {
     let row = await page.locator('.aph-row').first().textContent();
     report(
       'created row shows the window in its timezone plus the UTC equivalent',
-      row.includes('stub-api-a') &&
+      row.includes('stub/stub-pro') &&
         row.includes('09:00–17:00') &&
         row.includes('UTC+02:00') &&
         row.includes('07:00–15:00 UTC'),
@@ -519,19 +554,23 @@ async function unitChecks({ report }) {
       'create persists canonical UTC minutes to disk',
       r.status === 200 &&
         r.body.entries.length === 1 &&
-        r.body.entries[0].api === 'stub-api-a' &&
+        r.body.entries[0].key === 'stub/stub-pro' &&
+        r.body.entries[0].provider === 'stub' &&
+        r.body.entries[0].model === 'stub-pro' &&
         r.body.entries[0].startUtc === '07:00' &&
         r.body.entries[0].endUtc === '15:00' &&
         disk1.version === 1 &&
+        disk1.entries[0].provider === 'stub' &&
+        disk1.entries[0].model === 'stub-pro' &&
         disk1.entries[0].startUtc === 420 &&
         disk1.entries[0].endUtc === 900 &&
         disk1.entries[0].utcOffset === 120,
-      JSON.stringify({ api: r.body.entries[0], disk: disk1.entries[0] }),
+      JSON.stringify({ entry: r.body.entries[0], disk: disk1.entries[0] }),
     );
     const entryId = r.body.entries[0].id;
 
     await page
-      .locator('.aph-row', { hasText: 'stub-api-a' })
+      .locator('.aph-row', { hasText: 'stub/stub-pro' })
       .locator('.aph-actions button[title="Edit window"]')
       .click();
     await page.waitForSelector('.aph-dialog', { timeout: 5000 });
@@ -555,7 +594,7 @@ async function unitChecks({ report }) {
         r.body.entries[0].utcOffset === 0,
       JSON.stringify(r.body.entries[0]),
     );
-    row = await page.locator('.aph-row', { hasText: 'stub-api-a' }).textContent();
+    row = await page.locator('.aph-row', { hasText: 'stub/stub-pro' }).textContent();
     report(
       'row re-renders in the new timezone',
       row.includes('07:00–15:00') && row.includes('UTC'),
@@ -581,10 +620,16 @@ async function unitChecks({ report }) {
     r = await jfetch('/api/peak-hours', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ api: 'ghost-api', start: '22:00', end: '02:00', utcOffset: 0 }),
+      body: JSON.stringify({
+        provider: 'ghost',
+        model: 'ghost-model',
+        start: '22:00',
+        end: '02:00',
+        utcOffset: 0,
+      }),
     });
     report(
-      'an API absent from the catalog can still receive a window via the API',
+      'a model absent from the catalog can still receive a window via the API',
       r.status === 201 && r.body.entry?.wrapsMidnightUtc === true,
       JSON.stringify(r.body),
     );
@@ -595,18 +640,18 @@ async function unitChecks({ report }) {
     await page.locator('.sf-menu-row', { hasText: 'Model Catalog…' }).waitFor({ timeout: 5000 });
     await page.locator('.sf-menu-row', { hasText: 'Model Catalog…' }).click();
     await page.waitForSelector('.aph-row', { timeout: 10000 });
-    await page.locator('.aph-row', { hasText: 'ghost-api' }).waitFor({ timeout: 5000 });
-    const ghostRow = await page.locator('.aph-row', { hasText: 'ghost-api' }).textContent();
+    await page.locator('.aph-row', { hasText: 'ghost/ghost-model' }).waitFor({ timeout: 5000 });
+    const ghostRow = await page.locator('.aph-row', { hasText: 'ghost/ghost-model' }).textContent();
     const ghostChip = await page.locator('.aph-unknown').count();
     report(
-      'entries for APIs absent from the catalog are kept and flagged',
+      'entries for models absent from the catalog are kept and flagged',
       ghostRow.includes('22:00–02:00') && ghostRow.includes('↻') && ghostChip === 1,
       `row=${ghostRow} chips=${ghostChip}`,
     );
 
-    await page.locator('.aph-row', { hasText: 'stub-api-a' }).locator('.aph-switch').click();
+    await page.locator('.aph-row', { hasText: 'stub/stub-pro' }).locator('.aph-switch').click();
     await delay(600);
-    const offRow = await page.locator('.aph-row', { hasText: 'stub-api-a' }).getAttribute('class');
+    const offRow = await page.locator('.aph-row', { hasText: 'stub/stub-pro' }).getAttribute('class');
     r = await jfetch('/api/peak-hours');
     report(
       'the switch toggles enabled via PATCH',
@@ -615,7 +660,7 @@ async function unitChecks({ report }) {
     );
 
     await page
-      .locator('.aph-row', { hasText: 'stub-api-a' })
+      .locator('.aph-row', { hasText: 'stub/stub-pro' })
       .locator('.aph-actions button[title="Delete window"]')
       .click();
     await delay(800);
@@ -625,16 +670,16 @@ async function unitChecks({ report }) {
       'delete removes the row and persists',
       rowsAfterDelete === 1 &&
         r.body.entries.length === 1 &&
-        r.body.entries[0].api === 'ghost-api' &&
+        r.body.entries[0].key === 'ghost/ghost-model' &&
         JSON.parse(fs.readFileSync(PEAK_HOURS_PATH, 'utf8')).entries.length === 1,
       `rows=${rowsAfterDelete}`,
     );
 
     const badPosts = [
-      [{ api: 'stub-api-a', start: '08:00', end: '08:00', utcOffset: 0 }, 400],
-      [{ api: 'stub-api-a', start: '08:00', end: '09:00', utcOffset: 1080 }, 400],
-      [{ api: '', start: '08:00', end: '09:00', utcOffset: 0 }, 400],
-      [{ api: 'stub-api-a', start: '25:00', end: '09:00', utcOffset: 0 }, 400],
+      [{ provider: 'stub', model: 'stub-pro', start: '08:00', end: '08:00', utcOffset: 0 }, 400],
+      [{ provider: 'stub', model: 'stub-pro', start: '08:00', end: '09:00', utcOffset: 1080 }, 400],
+      [{ provider: '', model: 'x', start: '08:00', end: '09:00', utcOffset: 0 }, 400],
+      [{ provider: 'stub', model: 'stub-pro', start: '25:00', end: '09:00', utcOffset: 0 }, 400],
     ];
     report(
       'server rejects invalid creates with 400',
@@ -653,7 +698,13 @@ async function unitChecks({ report }) {
     r = await jfetch('/api/peak-hours', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ api: 'ghost-api', start: '22:00', end: '02:00', utcOffset: 0 }),
+      body: JSON.stringify({
+        provider: 'ghost',
+        model: 'ghost-model',
+        start: '22:00',
+        end: '02:00',
+        utcOffset: 0,
+      }),
     });
     report(
       'duplicate windows are rejected with 400',
@@ -709,7 +760,7 @@ async function unitChecks({ report }) {
     report(
       'a fresh backend process loads the persisted entries',
       r.entries.length === 1 &&
-        r.entries[0].api === 'ghost-api' &&
+        r.entries[0].key === 'ghost/ghost-model' &&
         r.entries[0].note === 'nightly rate window',
       JSON.stringify(r.entries),
     );

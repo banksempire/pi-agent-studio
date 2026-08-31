@@ -30,7 +30,7 @@ const DB_PATH =
 const LEGACY_STATES_PATH =
   process.env.PI_STUDIO_STATES_PATH ?? path.join(STATE_FALLBACK_DIR, 'studio-session-states.json');
 const PEAK_HOURS_PATH =
-  process.env.PI_STUDIO_PEAK_HOURS_PATH ?? path.join(path.dirname(DB_PATH), 'api-peak-hours.json');
+  process.env.PI_STUDIO_PEAK_HOURS_PATH ?? path.join(path.dirname(DB_PATH), 'peak-hours.json');
 const RESUME_MODE =
   (process.env.PI_STUDIO_RESUME ?? 'on') === 'off' ? 'skip' : (process.env.PI_STUDIO_RESUME_MODE ?? 'nudge');
 

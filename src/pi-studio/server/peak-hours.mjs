@@ -3,8 +3,9 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 const STORE_VERSION = 1;
-const MAX_ENTRIES = 200;
-const MAX_API_LEN = 64;
+const MAX_ENTRIES = 400;
+const MAX_PROVIDER_LEN = 64;
+const MAX_MODEL_LEN = 128;
 const MAX_NOTE_LEN = 200;
 const OFFSET_ABS_MAX = 14 * 60;
 const NOT_FOUND = 'peak-hours entry not found';
@@ -42,10 +43,17 @@ export function windowIsPeakAt(startUtc, endUtc, at) {
   return startUtc <= endUtc ? mins >= startUtc && mins < endUtc : mins >= startUtc || mins < endUtc;
 }
 
-export function isPeakAt(entries, api, at) {
-  const name = String(api ?? '').toLowerCase();
+export function modelKeyOf(provider, model) {
+  return `${String(provider ?? '')}/${String(model ?? '')}`;
+}
+
+export function isPeakAt(entries, provider, model, at) {
+  const want = modelKeyOf(provider, model).toLowerCase();
   return entries.some(
-    (e) => e.api.toLowerCase() === name && e.enabled && windowIsPeakAt(e.startUtc, e.endUtc, at),
+    (e) =>
+      modelKeyOf(e.provider, e.model).toLowerCase() === want &&
+      e.enabled &&
+      windowIsPeakAt(e.startUtc, e.endUtc, at),
   );
 }
 
@@ -55,8 +63,10 @@ function validStoredEntry(e) {
     typeof e === 'object' &&
     typeof e.id === 'string' &&
     e.id.length > 0 &&
-    typeof e.api === 'string' &&
-    e.api.trim().length > 0 &&
+    typeof e.provider === 'string' &&
+    e.provider.trim().length > 0 &&
+    typeof e.model === 'string' &&
+    e.model.trim().length > 0 &&
     Number.isInteger(e.startUtc) &&
     e.startUtc >= 0 &&
     e.startUtc < 1440 &&
@@ -72,13 +82,14 @@ function validStoredEntry(e) {
   );
 }
 
-function normApi(value, fallback) {
+function normToken(name, value, fallback, maxLen) {
   const v = fallback === undefined ? value : (value ?? fallback);
-  if (typeof v !== 'string') return { error: 'api must be a string' };
-  const api = v.trim();
-  if (!api) return { error: 'api is required' };
-  if (api.length > MAX_API_LEN) return { error: `api must be at most ${MAX_API_LEN} chars` };
-  return { api };
+  if (typeof v !== 'string') return { error: `${name} must be a string` };
+  const out = v.trim();
+  if (!out) return { error: `${name} is required` };
+  if (out.length > maxLen) return { error: `${name} must be at most ${maxLen} chars` };
+  if (out.includes('/')) return { error: `${name} must not contain "/"` };
+  return { value: out };
 }
 
 function normOffset(value, fallback) {
@@ -107,7 +118,9 @@ function normEnabled(value, fallback) {
 function view(e) {
   return {
     id: e.id,
-    api: e.api,
+    provider: e.provider,
+    model: e.model,
+    key: modelKeyOf(e.provider, e.model),
     startUtc: fmtHm(e.startUtc),
     endUtc: fmtHm(e.endUtc),
     start: fmtHm(toLocalMinutes(e.startUtc, e.utcOffset)),
@@ -119,6 +132,15 @@ function view(e) {
     updatedAt: e.updatedAt,
     wrapsMidnightUtc: e.endUtc < e.startUtc,
   };
+}
+
+function sortEntries(list) {
+  return list.sort((a, b) => {
+    const byKey = modelKeyOf(a.provider, a.model).localeCompare(modelKeyOf(b.provider, b.model));
+    if (byKey !== 0) return byKey;
+    if (a.startUtc !== b.startUtc) return a.startUtc - b.startUtc;
+    return a.id.localeCompare(b.id);
+  });
 }
 
 export function createPeakHoursStore({
@@ -145,7 +167,8 @@ export function createPeakHoursStore({
       if (typeof e.note !== 'string') continue;
       entries.set(e.id, {
         id: e.id,
-        api: e.api,
+        provider: e.provider,
+        model: e.model,
         startUtc: e.startUtc,
         endUtc: e.endUtc,
         utcOffset: e.utcOffset,
@@ -158,13 +181,7 @@ export function createPeakHoursStore({
   }
 
   function persist() {
-    const list = [...entries.values()].sort((a, b) => {
-      const byApi = a.api.localeCompare(b.api);
-      if (byApi !== 0) return byApi;
-      if (a.startUtc !== b.startUtc) return a.startUtc - b.startUtc;
-      return a.id.localeCompare(b.id);
-    });
-    const shape = { version: STORE_VERSION, entries: list };
+    const shape = { version: STORE_VERSION, entries: sortEntries([...entries.values()]) };
     mkdirSync(path.dirname(persistPath), { recursive: true });
     const tmp = `${persistPath}.${process.pid}.tmp`;
     writeFileSync(tmp, `${JSON.stringify(shape, null, 2)}\n`);
@@ -174,7 +191,14 @@ export function createPeakHoursStore({
   function duplicateOf(entry, ownId) {
     for (const e of entries.values()) {
       if (e.id === ownId) continue;
-      if (e.api === entry.api && e.startUtc === entry.startUtc && e.endUtc === entry.endUtc) return true;
+      if (
+        e.provider === entry.provider &&
+        e.model === entry.model &&
+        e.startUtc === entry.startUtc &&
+        e.endUtc === entry.endUtc
+      ) {
+        return true;
+      }
     }
     return false;
   }
@@ -182,8 +206,10 @@ export function createPeakHoursStore({
   function create(input) {
     ensureLoaded();
     if (!input || typeof input !== 'object') return { error: 'invalid body' };
-    const apiR = normApi(input.api);
-    if (apiR.error) return { error: apiR.error };
+    const providerR = normToken('provider', input.provider, undefined, MAX_PROVIDER_LEN);
+    if (providerR.error) return { error: providerR.error };
+    const modelR = normToken('model', input.model, undefined, MAX_MODEL_LEN);
+    if (modelR.error) return { error: modelR.error };
     const offsetR = normOffset(input.utcOffset, 0);
     if (offsetR.error) return { error: offsetR.error };
     const noteR = normNote(input.note, '');
@@ -201,7 +227,8 @@ export function createPeakHoursStore({
     const t = now();
     const entry = {
       id: idOf(),
-      api: apiR.api,
+      provider: providerR.value,
+      model: modelR.value,
       startUtc,
       endUtc,
       utcOffset: offsetR.offset,
@@ -210,7 +237,9 @@ export function createPeakHoursStore({
       createdAt: t,
       updatedAt: t,
     };
-    if (duplicateOf(entry, null)) return { error: `an identical window already exists for ${entry.api}` };
+    if (duplicateOf(entry, null)) {
+      return { error: `an identical window already exists for ${entry.provider}/${entry.model}` };
+    }
     entries.set(entry.id, entry);
     try {
       persist();
@@ -226,8 +255,10 @@ export function createPeakHoursStore({
     const existing = entries.get(id);
     if (!existing) return { error: NOT_FOUND };
     if (!patch || typeof patch !== 'object') return { error: 'invalid body' };
-    const apiR = normApi(patch.api, existing.api);
-    if (apiR.error) return { error: apiR.error };
+    const providerR = normToken('provider', patch.provider, existing.provider, MAX_PROVIDER_LEN);
+    if (providerR.error) return { error: providerR.error };
+    const modelR = normToken('model', patch.model, existing.model, MAX_MODEL_LEN);
+    if (modelR.error) return { error: modelR.error };
     const offsetR = normOffset(patch.utcOffset, existing.utcOffset);
     if (offsetR.error) return { error: offsetR.error };
     const noteR = normNote(patch.note, existing.note);
@@ -245,7 +276,8 @@ export function createPeakHoursStore({
     if (startUtc === endUtc) return { error: 'start and end must differ' };
     const entry = {
       ...existing,
-      api: apiR.api,
+      provider: providerR.value,
+      model: modelR.value,
       startUtc,
       endUtc,
       utcOffset: offsetR.offset,
@@ -253,7 +285,9 @@ export function createPeakHoursStore({
       enabled: enabledR.enabled,
       updatedAt: now(),
     };
-    if (duplicateOf(entry, entry.id)) return { error: `an identical window already exists for ${entry.api}` };
+    if (duplicateOf(entry, entry.id)) {
+      return { error: `an identical window already exists for ${entry.provider}/${entry.model}` };
+    }
     entries.set(entry.id, entry);
     try {
       persist();
@@ -280,15 +314,14 @@ export function createPeakHoursStore({
 
   function list() {
     ensureLoaded();
-    return [...entries.values()]
-      .sort((a, b) => {
-        const byApi = a.api.localeCompare(b.api);
-        if (byApi !== 0) return byApi;
-        if (a.startUtc !== b.startUtc) return a.startUtc - b.startUtc;
-        return a.id.localeCompare(b.id);
-      })
-      .map(view);
+    return sortEntries([...entries.values()]).map(view);
   }
 
-  return { create, update, remove, list, isPeakAt: (api, at) => isPeakAt([...entries.values()], api, at) };
+  return {
+    create,
+    update,
+    remove,
+    list,
+    isPeakAt: (provider, model, at) => isPeakAt([...entries.values()], provider, model, at),
+  };
 }

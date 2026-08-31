@@ -41,7 +41,12 @@ const startField = ref('09:00');
 const endField = ref('17:00');
 const startUtcMin = ref(540);
 const endUtcMin = ref(1020);
-const modelSelect = ref<HTMLSelectElement | null>(null);
+const startInput = ref<HTMLInputElement | null>(null);
+
+const selectedModelKey = computed(() => {
+  const d = store.modelDetail;
+  return d ? `${d.model.provider}/${d.model.id}` : '';
+});
 
 const dialogTarget = ref<HTMLElement | 'body'>('body');
 
@@ -83,12 +88,6 @@ const catalogModelKeys = computed(() => {
   return set;
 });
 
-const modelOptions = computed(() => {
-  const set = new Set(catalogModelKeys.value);
-  for (const e of entries.value) set.add(e.key);
-  return [...set].sort();
-});
-
 function recomputeUtcFromFields() {
   const s = parseHm(startField.value);
   const e = parseHm(endField.value);
@@ -104,8 +103,7 @@ function rederiveFieldsFromUtc() {
 async function openAdd() {
   editor.open = true;
   editor.id = null;
-  const d = store.modelDetail;
-  editor.modelKey = d ? `${d.model.provider}/${d.model.id}` : (modelOptions.value[0] ?? '');
+  editor.modelKey = selectedModelKey.value;
   editor.note = '';
   editor.utcOffset = browserUtcOffset();
   startField.value = '09:00';
@@ -113,7 +111,7 @@ async function openAdd() {
   recomputeUtcFromFields();
   formError.value = '';
   await nextTick();
-  modelSelect.value?.focus();
+  startInput.value?.focus();
 }
 
 async function openEdit(e: PeakHourEntry) {
@@ -127,7 +125,7 @@ async function openEdit(e: PeakHourEntry) {
   rederiveFieldsFromUtc();
   formError.value = '';
   await nextTick();
-  modelSelect.value?.focus();
+  startInput.value?.focus();
 }
 
 function closeEditor() {
@@ -234,7 +232,12 @@ function utcText(e: PeakHourEntry): string {
 
     <div class="aph-head">
       <span class="aph-hint">rush-hour price windows per model</span>
-      <button class="aph-btn aph-btn--accent aph-add" title="Add peak hours" @click="openAdd">
+      <button
+        class="aph-btn aph-btn--accent aph-add"
+        :disabled="!selectedModelKey"
+        :title="selectedModelKey ? 'Add peak hours' : 'Select a model in the catalog first'"
+        @click="openAdd"
+      >
         <SvgIcon name="＋" />add
       </button>
     </div>
@@ -286,17 +289,16 @@ function utcText(e: PeakHourEntry): string {
           </header>
           <div class="aph-dialog-body">
             <div class="aph-field">
-              <label class="aph-label" for="aph-model">Model</label>
-              <select id="aph-model" ref="modelSelect" v-model="editor.modelKey" class="aph-input">
-                <option v-for="k in modelOptions" :key="k" :value="k">{{ k }}</option>
-              </select>
-              <span class="aph-field-note">double-price rush hours of this provider/model</span>
+              <label class="aph-label">Model</label>
+              <div class="aph-model-bound" :title="editor.modelKey">{{ editor.modelKey }}</div>
+              <span class="aph-field-note">bound to the model selected in the catalog</span>
             </div>
             <div class="aph-times">
               <div class="aph-field">
                 <label class="aph-label" for="aph-start">Peak start</label>
                 <input
                   id="aph-start"
+                  ref="startInput"
                   v-model="startField"
                   class="aph-input aph-time"
                   type="time"
@@ -579,6 +581,16 @@ function utcText(e: PeakHourEntry): string {
 .aph-field-note {
   font-size: 12px;
   color: var(--sf-text-muted);
+}
+
+.aph-model-bound {
+  min-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--sf-text-bright);
 }
 
 .aph-input {

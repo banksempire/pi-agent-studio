@@ -458,6 +458,13 @@ async function unitChecks({ report }) {
     const emptyHint = await page.locator('.aph-empty').count();
     report('panel starts with the empty hint', emptyHint === 1, `hint=${emptyHint}`);
 
+    const addBeforeSelect = await page.locator('.aph-add').isDisabled();
+    report(
+      'add is disabled until a model is selected in the catalog',
+      addBeforeSelect,
+      `disabled=${addBeforeSelect}`,
+    );
+
     await page.locator('.model-catalog-row', { hasText: 'Stub Pro' }).first().click();
     await delay(300);
 
@@ -500,13 +507,33 @@ async function unitChecks({ report }) {
     await page.waitForSelector('.aph-dialog', { timeout: 5000 });
     report('Escape closes the popup', closedByEscape, `closed=${closedByEscape}`);
 
-    const prefill = await page.locator('#aph-model').inputValue();
-    report('add form prefills the selected catalog model', prefill === 'stub/stub-pro', `prefill=${prefill}`);
-    const optionVals = await page.locator('#aph-model option').evaluateAll((els) => els.map((e) => e.value));
+    const modelSelectCount = await page.locator('#aph-model').count();
+    const boundModel = (await page.locator('.aph-model-bound').textContent()) ?? '';
     report(
-      'Model field is a select offering the catalog models',
-      optionVals.includes('stub/stub-pro') && optionVals.includes('stub/stub-mini'),
-      JSON.stringify(optionVals),
+      'form is bound to the selected catalog model — no provider/model selector',
+      modelSelectCount === 0 && boundModel.trim() === 'stub/stub-pro',
+      `select=${modelSelectCount} bound=${boundModel.trim()}`,
+    );
+
+    const tzOptions = await page
+      .locator('#aph-tz option')
+      .evaluateAll((els) =>
+        els.map((e) => ({ value: Number(e.value), label: (e.textContent || '').trim() })),
+      );
+    report(
+      'timezone selector offers whole-hour offsets only (UTC-12..UTC+14)',
+      tzOptions.length === 27 &&
+        tzOptions.every((o) => Number.isInteger(o.value) && o.value % 60 === 0) &&
+        tzOptions[0].value === -720 &&
+        tzOptions[tzOptions.length - 1].value === 840 &&
+        tzOptions.every((o) => !o.label.includes(':')) &&
+        tzOptions.some((o) => o.label === 'UTC+14') &&
+        tzOptions.some((o) => o.label === 'UTC-12'),
+      JSON.stringify({
+        n: tzOptions.length,
+        first: tzOptions[0],
+        last: tzOptions[tzOptions.length - 1],
+      }),
     );
 
     const addBtnTheme = await page.evaluate(() => {
@@ -524,7 +551,6 @@ async function unitChecks({ report }) {
       JSON.stringify(addBtnTheme),
     );
 
-    await page.selectOption('#aph-model', 'stub/stub-pro');
     await page.selectOption('#aph-tz', '120');
     await page.fill('#aph-start', '09:00');
     await page.fill('#aph-end', '17:00');
@@ -543,7 +569,7 @@ async function unitChecks({ report }) {
       'created row shows the window in its timezone plus the UTC equivalent',
       row.includes('stub/stub-pro') &&
         row.includes('09:00–17:00') &&
-        row.includes('UTC+02:00') &&
+        row.includes('UTC+2') &&
         row.includes('07:00–15:00 UTC'),
       `row=${row}`,
     );

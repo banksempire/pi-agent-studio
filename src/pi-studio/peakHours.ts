@@ -31,19 +31,19 @@ export function offsetLabel(minutes: number): string {
   if (minutes === 0) return 'UTC';
   const sign = minutes < 0 ? '-' : '+';
   const abs = Math.abs(minutes);
-  const hh = String(Math.floor(abs / 60)).padStart(2, '0');
-  const mm = String(abs % 60).padStart(2, '0');
-  return `UTC${sign}${hh}:${mm}`;
+  const h = Math.floor(abs / 60);
+  const mm = abs % 60;
+  return mm === 0 ? `UTC${sign}${h}` : `UTC${sign}${h}:${String(mm).padStart(2, '0')}`;
 }
 
 export const OFFSET_OPTIONS: Array<{ value: number; label: string }> = (() => {
   const out: Array<{ value: number; label: string }> = [];
-  for (let m = -12 * 60; m <= 14 * 60; m += 15) out.push({ value: m, label: offsetLabel(m) });
+  for (let h = -12; h <= 14; h++) out.push({ value: h * 60, label: offsetLabel(h * 60) });
   return out;
 })();
 
 export function browserUtcOffset(): number {
-  return Math.round(-new Date().getTimezoneOffset() / 15) * 15;
+  return Math.round(-new Date().getTimezoneOffset() / 60) * 60;
 }
 
 export function parseHm(v: string): number | null {

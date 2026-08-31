@@ -347,6 +347,10 @@ function readPrompts() {
       'queueing moves the input text into one box and clears the input',
       (await input.inputValue()) === '' && (await boxes.count()) === 1,
     );
+    report(
+      'empty input after queueing flips the action button back to Stop',
+      await waitCount(stopBtn, 1, 12),
+    );
 
     await input.fill('second queued message with more words');
     await queueBtn.click({ force: true });
@@ -536,21 +540,23 @@ function readPrompts() {
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
       'base64',
     );
-    const attachOne = async () => {
-      await page.setInputFiles('.chat-image-input', {
-        name: 'dot.png',
-        mimeType: 'image/png',
-        buffer: PNG,
-      });
-      for (let i = 0; i < 30; i++) {
-        if ((await page.locator('.chat-attach-chip').count()) === 1) break;
-        await delay(250);
+    const attachImages = async (n) => {
+      for (let i = 0; i < n; i++) {
+        await page.setInputFiles('.chat-image-input', {
+          name: 'dot.png',
+          mimeType: 'image/png',
+          buffer: PNG,
+        });
+        for (let k = 0; k < 30; k++) {
+          if ((await page.locator('.chat-attach-chip').count()) === i + 1) break;
+          await delay(250);
+        }
       }
     };
 
     await input.fill('with attachment');
     await delay(300);
-    await attachOne();
+    await attachImages(1);
     await delay(300);
     report(
       'running + text + image attachment → button stays Queue (queue holds images)',
@@ -563,6 +569,8 @@ function readPrompts() {
       return {
         exists: !!box,
         indicator: !!box?.querySelector('.chat-queue-img-ind'),
+        viewable: (box?.getAttribute('class') || '').includes('chat-queue-box--viewable'),
+        title: box?.getAttribute('title') || '',
         text: (box?.querySelector('.chat-queue-text')?.textContent || '').trim(),
       };
     });
@@ -570,6 +578,9 @@ function readPrompts() {
       'queued image message shows an image indicator in its box, input and chips cleared',
       imgBox.exists &&
         imgBox.indicator &&
+        imgBox.viewable &&
+        imgBox.title.includes('1 image') &&
+        imgBox.title.includes('click to view') &&
         imgBox.text === 'with attachment' &&
         (await input.inputValue()) === '' &&
         (await page.locator('.chat-attach-chip').count()) === 0,
@@ -611,13 +622,101 @@ function readPrompts() {
     report('image queue box is gone after delivery', (await boxes.count()) === 0);
 
     await runUntilStop();
-    await attachOne();
+    await input.fill('two images');
+    await attachImages(2);
+    await delay(300);
+    await queueBtn.click({ force: true });
+    await delay(400);
+    report(
+      'queued multi-image message shows the indicator in its box',
+      await page.evaluate(() => !!document.querySelector('.chat-queue-box .chat-queue-img-ind')),
+    );
+    await boxes.first().click({ force: true });
+    await delay(300);
+    const gallery = await page.evaluate(() => {
+      const rev = document.querySelector('.img-review');
+      return {
+        open: !!rev,
+        thumbs: rev ? rev.querySelectorAll('.img-review-thumb').length : 0,
+        text: (rev?.querySelector('.img-review-text')?.textContent || '').trim(),
+      };
+    });
+    report(
+      'viewer shows every queued image in its gallery plus the text',
+      gallery.open && gallery.thumbs === 2 && gallery.text === 'two images',
+      JSON.stringify(gallery),
+    );
+    await page.keyboard.press('Escape');
+    await delay(200);
+
+    await boxes.first().locator('[title="Edit this queued message"]').click();
+    await delay(300);
+    await page.locator('.chat-queue-edit-text').fill('two images (edited)');
+    await page.locator('.chat-queue-edit-btn--primary').click();
+    await delay(300);
+    report(
+      'editing a queued image message updates its text and keeps the images',
+      (await boxes.first().innerText()).includes('two images (edited)') &&
+        (await page.evaluate(() => !!document.querySelector('.chat-queue-box .chat-queue-img-ind'))),
+    );
+    await idleUntilSend();
+    let twoImgFlush = null;
+    for (let i = 0; i < 40; i++) {
+      twoImgFlush = readPrompts().find((p) => p.agentId === F && p.message === 'two images (edited)');
+      if (twoImgFlush) break;
+      await delay(250);
+    }
+    report(
+      'edited image message flushes with the new text and both images',
+      !!twoImgFlush && twoImgFlush.images === 2 && twoImgFlush.interrupt === false,
+      JSON.stringify(twoImgFlush),
+    );
+    await delay(1000);
+    report('multi-image box cleared after flush', (await boxes.count()) === 0);
+
+    await runUntilStop();
+    await input.fill('viewer close on flush');
+    await attachImages(1);
+    await queueBtn.click({ force: true });
+    await delay(400);
+    await boxes.first().click({ force: true });
+    await delay(300);
+    report(
+      'viewer is open while its message sits in the queue',
+      (await page.locator('.img-review').count()) === 1,
+    );
+    await idleUntilSend();
+    let viewerFlush = null;
+    for (let i = 0; i < 40; i++) {
+      viewerFlush = readPrompts().find((p) => p.agentId === F && p.message === 'viewer close on flush');
+      if (viewerFlush) break;
+      await delay(250);
+    }
+    let viewerClosed = false;
+    for (let i = 0; i < 20; i++) {
+      if ((await page.locator('.img-review').count()) === 0) {
+        viewerClosed = true;
+        break;
+      }
+      await delay(250);
+    }
+    report(
+      'viewer closes itself when its queued message flushes away',
+      !!viewerFlush && viewerClosed,
+      JSON.stringify(viewerFlush),
+    );
+    await delay(1000);
+    report('box gone after the viewer-close flush', (await boxes.count()) === 0);
+
+    await runUntilStop();
+    await attachImages(1);
     await delay(300);
     report(
       'running + image-only input → button is Queue (attachments count as content)',
       (await queueBtn.count()) === 1 && (await stopBtn.count()) === 0,
     );
-    await queueBtn.click({ force: true });
+    const beforeImgEnter = readPrompts().filter((p) => p.agentId === F).length;
+    await input.press('Enter');
     await delay(400);
     const onlyImg = await page.evaluate(() => {
       const box = document.querySelector('.chat-queue-box');
@@ -628,9 +727,13 @@ function readPrompts() {
       };
     });
     report(
-      'image-only queued message shows the indicator with no text',
+      'image-only queued via Enter shows the indicator with no text',
       onlyImg.exists && onlyImg.indicator && onlyImg.text === '',
       JSON.stringify(onlyImg),
+    );
+    report(
+      'image-only Enter queues without sending anything',
+      readPrompts().filter((p) => p.agentId === F).length === beforeImgEnter,
     );
     await idleUntilSend();
     let onlyImgFlush = null;
@@ -667,8 +770,94 @@ function readPrompts() {
     await boxes.first().locator('[title="Remove from queue"]').click();
     await delay(300);
 
+    await runUntilStop();
+    await page.evaluate(
+      ([key, png]) => {
+        const im = { data: png, mimeType: 'image/png' };
+        localStorage.setItem(
+          'sf-chat:queues',
+          JSON.stringify({
+            [key]: [
+              { id: 'inj-text', text: 'injected text' },
+              { id: 'inj-bad', text: 'bad mime', images: [{ data: 'AAAA', mimeType: 'text/plain' }] },
+              { id: 'inj-empty', text: '   ' },
+              { id: 'inj-many', text: 'six images', images: [im, im, im, im, im, im] },
+            ],
+          }),
+        );
+      },
+      [encodeURIComponent(F), PNG.toString('base64')],
+    );
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.chat-window', { timeout: 30000 });
+    for (let i = 0; i < 40; i++) {
+      if ((await boxes.count()) === 3) break;
+      await delay(500);
+    }
+    const injected = await page.evaluate(() => {
+      const list = [...document.querySelectorAll('.chat-queue-box')];
+      return {
+        count: list.length,
+        texts: list.map((b) => (b.querySelector('.chat-queue-text')?.textContent || '').trim()),
+        indicators: list.map((b) => !!b.querySelector('.chat-queue-img-ind')),
+      };
+    });
+    report(
+      'stored queue is re-validated on load: empty item dropped, bad-mime image dropped, valid kept',
+      injected.count === 3 &&
+        injected.texts[0] === 'injected text' &&
+        !injected.indicators[0] &&
+        injected.texts[1] === 'bad mime' &&
+        !injected.indicators[1] &&
+        injected.texts[2] === 'six images' &&
+        injected.indicators[2],
+      JSON.stringify(injected),
+    );
+
+    await idleUntilSend();
+    let injFlush1 = null;
+    for (let i = 0; i < 40; i++) {
+      injFlush1 = readPrompts().find((p) => p.agentId === F && p.message === 'injected text');
+      if (injFlush1) break;
+      await delay(250);
+    }
+    report(
+      'injected text-only item flushes normally',
+      !!injFlush1 && injFlush1.images === 0 && injFlush1.interrupt === false,
+      JSON.stringify(injFlush1),
+    );
+    await runUntilStop();
+    await idleUntilSend();
+    let injFlush2 = null;
+    for (let i = 0; i < 40; i++) {
+      injFlush2 = readPrompts().find((p) => p.agentId === F && p.message === 'bad mime');
+      if (injFlush2) break;
+      await delay(250);
+    }
+    report(
+      'bad-mime stored images never reach the backend',
+      !!injFlush2 && injFlush2.images === 0 && injFlush2.interrupt === false,
+      JSON.stringify(injFlush2),
+    );
+    await runUntilStop();
+    await idleUntilSend();
+    let injFlush3 = null;
+    for (let i = 0; i < 40; i++) {
+      injFlush3 = readPrompts().find((p) => p.agentId === F && p.message === 'six images');
+      if (injFlush3) break;
+      await delay(250);
+    }
+    report(
+      'more than four stored images are sliced to four on delivery',
+      !!injFlush3 && injFlush3.images === 4 && injFlush3.interrupt === false,
+      JSON.stringify(injFlush3),
+    );
+    await delay(1000);
+    report('injected queue fully drained', (await boxes.count()) === 0);
+
+    await runUntilStop();
     await input.fill('survive alpha');
-    await attachOne();
+    await attachImages(1);
     await delay(300);
     await queueBtn.click({ force: true });
     await input.fill('survive beta');

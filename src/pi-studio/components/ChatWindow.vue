@@ -726,11 +726,14 @@ function onQueueEditKeydown(e: KeyboardEvent) {
   }
 }
 
-watch(queue, (q) => {
-  const cur = editingQueue.value;
-  if (cur && !q.some((m) => m.id === cur.id)) closeQueueEdit();
-  if (queueReview.value && !q.some((m) => m.id === queueReview.value?.id)) queueReview.value = null;
-});
+watch(
+  () => queue.value.map((m) => m.id).join('|'),
+  () => {
+    const ids = new Set(queue.value.map((m) => m.id));
+    if (editingQueue.value && !ids.has(editingQueue.value.id)) closeQueueEdit();
+    if (queueReview.value && !ids.has(queueReview.value.id)) queueReview.value = null;
+  },
+);
 
 const attachments = computed({
   get: () => attachmentsOf(props.sessionId),

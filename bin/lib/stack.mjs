@@ -1,7 +1,9 @@
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import readline from 'node:readline';
+import { fileURLToPath } from 'node:url';
 import {
   appendAudit,
   BACKEND_WATCH_PATHS,
@@ -33,7 +35,7 @@ import {
   withLock,
   writePidfile,
 } from './proc.mjs';
-import { errSym, formatBytes, formatDuration, okSym, paint, printTable, warnSym } from './ui.mjs';
+import { errSym, formatBytes, formatDuration, makeOut, okSym, paint, printTable, warnSym } from './ui.mjs';
 
 const DRAIN_MS_DEFAULT = 45_000;
 const drainGrace = () => Number(process.env.PI_STUDIO_DRAIN_MS ?? DRAIN_MS_DEFAULT) + 20_000;
@@ -469,51 +471,53 @@ async function assertSessionsDirUnique(instance, sessionsDir) {
 }
 
 export async function cmdUp(out, instance, opts = {}) {
-  return withLock(instanceStateDir(instance.id), async () => {
-    const repo = instanceRepoRoot(instance);
-    if (!fs.existsSync(repo)) {
-      throw new CliError(`instance ${instance.id}: repo not found at ${repo}`, 1);
+  return withLock(instanceStateDir(instance.id), async () => upLocked(out, instance, opts));
+}
+
+async function upLocked(out, instance, opts = {}) {
+  const repo = instanceRepoRoot(instance);
+  if (!fs.existsSync(repo)) {
+    throw new CliError(`instance ${instance.id}: repo not found at ${repo}`, 1);
+  }
+  if (!fs.existsSync(path.join(repo, 'node_modules', '.bin', 'vite'))) {
+    throw new CliError(
+      `instance ${instance.id}: node_modules missing in ${repo} — run npm install (or studio init)`,
+      1,
+    );
+  }
+  const sessionsDir = resolveSessionsDir(instance, opts);
+  fs.mkdirSync(sessionsDir, { recursive: true });
+  await assertSessionsDirUnique(instance, sessionsDir);
+  const used = new Set(RESERVED_PORTS);
+  for (const p of webPortsInUse(instance.id).keys()) used.add(p);
+  const ports = {};
+  if (opts.service && !SERVICE_NAMES.includes(opts.service)) {
+    throw new CliError(`unknown service '${opts.service}' (backend | web)`, 2);
+  }
+  const only = opts.service ?? null;
+  const spawned = [];
+  out.event({ event: 'begin', instance: instance.id });
+  try {
+    if (!only || only === 'backend') {
+      await ensureBackend(out, instance, { sessionsDir, used, ports, spawned });
     }
-    if (!fs.existsSync(path.join(repo, 'node_modules', '.bin', 'vite'))) {
-      throw new CliError(
-        `instance ${instance.id}: node_modules missing in ${repo} — run npm install (or studio init)`,
-        1,
-      );
+    if (!only || only === 'web') {
+      await ensureWeb(out, instance, { used, ports, spawned, opts });
     }
-    const sessionsDir = resolveSessionsDir(instance, opts);
-    fs.mkdirSync(sessionsDir, { recursive: true });
-    await assertSessionsDirUnique(instance, sessionsDir);
-    const used = new Set(RESERVED_PORTS);
-    for (const p of webPortsInUse(instance.id).keys()) used.add(p);
-    const ports = {};
-    if (opts.service && !SERVICE_NAMES.includes(opts.service)) {
-      throw new CliError(`unknown service '${opts.service}' (backend | web)`, 2);
+  } catch (e) {
+    for (const pid of spawned.reverse()) {
+      appendAudit(instance.id, {
+        action: 'terminate',
+        reason: 'up-failure',
+        pid,
+        caller: process.argv.slice(1).join(' '),
+      });
+      await terminate(pid, 1500);
     }
-    const only = opts.service ?? null;
-    const spawned = [];
-    out.event({ event: 'begin', instance: instance.id });
-    try {
-      if (!only || only === 'backend') {
-        await ensureBackend(out, instance, { sessionsDir, used, ports, spawned });
-      }
-      if (!only || only === 'web') {
-        await ensureWeb(out, instance, { used, ports, spawned, opts });
-      }
-    } catch (e) {
-      for (const pid of spawned.reverse()) {
-        appendAudit(instance.id, {
-          action: 'terminate',
-          reason: 'up-failure',
-          pid,
-          caller: process.argv.slice(1).join(' '),
-        });
-        await terminate(pid, 1500);
-      }
-      for (const svc of SERVICE_NAMES) clearPidfileIfDead(instance.id, svc);
-      throw e;
-    }
-    out.event({ event: 'done', instance: instance.id, ports });
-  });
+    for (const svc of SERVICE_NAMES) clearPidfileIfDead(instance.id, svc);
+    throw e;
+  }
+  out.event({ event: 'done', instance: instance.id, ports });
 }
 
 function clearPidfileIfDead(id, service) {
@@ -620,35 +624,115 @@ async function stopService(out, instance, service, attributed, { immediate = fal
 }
 
 export async function cmdDown(out, instance, opts = {}) {
-  return withLock(instanceStateDir(instance.id), async () => {
-    const explicit = opts.service ?? null;
-    let targets;
-    if (explicit === 'backend') {
-      targets = opts.cascade === false ? ['backend'] : ['web', 'backend'];
-    } else if (explicit) {
-      targets = [explicit];
-    } else {
-      targets = ['web', 'backend'];
+  return withLock(instanceStateDir(instance.id), async () => downLocked(out, instance, opts));
+}
+
+async function downLocked(out, instance, opts = {}) {
+  const explicit = opts.service ?? null;
+  let targets;
+  if (explicit === 'backend') {
+    targets = opts.cascade === false ? ['backend'] : ['web', 'backend'];
+  } else if (explicit) {
+    targets = [explicit];
+  } else {
+    targets = ['web', 'backend'];
+  }
+  if (targets.includes('backend')) {
+    await guardBackend(out, instance, { yes: opts.yes, action: 'stop' });
+  }
+  const attributed = attributeProcesses([instance]);
+  for (const service of ['web', 'backend'].filter((s) => targets.includes(s))) {
+    await stopService(out, instance, service, attributed, { immediate: opts.force });
+  }
+}
+
+const FINISHER_STRIP_ENV = [
+  'PI_STUDIO_SESSIONS',
+  'PI_STUDIO_PORT',
+  'PI_STUDIO_HOST',
+  'PI_STUDIO_DB_PATH',
+  'PI_STUDIO_SPILL_PATH',
+  'PI_STUDIO_CWD',
+  'PI_STUDIO_STATES_PATH',
+];
+
+function spawnRestartFinisher(instance, oldPid, graceMs) {
+  const cli = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'studio.mjs');
+  const env = { ...process.env };
+  for (const key of FINISHER_STRIP_ENV) delete env[key];
+  const child = spawn(
+    process.execPath,
+    [
+      cli,
+      '-i',
+      instance.id,
+      '__finish-restart',
+      '--old-pid',
+      String(oldPid),
+      '--deadline-ms',
+      String(graceMs + 60_000),
+    ],
+    { cwd: path.dirname(cli), env, detached: true, stdio: 'ignore' },
+  );
+  child.unref();
+  return child.pid;
+}
+
+export async function cmdFinishRestart(instance, { oldPid = 0, deadlineMs = 0 } = {}) {
+  const quiet = makeOut({ quiet: true });
+  const deadline = Date.now() + (deadlineMs > 0 ? deadlineMs : 120_000);
+  const stateDir = instanceStateDir(instance.id);
+  let lastError = null;
+  while (Date.now() < deadline) {
+    if (oldPid > 0 && alive(oldPid)) {
+      await delay(250);
+      continue;
     }
-    if (targets.includes('backend')) {
-      await guardBackend(out, instance, { yes: opts.yes, action: 'stop' });
+    const live = backendLivePid(instance);
+    if (live?.port) {
+      const health = await serviceHealth('backend', live.port);
+      if (health.ok && !health.json?.draining) return;
+      if (health.json?.draining) {
+        await delay(250);
+        continue;
+      }
     }
-    const attributed = attributeProcesses([instance]);
-    for (const service of ['web', 'backend'].filter((s) => targets.includes(s))) {
-      await stopService(out, instance, service, attributed, { immediate: opts.force });
+    try {
+      await withLock(stateDir, async () => {
+        await upLocked(quiet, instance, { service: 'backend' });
+      });
+      return;
+    } catch (e) {
+      lastError = e;
+      await delay(250);
     }
+  }
+  appendAudit(instance.id, {
+    action: 'note',
+    reason: 'restart-finisher-timeout',
+    service: 'backend',
+    pid: oldPid,
+    caller: `studio __finish-restart ${lastError ? String(lastError.message).slice(0, 120) : ''}`,
   });
+  throw new CliError(`restart finisher timed out for ${instance.id}`, 1);
 }
 
 export async function cmdRestart(out, instance, opts = {}) {
   const service = opts.service;
   if (!service) throw new CliError('restart requires a service: backend | web', 2);
-  if (service === 'backend') {
-    GRACE.backend = drainGrace();
-    await guardBackend(out, instance, { yes: opts.yes, action: 'restart' });
+  if (service !== 'backend') {
+    await cmdDown(out, instance, { service, force: opts.force, cascade: false, yes: true });
+    await cmdUp(out, instance, opts);
+    return;
   }
-  await cmdDown(out, instance, { service, force: opts.force, cascade: false, yes: true });
-  await cmdUp(out, instance, opts);
+  GRACE.backend = drainGrace();
+  await guardBackend(out, instance, { yes: opts.yes, action: 'restart' });
+  const oldPid = backendLivePid(instance)?.pid ?? 0;
+  spawnRestartFinisher(instance, oldPid, GRACE.backend);
+  await withLock(instanceStateDir(instance.id), async () => {
+    await downLocked(out, instance, { service, force: opts.force, cascade: false, yes: true });
+    await upLocked(out, instance, opts);
+  });
 }
 
 export async function cmdKill(out, instance, opts = {}) {

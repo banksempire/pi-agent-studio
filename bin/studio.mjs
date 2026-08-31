@@ -9,6 +9,7 @@ import {
   cmdAbort,
   cmdAgents,
   cmdDown,
+  cmdFinishRestart,
   cmdKill,
   cmdLogs,
   cmdRestart,
@@ -190,6 +191,16 @@ async function main() {
         withNest: !!flags['with-nest'],
         force: !!flags.force,
         yes: !!flags.yes,
+      });
+      return 0;
+    }
+    case '__finish-restart': {
+      const { flags } = parseRest(args, ['old-pid', 'deadline-ms']);
+      if (STRICT && !instanceId) strictRefuse('__finish-restart');
+      const inst = resolveInstance(instanceId);
+      await cmdFinishRestart(inst, {
+        oldPid: Number(flags['old-pid'] ?? 0) || 0,
+        deadlineMs: Number(flags['deadline-ms'] ?? 0) || 0,
       });
       return 0;
     }

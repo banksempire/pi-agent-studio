@@ -402,7 +402,7 @@ function windowText(e: PeakHourEntry): string {
   }
 }
 
-.pht-iconbtn--danger:hover {
+.pht-iconbtn--danger {
   color: var(--sf-danger);
 }
 
@@ -443,7 +443,7 @@ function windowText(e: PeakHourEntry): string {
 
 .sf-root--mobile .pht-col--window {
   grid-area: window;
-  text-align: right;
+  text-align: left;
 }
 
 .sf-root--mobile .pht-col--model,

@@ -995,6 +995,7 @@ async function unitChecks({ report }) {
         };
         const note = row.querySelector('.pht-col--note');
         const win = row.querySelector('.pht-col--window');
+        const btns = Array.from(row.querySelectorAll('.pht-col--actions button'));
         return {
           card: rect(row),
           switch: rect(row.querySelector('.pht-switch')),
@@ -1003,21 +1004,24 @@ async function unitChecks({ report }) {
           windowAlign: getComputedStyle(win).textAlign,
           noteDisplay: note ? getComputedStyle(note).display : null,
           actions: rect(row.querySelector('.pht-col--actions')),
-          buttons: Array.from(row.querySelectorAll('.pht-col--actions button')).map(rect),
+          buttons: btns.map(rect),
+          btnColors: btns.map((b) => getComputedStyle(b).color),
           text: row.textContent ?? '',
         };
       }),
     );
     report(
-      'mobile card: switch | name / right-aligned window | no note line',
+      'mobile card: switch | name / left-aligned window | no note line',
       mobCards.length === 2 &&
         mobCards.every(
           (c) =>
             c.switch.r <= c.model.l + 1 &&
             c.window.t >= c.model.b - 2 &&
-            c.windowAlign === 'right' &&
+            c.windowAlign === 'left' &&
             c.noteDisplay === 'none' &&
             c.buttons.length === 2 &&
+            c.btnColors[0] !== 'rgb(244, 135, 113)' &&
+            c.btnColors[1] === 'rgb(244, 135, 113)' &&
             !c.text.includes('UTC') &&
             !c.text.includes('↻'),
         ),

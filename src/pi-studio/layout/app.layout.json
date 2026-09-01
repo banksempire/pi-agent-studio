@@ -230,6 +230,28 @@
     }
   ],
   "rightPanels": {
+    "peak-hours": {
+      "title": "Model Detail",
+      "sections": [
+        {
+          "id": "model-detail",
+          "label": "Model Detail",
+          "subSections": [
+            {
+              "id": "model-detail",
+              "label": "Model Detail",
+              "height": "fixed",
+              "components": [
+                {
+                  "type": "component",
+                  "key": "model-detail"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
     "model-catalog": {
       "title": "Model Catalog",
       "sections": [

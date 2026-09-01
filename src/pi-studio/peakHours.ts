@@ -36,6 +36,15 @@ export function offsetLabel(minutes: number): string {
   return mm === 0 ? `UTC${sign}${h}` : `UTC${sign}${h}:${String(mm).padStart(2, '0')}`;
 }
 
+export function shortOffsetLabel(minutes: number): string {
+  if (minutes === 0) return '+0';
+  const sign = minutes < 0 ? '-' : '+';
+  const abs = Math.abs(minutes);
+  const h = Math.floor(abs / 60);
+  const mm = abs % 60;
+  return mm === 0 ? `${sign}${h}` : `${sign}${h}:${String(mm).padStart(2, '0')}`;
+}
+
 export const OFFSET_OPTIONS: Array<{ value: number; label: string }> = (() => {
   const out: Array<{ value: number; label: string }> = [];
   for (let h = -12; h <= 12; h++) out.push({ value: h * 60, label: offsetLabel(h * 60) });

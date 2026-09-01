@@ -823,10 +823,22 @@ async function unitChecks({ report }) {
     report(
       'the tab lists every window and flags models absent from the catalog',
       (await page.locator('.pht-row').count()) === 2 &&
-        ghostRow.includes('22:00–02:00') &&
+        ghostRow.includes('22:00 - 02:00 (+0)') &&
         ghostRow.includes('↻') &&
+        !ghostRow.includes('UTC') &&
         ghostChip === 1,
       `row=${ghostRow} chips=${ghostChip}`,
+    );
+
+    const headText = (await page.locator('.pht-head-row').textContent()) ?? '';
+    report('the tab table has no UTC column', !headText.includes('UTC'), `head=${headText}`);
+
+    const peakTabPanelDef = layoutDefs.rightPanels?.['peak-hours'];
+    const peakTabPanelSubs = peakTabPanelDef?.sections?.[0]?.subSections ?? [];
+    report(
+      'layout: the peak-hours tab right panel shows the model detail',
+      peakTabPanelSubs.length === 1 && peakTabPanelSubs[0]?.components?.[0]?.key === 'model-detail',
+      JSON.stringify(peakTabPanelDef ?? null),
     );
 
     await page.locator('.pht-add').click();
@@ -849,6 +861,36 @@ async function unitChecks({ report }) {
       'the tab-created window persists with canonical UTC',
       !!miniEntry && miniEntry.startUtc === '03:00' && miniEntry.endUtc === '06:00',
       JSON.stringify(miniEntry ?? null),
+    );
+
+    const miniRowText = (await page.locator('.pht-row', { hasText: 'stub/stub-mini' }).textContent()) ?? '';
+    report(
+      'window text uses the hh:mm - hh:mm (+offset) layout',
+      miniRowText.includes('03:00 - 06:00 (+0)') && !miniRowText.includes('UTC'),
+      `row=${miniRowText}`,
+    );
+
+    await page.locator('.pht-row', { hasText: 'stub/stub-pro' }).click();
+    await delay(300);
+    const selRowCls =
+      (await page.locator('.pht-row', { hasText: 'stub/stub-pro' }).getAttribute('class')) ?? '';
+    const detailText = (await page.locator('.model-detail').textContent()) ?? '';
+    report(
+      'clicking a tab entry shows its model details in the right panel',
+      selRowCls.includes('pht-row--selected') &&
+        detailText.includes('Stub Pro') &&
+        detailText.includes('stub-pro'),
+      `cls=${selRowCls} detail=${detailText.slice(0, 120)}`,
+    );
+
+    await page.locator('.pht-row', { hasText: 'ghost/ghost-model' }).click();
+    await delay(300);
+    const ghostSelCls =
+      (await page.locator('.pht-row', { hasText: 'ghost/ghost-model' }).getAttribute('class')) ?? '';
+    report(
+      'entries absent from the catalog are not selectable',
+      !ghostSelCls.includes('pht-row--selected') && !ghostSelCls.includes('pht-row--clickable'),
+      `cls=${ghostSelCls}`,
     );
 
     await page.locator('.pht-row', { hasText: 'stub/stub-pro' }).locator('.pht-switch').click();
@@ -935,6 +977,41 @@ async function unitChecks({ report }) {
       r.status === 200 && r.body.entry.note === 'nightly rate window',
       JSON.stringify(r.body.entry ?? r.body),
     );
+
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.waitForSelector('.sf-root--mobile', { timeout: 5000 });
+    await delay(400);
+    const mobCard = await page.locator('.pht-row', { hasText: 'ghost/ghost-model' }).evaluate((row) => {
+      const rect = (el) => {
+        const b = el.getBoundingClientRect();
+        return { l: b.left, r: b.right, t: b.top, b: b.bottom, cy: b.top + b.height / 2 };
+      };
+      return {
+        switch: rect(row.querySelector('.pht-switch')),
+        model: rect(row.querySelector('.pht-col--model')),
+        window: rect(row.querySelector('.pht-col--window')),
+        note: rect(row.querySelector('.pht-col--note')),
+        actions: rect(row.querySelector('.pht-col--actions')),
+        actionButtons: row.querySelectorAll('.pht-col--actions button').length,
+        text: row.textContent ?? '',
+      };
+    });
+    report(
+      'mobile card: switch | two-line content | edit + close actions',
+      mobCard.switch.r <= mobCard.model.l + 1 &&
+        Math.abs(mobCard.model.cy - mobCard.window.cy) < 2 &&
+        mobCard.window.r <= mobCard.actions.l + 1 &&
+        mobCard.window.r - mobCard.model.r > 40 &&
+        mobCard.note.t >= mobCard.window.b - 2 &&
+        Math.abs(mobCard.note.l - mobCard.model.l) < 2 &&
+        mobCard.actionButtons === 2 &&
+        !mobCard.text.includes('UTC') &&
+        mobCard.text.includes('nightly rate window'),
+      JSON.stringify(mobCard),
+    );
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForSelector('.sf-root:not(.sf-root--mobile)', { timeout: 5000 });
+    await delay(400);
 
     const secondPort = await freePort();
     procs.push(

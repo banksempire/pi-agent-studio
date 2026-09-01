@@ -3,7 +3,7 @@ import SvgIcon from '@sf/components/SvgIcon.vue';
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import type { ModelCatalogView } from '../modelInfo';
 import { loadModelCatalog } from '../modelInfo';
-import { deletePeakHours, offsetLabel, type PeakHourEntry, updatePeakHours } from '../peakHours';
+import { deletePeakHours, type PeakHourEntry, shortOffsetLabel, updatePeakHours } from '../peakHours';
 import { useChatStore } from '../store/chat';
 import PeakHoursDialog, { type PeakHourModelChoice } from './PeakHoursDialog.vue';
 
@@ -12,6 +12,7 @@ const store = useChatStore();
 const catalog = ref<ModelCatalogView | null>(null);
 const filter = ref('');
 const actionError = ref('');
+const selected = ref('');
 
 const dialog = reactive<{ open: boolean; entry: PeakHourEntry | null }>({ open: false, entry: null });
 
@@ -103,12 +104,16 @@ async function remove(e: PeakHourEntry) {
   }
 }
 
-function windowText(e: PeakHourEntry): string {
-  return `${e.start}–${e.end} ${offsetLabel(e.utcOffset)}`;
+function onRowClick(e: PeakHourEntry) {
+  const m = (catalog.value?.models ?? []).find((x) => `${x.provider}/${x.id}` === e.key);
+  if (!m) return;
+  selected.value = e.key;
+  const d = catalog.value?.default;
+  store.requestModelDetail(m, !!d && e.key === `${d.provider}/${d.id}`);
 }
 
-function utcText(e: PeakHourEntry): string {
-  return `${e.startUtc}–${e.endUtc} UTC${e.wrapsMidnightUtc ? ' ↻' : ''}`;
+function windowText(e: PeakHourEntry): string {
+  return `${e.start} - ${e.end} (${shortOffsetLabel(e.utcOffset)})${e.wrapsMidnightUtc ? ' ↻' : ''}`;
 }
 </script>
 
@@ -138,7 +143,6 @@ function utcText(e: PeakHourEntry): string {
         <span class="pht-col pht-col--switch" />
         <span class="pht-col pht-col--model">Model</span>
         <span class="pht-col pht-col--window">Window</span>
-        <span class="pht-col pht-col--utc">UTC</span>
         <span class="pht-col pht-col--note">Note</span>
         <span class="pht-col pht-col--actions" />
       </div>
@@ -146,8 +150,13 @@ function utcText(e: PeakHourEntry): string {
         v-for="e in entries"
         :key="e.id"
         class="pht-row"
-        :class="{ 'pht-row--off': !e.enabled }"
+        :class="{
+          'pht-row--off': !e.enabled,
+          'pht-row--clickable': catalogModelKeys.has(e.key),
+          'pht-row--selected': e.key === selected,
+        }"
         :title="e.key"
+        @click="onRowClick(e)"
       >
         <div class="pht-cell pht-col--switch">
           <button
@@ -167,14 +176,11 @@ function utcText(e: PeakHourEntry): string {
             title="This model is not in the current catalog — the window is kept"
           >not in catalog</span>
         </div>
-        <div class="pht-cell pht-col--window" :title="`peak ${e.start}–${e.end} ${offsetLabel(e.utcOffset)}`">
-          {{ windowText(e) }}
-        </div>
         <div
-          class="pht-cell pht-col--utc"
-          :title="e.wrapsMidnightUtc ? 'window crosses midnight UTC' : ''"
+          class="pht-cell pht-col--window"
+          :title="e.wrapsMidnightUtc ? `${windowText(e)} · crosses midnight UTC` : windowText(e)"
         >
-          {{ utcText(e) }}
+          {{ windowText(e) }}
         </div>
         <div class="pht-cell pht-col--note" :title="e.note || undefined">{{ e.note }}</div>
         <div class="pht-cell pht-col--actions">
@@ -291,7 +297,7 @@ function utcText(e: PeakHourEntry): string {
 .pht-head-row,
 .pht-row {
   display: grid;
-  grid-template-columns: 30px minmax(0, 1.3fr) minmax(0, 0.75fr) minmax(0, 0.75fr) minmax(0, 1fr) auto;
+  grid-template-columns: 30px minmax(0, 2fr) minmax(0, 0.75fr) minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
   padding: 4px 12px;
@@ -313,8 +319,7 @@ function utcText(e: PeakHourEntry): string {
   user-select: none;
 }
 
-.pht-col--window,
-.pht-col--utc {
+.pht-col--window {
   font-variant-numeric: tabular-nums;
 }
 
@@ -330,6 +335,14 @@ function utcText(e: PeakHourEntry): string {
   }
 }
 
+.pht-row--clickable {
+  cursor: pointer;
+}
+
+.pht-row--selected {
+  background: var(--sf-selection);
+}
+
 .pht-row--off {
   opacity: 0.55;
 }
@@ -342,7 +355,6 @@ function utcText(e: PeakHourEntry): string {
 }
 
 .pht-col--window,
-.pht-col--utc,
 .pht-col--note {
   color: var(--sf-text-muted);
 }
@@ -414,9 +426,8 @@ function utcText(e: PeakHourEntry): string {
 
 .sf-root--mobile .pht-row {
   grid-template:
-    'switch model actions' auto
-    'window window utc' auto
-    'note note note' auto / auto minmax(0, 1fr) auto;
+    'switch model window actions' auto
+    'switch note note actions' auto / auto minmax(0, 1fr) auto auto;
   row-gap: 3px;
   padding: 8px 12px;
   align-content: center;
@@ -432,11 +443,6 @@ function utcText(e: PeakHourEntry): string {
 
 .sf-root--mobile .pht-col--window {
   grid-area: window;
-}
-
-.sf-root--mobile .pht-col--utc {
-  grid-area: utc;
-  text-align: right;
 }
 
 .sf-root--mobile .pht-col--note {

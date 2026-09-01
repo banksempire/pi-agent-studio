@@ -620,6 +620,25 @@ async function unitChecks({ report }) {
       JSON.stringify(addBtnTheme),
     );
 
+    await page.evaluate(() => {
+      window.__pickerCalls = 0;
+      HTMLInputElement.prototype.showPicker = () => {
+        window.__pickerCalls += 1;
+      };
+    });
+    const startBox = await page.locator('#aph-start').boundingBox();
+    await page.mouse.click(startBox.x + startBox.width - 10, startBox.y + startBox.height / 2);
+    await delay(200);
+    const iconCalls = await page.evaluate(() => window.__pickerCalls);
+    await page.mouse.click(startBox.x + 10, startBox.y + startBox.height / 2);
+    await delay(200);
+    const fieldCalls = await page.evaluate(() => window.__pickerCalls);
+    report(
+      'time inputs open the picker from the clock zone and stay typeable elsewhere',
+      iconCalls === 1 && fieldCalls === iconCalls,
+      `icon=${iconCalls} field=${fieldCalls}`,
+    );
+
     await page.selectOption('#aph-tz', '120');
     await page.fill('#aph-start', '09:00');
     await page.fill('#aph-end', '17:00');

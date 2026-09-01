@@ -141,6 +141,15 @@ function onDocKey(e: KeyboardEvent) {
   if (e.key === 'Escape') close();
 }
 
+function openPicker(e: MouseEvent) {
+  const el = e.currentTarget as HTMLInputElement;
+  const r = el.getBoundingClientRect();
+  if (e.clientX < r.right - 30) return;
+  try {
+    el.showPicker();
+  } catch {}
+}
+
 onMounted(() => {
   dialogTarget.value = (document.querySelector('.sf-root') as HTMLElement | null) ?? 'body';
   void nextTick(() => startInput.value?.focus());
@@ -188,6 +197,7 @@ function onBackdropDown(e: MouseEvent) {
                 class="aph-input aph-time"
                 type="time"
                 @input="recomputeUtcFromFields"
+                @click="openPicker"
               >
             </div>
             <div class="aph-field">
@@ -198,6 +208,7 @@ function onBackdropDown(e: MouseEvent) {
                 class="aph-input aph-time"
                 type="time"
                 @input="recomputeUtcFromFields"
+                @click="openPicker"
               >
             </div>
           </div>

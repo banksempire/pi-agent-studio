@@ -447,6 +447,7 @@ function windowText(e: PeakHourEntry): string {
 
 .sf-root--mobile .pht-col--note {
   grid-area: note;
+  min-height: 1.2em;
 }
 
 .sf-root--mobile .pht-col--actions {

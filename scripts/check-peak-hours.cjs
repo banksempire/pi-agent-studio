@@ -984,9 +984,10 @@ async function unitChecks({ report }) {
     const mobCard = await page.locator('.pht-row', { hasText: 'ghost/ghost-model' }).evaluate((row) => {
       const rect = (el) => {
         const b = el.getBoundingClientRect();
-        return { l: b.left, r: b.right, t: b.top, b: b.bottom, cy: b.top + b.height / 2 };
+        return { l: b.left, r: b.right, t: b.top, b: b.bottom, cy: b.top + b.height / 2, h: b.height };
       };
       return {
+        card: rect(row),
         switch: rect(row.querySelector('.pht-switch')),
         model: rect(row.querySelector('.pht-col--model')),
         window: rect(row.querySelector('.pht-col--window')),
@@ -1008,6 +1009,24 @@ async function unitChecks({ report }) {
         !mobCard.text.includes('UTC') &&
         mobCard.text.includes('nightly rate window'),
       JSON.stringify(mobCard),
+    );
+    const mobMini = await page.locator('.pht-row', { hasText: 'stub/stub-mini' }).evaluate((row) => {
+      const rect = (el) => {
+        const b = el.getBoundingClientRect();
+        return { t: b.top, b: b.bottom, h: b.height };
+      };
+      return {
+        card: rect(row),
+        window: rect(row.querySelector('.pht-col--window')),
+        note: rect(row.querySelector('.pht-col--note')),
+      };
+    });
+    report(
+      'mobile card: a blank note still reserves its line',
+      mobMini.note.h >= 15 &&
+        mobMini.note.t >= mobMini.window.b - 2 &&
+        Math.abs(mobMini.card.h - mobCard.card.h) < 2,
+      JSON.stringify({ ghost: mobCard.card, mini: mobMini }),
     );
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.waitForSelector('.sf-root:not(.sf-root--mobile)', { timeout: 5000 });

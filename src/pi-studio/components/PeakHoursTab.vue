@@ -113,7 +113,7 @@ function onRowClick(e: PeakHourEntry) {
 }
 
 function windowText(e: PeakHourEntry): string {
-  return `${e.start} - ${e.end} (${shortOffsetLabel(e.utcOffset)})${e.wrapsMidnightUtc ? ' ↻' : ''}`;
+  return `${e.start} - ${e.end} (${shortOffsetLabel(e.utcOffset)})`;
 }
 </script>
 
@@ -426,8 +426,8 @@ function windowText(e: PeakHourEntry): string {
 
 .sf-root--mobile .pht-row {
   grid-template:
-    'switch model window actions' auto
-    'switch note note actions' auto / auto minmax(0, 1fr) auto auto;
+    'switch model actions' auto
+    'switch window actions' auto / auto minmax(0, 1fr) auto;
   row-gap: 3px;
   padding: 8px 12px;
   align-content: center;
@@ -443,14 +443,21 @@ function windowText(e: PeakHourEntry): string {
 
 .sf-root--mobile .pht-col--window {
   grid-area: window;
+  text-align: right;
 }
 
 .sf-root--mobile .pht-col--note {
-  grid-area: note;
-  min-height: 1.2em;
+  display: none;
 }
 
 .sf-root--mobile .pht-col--actions {
   grid-area: actions;
+  align-self: stretch;
+}
+
+.sf-root--mobile .pht-iconbtn {
+  padding: 0;
+  aspect-ratio: 1;
+  font-size: 16px;
 }
 </style>

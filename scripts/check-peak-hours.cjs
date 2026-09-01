@@ -820,14 +820,20 @@ async function unitChecks({ report }) {
     await page.locator('.pht-row', { hasText: 'ghost/ghost-model' }).waitFor({ timeout: 5000 });
     const ghostRow = await page.locator('.pht-row', { hasText: 'ghost/ghost-model' }).textContent();
     const ghostChip = await page.locator('.pht-unknown').count();
+    const ghostWindowTitle =
+      (await page
+        .locator('.pht-row', { hasText: 'ghost/ghost-model' })
+        .locator('.pht-col--window')
+        .getAttribute('title')) ?? '';
     report(
       'the tab lists every window and flags models absent from the catalog',
       (await page.locator('.pht-row').count()) === 2 &&
         ghostRow.includes('22:00 - 02:00 (+0)') &&
-        ghostRow.includes('↻') &&
+        !ghostRow.includes('↻') &&
         !ghostRow.includes('UTC') &&
-        ghostChip === 1,
-      `row=${ghostRow} chips=${ghostChip}`,
+        ghostChip === 1 &&
+        ghostWindowTitle.includes('crosses midnight UTC'),
+      `row=${ghostRow} chips=${ghostChip} title=${ghostWindowTitle}`,
     );
 
     const headText = (await page.locator('.pht-head-row').textContent()) ?? '';
@@ -981,52 +987,49 @@ async function unitChecks({ report }) {
     await page.setViewportSize({ width: 375, height: 812 });
     await page.waitForSelector('.sf-root--mobile', { timeout: 5000 });
     await delay(400);
-    const mobCard = await page.locator('.pht-row', { hasText: 'ghost/ghost-model' }).evaluate((row) => {
-      const rect = (el) => {
-        const b = el.getBoundingClientRect();
-        return { l: b.left, r: b.right, t: b.top, b: b.bottom, cy: b.top + b.height / 2, h: b.height };
-      };
-      return {
-        card: rect(row),
-        switch: rect(row.querySelector('.pht-switch')),
-        model: rect(row.querySelector('.pht-col--model')),
-        window: rect(row.querySelector('.pht-col--window')),
-        note: rect(row.querySelector('.pht-col--note')),
-        actions: rect(row.querySelector('.pht-col--actions')),
-        actionButtons: row.querySelectorAll('.pht-col--actions button').length,
-        text: row.textContent ?? '',
-      };
-    });
-    report(
-      'mobile card: switch | two-line content | edit + close actions',
-      mobCard.switch.r <= mobCard.model.l + 1 &&
-        Math.abs(mobCard.model.cy - mobCard.window.cy) < 2 &&
-        mobCard.window.r <= mobCard.actions.l + 1 &&
-        mobCard.window.r - mobCard.model.r > 40 &&
-        mobCard.note.t >= mobCard.window.b - 2 &&
-        Math.abs(mobCard.note.l - mobCard.model.l) < 2 &&
-        mobCard.actionButtons === 2 &&
-        !mobCard.text.includes('UTC') &&
-        mobCard.text.includes('nightly rate window'),
-      JSON.stringify(mobCard),
+    const mobCards = await page.locator('.pht-row').evaluateAll((rows) =>
+      rows.map((row) => {
+        const rect = (el) => {
+          const b = el.getBoundingClientRect();
+          return { l: b.left, r: b.right, t: b.top, b: b.bottom, w: b.width, h: b.height };
+        };
+        const note = row.querySelector('.pht-col--note');
+        const win = row.querySelector('.pht-col--window');
+        return {
+          card: rect(row),
+          switch: rect(row.querySelector('.pht-switch')),
+          model: rect(row.querySelector('.pht-col--model')),
+          window: rect(win),
+          windowAlign: getComputedStyle(win).textAlign,
+          noteDisplay: note ? getComputedStyle(note).display : null,
+          actions: rect(row.querySelector('.pht-col--actions')),
+          buttons: Array.from(row.querySelectorAll('.pht-col--actions button')).map(rect),
+          text: row.textContent ?? '',
+        };
+      }),
     );
-    const mobMini = await page.locator('.pht-row', { hasText: 'stub/stub-mini' }).evaluate((row) => {
-      const rect = (el) => {
-        const b = el.getBoundingClientRect();
-        return { t: b.top, b: b.bottom, h: b.height };
-      };
-      return {
-        card: rect(row),
-        window: rect(row.querySelector('.pht-col--window')),
-        note: rect(row.querySelector('.pht-col--note')),
-      };
-    });
     report(
-      'mobile card: a blank note still reserves its line',
-      mobMini.note.h >= 15 &&
-        mobMini.note.t >= mobMini.window.b - 2 &&
-        Math.abs(mobMini.card.h - mobCard.card.h) < 2,
-      JSON.stringify({ ghost: mobCard.card, mini: mobMini }),
+      'mobile card: switch | name / right-aligned window | no note line',
+      mobCards.length === 2 &&
+        mobCards.every(
+          (c) =>
+            c.switch.r <= c.model.l + 1 &&
+            c.window.t >= c.model.b - 2 &&
+            c.windowAlign === 'right' &&
+            c.noteDisplay === 'none' &&
+            c.buttons.length === 2 &&
+            !c.text.includes('UTC') &&
+            !c.text.includes('↻'),
+        ),
+      JSON.stringify(mobCards),
+    );
+    report(
+      'mobile card: edit and close are squares spanning the content block',
+      mobCards.every((c) => {
+        const blockH = c.window.b - c.model.t;
+        return c.buttons.every((b) => Math.abs(b.w - b.h) <= 1 && Math.abs(b.h - blockH) <= 2);
+      }) && Math.abs(mobCards[0].card.h - mobCards[1].card.h) < 2,
+      JSON.stringify(mobCards.map((c) => ({ card: c.card, buttons: c.buttons }))),
     );
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.waitForSelector('.sf-root:not(.sf-root--mobile)', { timeout: 5000 });

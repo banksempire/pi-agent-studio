@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import Dialog from '@sf/components/Dialog.vue';
 import SingleMenu from '@sf/components/SingleMenu.vue';
-import SvgIcon from '@sf/components/SvgIcon.vue';
 import { kMobilePanelDismiss } from '@sf/composables/useWorkspace';
 import type { SingleMenuOption } from '@sf/types/singleMenu';
 import { computed, inject, nextTick, ref } from 'vue';
 import { type ChatSession, endExternalDrag, startSessionDrag, timeAgo, useChatStore } from '../store/chat';
+import SessionStatusDot from './SessionStatusDot.vue';
 
 const store = useChatStore();
 const dismissMobilePanel = inject<(() => void) | null>(kMobilePanelDismiss, null);
@@ -87,9 +87,7 @@ function onMenuSelect(s: ChatSession, item: SingleMenuOption) {
             <span class="chat-list-time">{{ timeAgo(s.lastActivity) }}</span>
           </div>
           <div class="chat-list-row2">
-            <span class="chat-list-status" :class="'chat-list-status--' + s.status">
-              <SvgIcon v-if="s.status === 'running'" name="⏳" />
-            </span>
+            <SessionStatusDot :session="s" />
             <span class="chat-list-preview">{{ preview(s) }}</span>
           </div>
         </div>

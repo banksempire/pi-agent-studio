@@ -1,13 +1,8 @@
 <script setup lang="ts">
 import { kMobilePanelDismiss } from '@sf/composables/useWorkspace';
 import { computed, inject } from 'vue';
-import {
-  type ChatSession,
-  endExternalDrag,
-  type SessionSyncState,
-  startSessionDrag,
-  useChatStore,
-} from '../store/chat';
+import { type ChatSession, endExternalDrag, startSessionDrag, useChatStore } from '../store/chat';
+import ChatSessionsRow from './ChatSessionsRow.vue';
 
 const store = useChatStore();
 const dismissMobilePanel = inject<(() => void) | null>(kMobilePanelDismiss, null);
@@ -20,31 +15,6 @@ function open(s: ChatSession) {
 const list = computed(() =>
   store.syncedSessions().filter((s) => store.stateFilter[store.syncStateOf(s)?.state ?? 'open']),
 );
-
-function stateOf(s: ChatSession): SessionSyncState {
-  return store.syncStateOf(s)?.state ?? 'open';
-}
-
-function badge(s: ChatSession): string {
-  const st = stateOf(s);
-  if (st === 'working') return store.isViewOpen(s.id) ? 'working' : 'working · bg';
-  return st;
-}
-
-function badgeClass(s: ChatSession): string {
-  return stateOf(s);
-}
-
-function rowTitle(s: ChatSession): string {
-  const info = store.syncStateOf(s);
-  const err = info?.state === 'error' && info.error ? `\n${info.error}` : '';
-  return `Open chat window: ${s.title}${err}`;
-}
-
-function errorOf(s: ChatSession): string {
-  const info = store.syncStateOf(s);
-  return info?.state === 'error' ? info.error || 'error' : '';
-}
 </script>
 
 <template>
@@ -53,25 +23,14 @@ function errorOf(s: ChatSession): string {
       No sessions in this view. Sessions that are working, unread, in error, or open elsewhere
       appear here — adjust the status filter (▾ on the title bar).
     </div>
-    <div
+    <ChatSessionsRow
       v-for="s in list"
       :key="s.id"
-      class="chat-list-item"
-      :class="{ 'chat-list-item--active': s.id === store.activeChatId }"
-      :title="rowTitle(s)"
-      draggable="true"
-      @click="open(s)"
+      :s="s"
+      :active="s.id === store.activeChatId"
+      @open="open(s)"
       @dragstart="startSessionDrag($event, s)"
       @dragend="endExternalDrag"
-    >
-      <div class="chat-list-row1">
-        <span class="chat-list-title">{{ s.title }}</span>
-        <span class="chat-list-time">{{ s.stats.messageCount }} msgs</span>
-      </div>
-      <div class="chat-list-row2">
-        <span class="chat-list-badge" :class="'chat-list-badge--' + badgeClass(s)">{{ badge(s) }}</span>
-        <span class="chat-list-preview">{{ errorOf(s) || s.preview || s.title }}</span>
-      </div>
-    </div>
+    />
   </div>
 </template>

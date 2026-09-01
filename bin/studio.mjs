@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { ensureMain, instanceForCwd, listInstances, loadInstance } from './lib/instances.mjs';
 import { cmdJobs } from './lib/jobs.mjs';
 import * as manage from './lib/manage.mjs';
+import { cmdPeakHours } from './lib/peak-hours.mjs';
 import {
   CliError,
   cmdAbort,
@@ -53,6 +54,16 @@ commands:
   jobs run <id>             fire a job now (manual run, schedule untouched)
   jobs enable|disable <id>  toggle a job
   jobs runs <id> [-n N]     run history for a job
+  peak-hours list [--provider <id>]
+                            peak-hour windows (id, model, window, UTC, on, note)
+  peak-hours add …          add window(s) — --provider <id> for every catalog
+                            model or --model <provider/model>; --start/--end HH:MM
+                            on the --offset clock (UTC+8 | +8 | -5:30 | minutes);
+                            --note, --disabled; identical windows are skipped
+  peak-hours rm <id> | --key <provider/model> | --provider <id>
+                            delete window(s)
+  peak-hours enable|disable <id>
+                            toggle a window
   doctor [--fix]            diagnostics; --fix clears stale pidfiles + orphans,
                             installs the git guard hooks when missing
   guard [install|status]    install/inspect core.hooksPath on both repos
@@ -260,6 +271,11 @@ async function main() {
     case 'jobs': {
       const inst = resolveInstance(instanceId);
       await cmdJobs(out, inst, args);
+      return 0;
+    }
+    case 'peak-hours': {
+      const inst = resolveInstance(instanceId);
+      await cmdPeakHours(out, inst, args);
       return 0;
     }
     case 'guard': {

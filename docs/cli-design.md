@@ -247,6 +247,16 @@ studio [-i <instance>] <command> …        # auto-detects instance from CWD's p
   jobs run <id>               fire now (manual run; schedule untouched)
   jobs enable|disable <id>    toggle without editing
   jobs runs <id> [-n N]       run history
+  peak-hours list [--provider <id>]
+                              peak-hour windows (id, model, window, UTC, on, note)
+  peak-hours add …            add window(s): --provider <id> (every catalog model)
+                              | --model <provider/model>; --start/--end HH:MM on the
+                              --offset clock (UTC+8 | +8 | -5:30 | minutes, default UTC);
+                              --note <text>, --disabled; identical windows are skipped
+  peak-hours rm <id> | --key <provider/model> | --provider <id>
+                              delete window(s)
+  peak-hours enable|disable <id>
+                              toggle a window
   doctor [--fix]              diagnostics per §11; --fix auto-applies safe fixes
                               (stale pidfiles, orphans, git guard hooks);
                               orphan sweep also covers reparented browser
@@ -450,3 +460,42 @@ SIGKILL restarts identically — same covenant as the prompt queue.
 
 Check suite: `npm run check:scheduler` (cron math, fire/advance, missed
 policies, run-now, restart catch-up, boot sweep, timer).
+
+## 15. Peak hours (`peak-hours`)
+
+Rate-limit windows per model, backend-owned (`peak-hours.json` next to the
+journal, written through the running backend's `/api/peak-hours`). The UI
+surface lives in the Model menu (Model Catalog right panel + the Peak Hours
+tab); the CLI is the batch/agent surface.
+
+- **Window model**: `--start/--end` are HH:MM on the `--offset` clock
+  (`UTC+8`, `+8`, `-5:30`, or raw minutes; default UTC); the backend stores
+  canonical UTC minutes plus the display clock. A window may wrap midnight.
+  `--start` must differ from `--end`.
+- **Targets**: `--model <provider/model>` (or `--provider <id>` +
+  `--model <id>`) for one model, or `--provider <id>` alone to fan out over
+  every model of that provider in the live catalog (`GET /api/models`).
+  Fan-out is **idempotent**: models that already have an identical window
+  are reported as skipped, so re-running converges instead of failing.
+- **`list [--provider <id>]`** prints id, model, window (display clock),
+  UTC equivalent, enabled state, note. `--json` emits the raw entries.
+- **`rm`** deletes by entry id, by `--key <provider/model>`, or every window
+  of `--provider <id>`; reports how many were removed.
+- **`enable|disable <id>`** toggles without editing.
+- Errors: exit 2 for usage problems (bad HH:MM, unparseable or ±12h+
+  offsets, unknown provider with no catalog models), exit 1 for backend
+  failures; the backend re-validates everything (identical-window guard,
+  note length, offset range).
+
+Example — rate-limit window for a whole provider:
+
+```
+$ studio -i main peak-hours add --provider zai-coding-cn \
+    --start 14:00 --end 18:00 --offset UTC+8
+created zai-coding-cn/glm-4.7 — 14:00 - 18:00 UTC+8
+…
+10 created, 0 skipped, 0 failed
+```
+
+Check suite: `npm run check:cli` (add/list/rm/enable/disable, offset
+parsing, canonical UTC round-trip, idempotent fan-out).

@@ -291,6 +291,157 @@ async function main() {
       '',
     );
 
+    const phAdd = studio(
+      [
+        '-i',
+        ID,
+        'peak-hours',
+        'add',
+        '--model',
+        'cli-pro/m1',
+        '--start',
+        '14:00',
+        '--end',
+        '18:00',
+        '--offset',
+        'UTC+8',
+      ],
+      { label: 'peak-hours add' },
+    );
+    let phAll = await getJson(backendPort, '/api/peak-hours');
+    const phEntry = (phAll?.entries ?? []).find((e) => e.key === 'cli-pro/m1');
+    report(
+      'peak-hours add creates the window with canonical UTC',
+      phAdd.status === 0 &&
+        /created/.test(phAdd.stdout) &&
+        phEntry?.startUtc === '06:00' &&
+        phEntry?.endUtc === '10:00' &&
+        phEntry?.utcOffset === 480 &&
+        phEntry?.enabled === true,
+      `exit=${phAdd.status} out=${phAdd.stdout.trim().slice(0, 80)} entry=${JSON.stringify(phEntry)}`,
+    );
+
+    const phAgain = studio(
+      [
+        '-i',
+        ID,
+        'peak-hours',
+        'add',
+        '--model',
+        'cli-pro/m1',
+        '--start',
+        '14:00',
+        '--end',
+        '18:00',
+        '--offset',
+        '480',
+      ],
+      { label: 'peak-hours add again' },
+    );
+    phAll = await getJson(backendPort, '/api/peak-hours');
+    report(
+      're-adding an identical window is an idempotent skip (minutes offset form)',
+      phAgain.status === 0 &&
+        /skip/.test(phAgain.stdout) &&
+        /0 created, 1 skipped/.test(phAgain.stdout) &&
+        (phAll?.entries ?? []).filter((e) => e.key === 'cli-pro/m1').length === 1,
+      `exit=${phAgain.status} out=${phAgain.stdout.trim().slice(0, 80)}`,
+    );
+
+    const phList = studio(['-i', ID, 'peak-hours', 'list'], { label: 'peak-hours list' });
+    report(
+      'peak-hours list shows key, window and UTC equivalent',
+      phList.status === 0 &&
+        /cli-pro\/m1/.test(phList.stdout) &&
+        /14:00 - 18:00 UTC\+8/.test(phList.stdout) &&
+        /06:00 - 10:00 UTC/.test(phList.stdout),
+      phList.stdout.split('\n').slice(0, 4).join(' | '),
+    );
+
+    const phNoProvider = studio(
+      [
+        '-i',
+        ID,
+        'peak-hours',
+        'add',
+        '--provider',
+        'no-such-provider-zzz',
+        '--start',
+        '14:00',
+        '--end',
+        '18:00',
+      ],
+      { label: 'peak-hours unknown provider' },
+    );
+    report(
+      'adding for an unknown provider fails with exit 2',
+      phNoProvider.status === 2 && /no models/.test(phNoProvider.stderr + phNoProvider.stdout),
+      `exit=${phNoProvider.status}`,
+    );
+
+    const phNoStart = studio(['-i', ID, 'peak-hours', 'add', '--model', 'cli-pro/m2', '--end', '18:00'], {
+      label: 'peak-hours missing start',
+    });
+    report(
+      'missing --start is a usage error',
+      phNoStart.status === 2 && /--start and --end are required/.test(phNoStart.stderr),
+      `exit=${phNoStart.status}`,
+    );
+
+    const phBadOffset = studio(
+      [
+        '-i',
+        ID,
+        'peak-hours',
+        'add',
+        '--model',
+        'cli-pro/m2',
+        '--start',
+        '14:00',
+        '--end',
+        '18:00',
+        '--offset',
+        'UTC+25',
+      ],
+      { label: 'peak-hours bad offset' },
+    );
+    report(
+      'an out-of-range offset is rejected client-side',
+      phBadOffset.status === 2 && /--offset/.test(phBadOffset.stderr),
+      `exit=${phBadOffset.status}`,
+    );
+
+    const phDisable = studio(['-i', ID, 'peak-hours', 'disable', phEntry.id], {
+      label: 'peak-hours disable',
+    });
+    phAll = await getJson(backendPort, '/api/peak-hours');
+    report(
+      'disable toggles the window off',
+      phDisable.status === 0 && (phAll?.entries ?? []).find((e) => e.id === phEntry.id)?.enabled === false,
+      `exit=${phDisable.status}`,
+    );
+    const phEnable = studio(['-i', ID, 'peak-hours', 'enable', phEntry.id], {
+      label: 'peak-hours enable',
+    });
+    phAll = await getJson(backendPort, '/api/peak-hours');
+    report(
+      'enable toggles the window back on',
+      phEnable.status === 0 && (phAll?.entries ?? []).find((e) => e.id === phEntry.id)?.enabled === true,
+      `exit=${phEnable.status}`,
+    );
+
+    const phRm = studio(['-i', ID, 'peak-hours', 'rm', '--key', 'cli-pro/m1'], {
+      label: 'peak-hours rm',
+    });
+    phAll = await getJson(backendPort, '/api/peak-hours');
+    report(
+      'rm --key deletes the window',
+      phRm.status === 0 &&
+        /deleted 1 window/.test(phRm.stdout) &&
+        !(phAll?.entries ?? []).some((e) => e.key === 'cli-pro/m1'),
+      `exit=${phRm.status} out=${phRm.stdout.trim()}`,
+    );
+
     const otherPair = path.join(BASE, 'other-pair');
     const otherSrv = path.join(otherPair, 'pi-agent-studio', 'src', 'pi-studio', 'server');
     fs.mkdirSync(otherSrv, { recursive: true });

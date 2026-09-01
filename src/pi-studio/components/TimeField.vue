@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { kIsMobile } from '@sf/composables/useWorkspace';
-import { computed, inject, type Ref, ref, watch } from 'vue';
+import { computed, inject, onBeforeUnmount, type Ref, ref, watch } from 'vue';
 import { parseHm } from '../peakHours';
 
 const props = defineProps<{
@@ -63,11 +63,32 @@ function onNativeInput(e: Event) {
   emit('update:modelValue', (e.target as HTMLInputElement).value);
 }
 
+let pickerSwallow: ((e: MouseEvent) => void) | null = null;
+
+function disarmPickerSwallow() {
+  if (!pickerSwallow) return;
+  window.removeEventListener('mousedown', pickerSwallow, true);
+  pickerSwallow = null;
+}
+
+function armPickerSwallow() {
+  if (pickerSwallow) return;
+  pickerSwallow = (e: MouseEvent) => {
+    disarmPickerSwallow();
+    if (e.target instanceof Node && inputEl.value?.contains(e.target)) return;
+    e.stopPropagation();
+  };
+  window.addEventListener('mousedown', pickerSwallow, true);
+}
+
 function onNativeClick() {
   try {
     inputEl.value?.showPicker();
+    armPickerSwallow();
   } catch {}
 }
+
+onBeforeUnmount(disarmPickerSwallow);
 
 defineExpose({
   focus: () => inputEl.value?.focus(),
@@ -84,6 +105,7 @@ defineExpose({
       type="time"
       :value="modelValue"
       @input="onNativeInput"
+      @change="disarmPickerSwallow"
       @click="onNativeClick"
     >
     <input

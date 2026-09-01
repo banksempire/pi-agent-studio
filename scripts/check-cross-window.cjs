@@ -1167,6 +1167,27 @@ function makeReporter() {
       await aRow.click({ button: 'right' });
       await page.locator('.sf-sm-menu .sf-sm-menu-row', { hasText: 'Rename' }).click();
       await page.locator('.chat-dialog-input').fill(newTitle);
+      const renameChrome = await page.evaluate(() => {
+        const dlg = document.querySelector('.sf-dialog');
+        const btns = [...document.querySelectorAll('.sf-dialog-foot .sf-dialog-btn')];
+        const save = btns.find((b) => b.textContent.trim() === 'Save');
+        return {
+          usesElement: !!dlg,
+          danger: save ? getComputedStyle(save).backgroundColor : null,
+          sizes: btns.map((b) => {
+            const r = b.getBoundingClientRect();
+            return `${Math.round(r.width)}x${Math.round(r.height)}`;
+          }),
+        };
+      });
+      report(
+        'T15b rename popup renders via the Dialog element with equal-size footer buttons',
+        renameChrome.usesElement &&
+          renameChrome.sizes.length === 2 &&
+          renameChrome.sizes[0] === renameChrome.sizes[1] &&
+          renameChrome.danger === 'rgb(229, 72, 77)',
+        JSON.stringify(renameChrome),
+      );
       await page.getByRole('button', { name: 'Save' }).click();
       const rowShows = async () =>
         (await page.locator(`.chat-list-item:has-text("${newTitle}")`).count()) > 0;

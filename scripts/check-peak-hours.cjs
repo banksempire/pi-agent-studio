@@ -659,6 +659,30 @@ async function unitChecks({ report }) {
       mInfo.type === 'time' && mInfo.readOnly === false && callsAfter === callsBefore + 1,
       JSON.stringify({ ...mInfo, calls: callsAfter - callsBefore }),
     );
+
+    const pickerTap = await (async () => {
+      const card = await page.locator('.sf-dialog').boundingBox();
+      const vh = 812;
+      const pt =
+        card && card.y + card.height + 20 <= vh
+          ? { x: Math.round(card.x + card.width / 2), y: Math.round(card.y + card.height + 15) }
+          : { x: 5, y: Math.round(vh / 2) };
+      await page.mouse.click(pt.x, pt.y);
+      await delay(250);
+      const stayedOpen = (await page.locator('.sf-dialog').count()) === 1;
+      await page.mouse.click(pt.x, pt.y);
+      await delay(250);
+      const closedBySecondTap = (await page.locator('.sf-dialog').count()) === 0;
+      return { stayedOpen, closedBySecondTap, pt };
+    })();
+    report(
+      'an outside tap while the time picker is open dismisses the picker only; the next tap closes the window',
+      pickerTap.stayedOpen && pickerTap.closedBySecondTap,
+      JSON.stringify(pickerTap),
+    );
+    await page.locator('.aph-add').click();
+    await page.waitForSelector('.sf-dialog', { timeout: 5000 });
+
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.waitForSelector('.sf-root:not(.sf-root--mobile)', { timeout: 5000 });
     await delay(400);

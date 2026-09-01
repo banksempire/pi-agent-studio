@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import Dialog from '@sf/components/Dialog.vue';
 import SingleMenu from '@sf/components/SingleMenu.vue';
 import SvgIcon from '@sf/components/SvgIcon.vue';
 import { kMobilePanelDismiss } from '@sf/composables/useWorkspace';
@@ -50,10 +51,6 @@ async function confirmDialog() {
   if (name && name !== d.session.title) await store.renameSession(d.session.id, name);
 }
 
-function onDialogKey(e: KeyboardEvent) {
-  if (e.key === 'Escape') closeDialog();
-}
-
 function onMenuSelect(s: ChatSession, item: SingleMenuOption) {
   if (item.id === 'rename') openRename(s);
   else if (item.id === 'delete') void store.deleteSession(s.id);
@@ -99,23 +96,37 @@ function onMenuSelect(s: ChatSession, item: SingleMenuOption) {
       </template>
     </SingleMenu>
 
-    <div v-if="dialog" class="chat-dialog-backdrop" @click.self="closeDialog">
-      <div class="chat-dialog" tabindex="-1" role="dialog" @keydown="onDialogKey">
-        <div class="chat-dialog-title">Rename</div>
-
-        <input
-          ref="renameEl"
-          v-model="renameInput"
-          class="chat-dialog-input"
-          placeholder="Session name"
-          @keydown.enter.prevent="confirmDialog"
-        />
-
-        <div class="chat-dialog-actions">
-          <button class="chat-dialog-btn" @click="closeDialog">Cancel</button>
-          <button class="chat-dialog-btn chat-dialog-btn--danger" @click="confirmDialog">Save</button>
-        </div>
-      </div>
-    </div>
+    <Dialog :open="dialog !== null" title="Rename" @close="closeDialog">
+      <input
+        ref="renameEl"
+        v-model="renameInput"
+        class="chat-dialog-input"
+        placeholder="Session name"
+        @keydown.enter.prevent="confirmDialog"
+      />
+      <template #actions>
+        <button class="sf-dialog-btn" type="button" @click="closeDialog">Cancel</button>
+        <button class="sf-dialog-btn sf-dialog-btn--danger" type="button" @click="confirmDialog">
+          Save
+        </button>
+      </template>
+    </Dialog>
   </div>
 </template>
+
+<style scoped>
+.chat-dialog-input {
+  background: var(--sf-bg);
+  border: 1px solid var(--sf-border);
+  border-radius: var(--sf-radius-sm);
+  color: var(--sf-text);
+  font-family: var(--sf-font);
+  font-size: 16px;
+  padding: 6px 8px;
+  outline: none;
+}
+
+.chat-dialog-input:focus {
+  border-color: var(--sf-accent);
+}
+</style>

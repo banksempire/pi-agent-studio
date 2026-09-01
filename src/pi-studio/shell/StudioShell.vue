@@ -42,11 +42,11 @@ function onAction(e: FrameworkAction) {
     case 'stop-chat':
       if (store.activeChatId) store.stopSession(store.activeChatId);
       break;
-    case 'change-model':
-      if (store.activeChatId) store.requestModelPicker();
-      break;
     case 'open-model-catalog':
       store.openModelCatalog();
+      break;
+    case 'open-peak-hours':
+      store.openPeakHours();
       break;
     case 'refresh-model-catalog':
       void refreshModelCatalog().catch(() => {});

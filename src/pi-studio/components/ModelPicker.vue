@@ -46,14 +46,6 @@ watch(activeFile, () => {
   void load();
 });
 watch(
-  () => store.modelPickerTick,
-  async () => {
-    if (!active.value?.file) return;
-    if (!catalog.value) await load();
-    open.value = true;
-  },
-);
-watch(
   () => active.value?.stats.model ?? null,
   (m) => {
     const f = active.value?.file;

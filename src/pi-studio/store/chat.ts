@@ -4,6 +4,7 @@ import { readUiValue, removeUiValue, uiEpoch, writeUiValue } from '@sf/uiState';
 import { collectAllTabs, firstTile } from '@sf/workspace/tree';
 import { reactive, ref, watch } from 'vue';
 import type { ModelCatalogView, ModelInfo } from '../modelInfo';
+import { loadPeakHours, type PeakHourEntry } from '../peakHours';
 
 export interface ToolCallView {
   id: string;
@@ -160,6 +161,8 @@ const JOB_EDITOR_CONTENT = 'job-editor';
 const JOB_TAB_PREFIX = 'job-editor:';
 const MODEL_CATALOG_TAB_ID = 'model-catalog';
 const MODEL_CATALOG_CONTENT = 'model-catalog';
+const PEAK_HOURS_TAB_ID = 'peak-hours';
+const PEAK_HOURS_CONTENT = 'peak-hours';
 
 function jobEditorTabId(jobId: string | null): string {
   return JOB_TAB_PREFIX + (jobId ?? 'new');
@@ -239,12 +242,6 @@ function saveStateFilter() {
   writePersistedObject('app.chat.stateFilter', STATE_FILTER_KEY, state.stateFilter);
 }
 
-const modelPickerTick = ref(0);
-
-function requestModelPicker() {
-  modelPickerTick.value += 1;
-}
-
 const modelDetail = ref<{ model: ModelInfo; isDefault: boolean } | null>(null);
 const modelDefaultLevel = ref<string | null>(null);
 const modelDefaultSource = ref<'settings' | 'latest-chat' | 'fallback'>('fallback');
@@ -254,6 +251,21 @@ function requestModelDetail(model: ModelInfo, isDefault: boolean) {
 }
 
 const modelDefaultTick = ref(0);
+
+const peakHours = ref<PeakHourEntry[]>([]);
+const peakHoursError = ref('');
+const peakHoursLoaded = ref(false);
+
+async function refreshPeakHours() {
+  try {
+    peakHours.value = await loadPeakHours();
+    peakHoursError.value = '';
+  } catch (e) {
+    if (!(e instanceof TypeError)) peakHoursError.value = String((e as Error)?.message ?? e);
+  } finally {
+    peakHoursLoaded.value = true;
+  }
+}
 
 function syncModelDefault(view: ModelCatalogView) {
   modelDefaultLevel.value = view.defaultThinkingLevel ?? null;
@@ -846,6 +858,24 @@ function openModelCatalog() {
     label: 'Model Catalog',
     icon: '🤖',
     content: MODEL_CATALOG_CONTENT,
+    props: {},
+  });
+}
+
+function openPeakHours() {
+  if (!ws) return;
+  const existing = ws.findTabGlobal(PEAK_HOURS_TAB_ID);
+  if (existing) {
+    ws.ops.activateTab(existing.id, PEAK_HOURS_TAB_ID);
+    return;
+  }
+  const tileId = targetTileId();
+  if (!tileId) return;
+  ws.ops.openTab(tileId, {
+    id: PEAK_HOURS_TAB_ID,
+    label: 'Peak Hours',
+    icon: '🕒',
+    content: PEAK_HOURS_CONTENT,
     props: {},
   });
 }
@@ -2328,7 +2358,8 @@ export const store = {
   setJobsSort,
   openJobEditor,
   openModelCatalog,
-  requestModelPicker,
+  openPeakHours,
+  refreshPeakHours,
   requestModelDetail,
   applyModelDefault,
   syncModelDefault,
@@ -2351,14 +2382,20 @@ export const store = {
   get jobsSort() {
     return state.jobsSort;
   },
-  get modelPickerTick() {
-    return modelPickerTick.value;
-  },
   get modelDetail() {
     return modelDetail.value;
   },
   get modelDefaultTick() {
     return modelDefaultTick.value;
+  },
+  get peakHours() {
+    return peakHours.value;
+  },
+  get peakHoursError() {
+    return peakHoursError.value;
+  },
+  get peakHoursLoaded() {
+    return peakHoursLoaded.value;
   },
   get modelDefaultLevel() {
     return modelDefaultLevel.value;

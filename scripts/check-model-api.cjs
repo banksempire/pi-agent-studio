@@ -751,12 +751,16 @@ const STUB_MODELS = [
     await page.locator('.sf-tab-label', { hasText: 'model-api-check' }).first().click({ force: true });
     await delay(400);
     await page.locator('.sf-menu-item', { hasText: 'Model' }).click();
-    await page.locator('.sf-menu-row', { hasText: 'Change Model…' }).waitFor({ timeout: 5000 });
-    await page.locator('.sf-menu-row', { hasText: 'Change Model…' }).click();
+    await delay(300);
+    const changeModelRows = await page.locator('.sf-menu-row', { hasText: 'Change Model' }).count();
+    report('the Model menu no longer offers Change Model…', changeModelRows === 0, `rows=${changeModelRows}`);
+    await page.keyboard.press('Escape');
+    await delay(300);
+    await page.locator('.model-menu-btn').click();
     await delay(600);
     const pickerOpen = await page.locator('.model-menu .sf-menu-pop').count();
     report(
-      'Change Model… opens the right-panel model picker menu',
+      'the session panel Change Model button opens the picker menu',
       pickerOpen === 1,
       `pickerPops=${pickerOpen}`,
     );

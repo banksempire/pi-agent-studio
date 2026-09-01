@@ -456,7 +456,13 @@ async function unitChecks({ report }) {
 
     await page.waitForSelector('.aph', { timeout: 10000 });
     const emptyHint = await page.locator('.aph-empty').count();
-    report('panel starts with the empty hint', emptyHint === 1, `hint=${emptyHint}`);
+    const emptyRows = await page.locator('.aph-row').count();
+    const idleHint = (await page.locator('.aph-hint').textContent()) ?? '';
+    report(
+      'panel starts scoped and empty with no hint text',
+      emptyHint === 0 && emptyRows === 0 && idleHint.includes('select a model'),
+      `hint=${emptyHint} rows=${emptyRows} idle=${idleHint.trim()}`,
+    );
 
     const addBeforeSelect = await page.locator('.aph-add').isDisabled();
     report(
@@ -467,6 +473,12 @@ async function unitChecks({ report }) {
 
     await page.locator('.model-catalog-row', { hasText: 'Stub Pro' }).first().click();
     await delay(300);
+    const scopedHint = (await page.locator('.aph-hint').textContent()) ?? '';
+    report(
+      'the subsection head shows the selected model key',
+      scopedHint.includes('stub/stub-pro'),
+      `hint=${scopedHint.trim()}`,
+    );
 
     await page.locator('.aph-add').click();
     await page.waitForSelector('.aph-dialog', { timeout: 5000 });
@@ -568,10 +580,7 @@ async function unitChecks({ report }) {
     let row = await page.locator('.aph-row').first().textContent();
     report(
       'created row shows the window in its timezone plus the UTC equivalent',
-      row.includes('stub/stub-pro') &&
-        row.includes('09:00–17:00') &&
-        row.includes('UTC+2') &&
-        row.includes('07:00–15:00 UTC'),
+      row.includes('09:00–17:00') && row.includes('UTC+2') && row.includes('07:00–15:00 UTC'),
       `row=${row}`,
     );
 
@@ -596,10 +605,7 @@ async function unitChecks({ report }) {
     );
     const entryId = r.body.entries[0].id;
 
-    await page
-      .locator('.aph-row', { hasText: 'stub/stub-pro' })
-      .locator('.aph-actions button[title="Edit window"]')
-      .click();
+    await page.locator('.aph-row .aph-actions button[title="Edit window"]').first().click();
     await page.waitForSelector('.aph-dialog', { timeout: 5000 });
     await page.selectOption('#aph-tz', '0');
     const editStart = await page.locator('#aph-start').inputValue();
@@ -621,7 +627,7 @@ async function unitChecks({ report }) {
         r.body.entries[0].utcOffset === 0,
       JSON.stringify(r.body.entries[0]),
     );
-    row = await page.locator('.aph-row', { hasText: 'stub/stub-pro' }).textContent();
+    row = await page.locator('.aph-row').first().textContent();
     report(
       'row re-renders in the new timezone',
       row.includes('07:00–15:00') && row.includes('UTC'),
@@ -666,39 +672,83 @@ async function unitChecks({ report }) {
     await page.locator('.sf-menu-item', { hasText: 'Model' }).click();
     await page.locator('.sf-menu-row', { hasText: 'Model Catalog…' }).waitFor({ timeout: 5000 });
     await page.locator('.sf-menu-row', { hasText: 'Model Catalog…' }).click();
+    await page.waitForSelector('.model-catalog-row', { timeout: 10000 });
+    await page.locator('.model-catalog-row', { hasText: 'Stub Pro' }).first().click();
     await page.waitForSelector('.aph-row', { timeout: 10000 });
-    await page.locator('.aph-row', { hasText: 'ghost/ghost-model' }).waitFor({ timeout: 5000 });
-    const ghostRow = await page.locator('.aph-row', { hasText: 'ghost/ghost-model' }).textContent();
-    const ghostChip = await page.locator('.aph-unknown').count();
+    await delay(300);
+    const scopedRows = await page.locator('.aph-row').count();
+    const scopedGhostRows = await page.locator('.aph-row', { hasText: 'ghost' }).count();
     report(
-      'entries for models absent from the catalog are kept and flagged',
-      ghostRow.includes('22:00–02:00') && ghostRow.includes('↻') && ghostChip === 1,
+      "the subsection lists only the selected model's windows",
+      scopedRows === 1 && scopedGhostRows === 0,
+      `rows=${scopedRows} ghostRows=${scopedGhostRows}`,
+    );
+
+    await page.locator('.sf-menu-item', { hasText: 'Model' }).click();
+    await page.locator('.sf-menu-row', { hasText: 'Peak Hours…' }).waitFor({ timeout: 5000 });
+    await page.locator('.sf-menu-row', { hasText: 'Peak Hours…' }).click();
+    await page.waitForSelector('.pht', { timeout: 10000 });
+    await page.locator('.pht-row').first().waitFor({ timeout: 10000 });
+    const peakTab = await page.locator('.sf-tab-label', { hasText: 'Peak Hours' }).count();
+    report('the Model menu Peak Hours… item opens a workspace tab', peakTab === 1, `tab=${peakTab}`);
+
+    await page.locator('.pht-row', { hasText: 'ghost/ghost-model' }).waitFor({ timeout: 5000 });
+    const ghostRow = await page.locator('.pht-row', { hasText: 'ghost/ghost-model' }).textContent();
+    const ghostChip = await page.locator('.pht-unknown').count();
+    report(
+      'the tab lists every window and flags models absent from the catalog',
+      (await page.locator('.pht-row').count()) === 2 &&
+        ghostRow.includes('22:00–02:00') &&
+        ghostRow.includes('↻') &&
+        ghostChip === 1,
       `row=${ghostRow} chips=${ghostChip}`,
     );
 
-    await page.locator('.aph-row', { hasText: 'stub/stub-pro' }).locator('.aph-switch').click();
+    await page.locator('.pht-add').click();
+    await page.waitForSelector('.aph-dialog', { timeout: 5000 });
+    await page.selectOption('#aph-model', 'stub/stub-mini');
+    await page.selectOption('#aph-tz', '0');
+    await page.fill('#aph-start', '03:00');
+    await page.fill('#aph-end', '06:00');
+    await page.locator('.aph-save').click();
+    await page.waitForSelector('.aph-dialog', { state: 'detached', timeout: 10000 });
+    await delay(500);
+    report(
+      'adding from the tab goes through a model selector',
+      (await page.locator('.pht-row').count()) === 3,
+      `rows=${await page.locator('.pht-row').count()}`,
+    );
+    r = await jfetch('/api/peak-hours');
+    const miniEntry = r.body.entries.find((e) => e.key === 'stub/stub-mini');
+    report(
+      'the tab-created window persists with canonical UTC',
+      !!miniEntry && miniEntry.startUtc === '03:00' && miniEntry.endUtc === '06:00',
+      JSON.stringify(miniEntry ?? null),
+    );
+
+    await page.locator('.pht-row', { hasText: 'stub/stub-pro' }).locator('.pht-switch').click();
     await delay(600);
-    const offRow = await page.locator('.aph-row', { hasText: 'stub/stub-pro' }).getAttribute('class');
+    const offRow = await page.locator('.pht-row', { hasText: 'stub/stub-pro' }).getAttribute('class');
     r = await jfetch('/api/peak-hours');
     report(
       'the switch toggles enabled via PATCH',
-      offRow.includes('aph-row--off') && r.body.entries.find((e) => e.id === entryId).enabled === false,
+      offRow.includes('pht-row--off') && r.body.entries.find((e) => e.id === entryId).enabled === false,
       `cls=${offRow}`,
     );
 
     await page
-      .locator('.aph-row', { hasText: 'stub/stub-pro' })
-      .locator('.aph-actions button[title="Delete window"]')
+      .locator('.pht-row', { hasText: 'stub/stub-pro' })
+      .locator('button[title="Delete window"]')
       .click();
     await delay(800);
-    const rowsAfterDelete = await page.locator('.aph-row').count();
+    const rowsAfterDelete = await page.locator('.pht-row').count();
     r = await jfetch('/api/peak-hours');
     report(
       'delete removes the row and persists',
-      rowsAfterDelete === 1 &&
-        r.body.entries.length === 1 &&
-        r.body.entries[0].key === 'ghost/ghost-model' &&
-        JSON.parse(fs.readFileSync(PEAK_HOURS_PATH, 'utf8')).entries.length === 1,
+      rowsAfterDelete === 2 &&
+        r.body.entries.length === 2 &&
+        r.body.entries.every((e) => e.key !== 'stub/stub-pro') &&
+        JSON.parse(fs.readFileSync(PEAK_HOURS_PATH, 'utf8')).entries.length === 2,
       `rows=${rowsAfterDelete}`,
     );
 
@@ -747,7 +797,9 @@ async function unitChecks({ report }) {
     const rDel = await jfetch('/api/peak-hours/nope', { method: 'DELETE' });
     report('unknown ids give 404 on PATCH and DELETE', r.status === 404 && rDel.status === 404);
 
-    const ghostId = (await jfetch('/api/peak-hours')).body.entries[0].id;
+    const ghostId = (await jfetch('/api/peak-hours')).body.entries.find(
+      (e) => e.key === 'ghost/ghost-model',
+    ).id;
     r = await jfetch(`/api/peak-hours/${ghostId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -786,9 +838,9 @@ async function unitChecks({ report }) {
     r = await fetch(`http://127.0.0.1:${secondPort}/api/peak-hours`).then((x) => x.json());
     report(
       'a fresh backend process loads the persisted entries',
-      r.entries.length === 1 &&
-        r.entries[0].key === 'ghost/ghost-model' &&
-        r.entries[0].note === 'nightly rate window',
+      r.entries.length === 2 &&
+        r.entries.find((e) => e.key === 'ghost/ghost-model')?.note === 'nightly rate window' &&
+        r.entries.some((e) => e.key === 'stub/stub-mini'),
       JSON.stringify(r.entries),
     );
 

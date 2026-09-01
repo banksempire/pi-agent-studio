@@ -16,6 +16,7 @@ import ModelDetail from './components/ModelDetail.vue';
 import ModelPicker from './components/ModelPicker.vue';
 import ModelPreference from './components/ModelPreference.vue';
 import PeakHoursPanel from './components/PeakHoursPanel.vue';
+import PeakHoursTab from './components/PeakHoursTab.vue';
 import PrefsPanel from './components/PrefsPanel.vue';
 import SessionStats from './components/SessionStats.vue';
 import WelcomeContent from './components/WelcomeContent.vue';
@@ -25,6 +26,7 @@ registerTabContent('welcome', WelcomeContent);
 registerTabContent('chat-window', ChatWindow);
 registerTabContent('job-editor', JobEditor);
 registerTabContent('model-catalog', ModelCatalog);
+registerTabContent('peak-hours', PeakHoursTab);
 
 registerPanelComponent('chat-history', ChatHistory);
 registerPanelComponent('chat-sessions', ChatSessions);

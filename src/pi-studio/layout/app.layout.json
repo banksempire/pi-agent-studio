@@ -35,14 +35,14 @@
       "label": "Model",
       "items": [
         {
-          "id": "change-model",
-          "label": "Change Model…",
-          "action": "change-model"
-        },
-        {
           "id": "model-catalog",
           "label": "Model Catalog…",
           "action": "open-model-catalog"
+        },
+        {
+          "id": "peak-hours",
+          "label": "Peak Hours…",
+          "action": "open-peak-hours"
         },
         {
           "separator": true

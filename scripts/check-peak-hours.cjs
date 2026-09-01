@@ -550,8 +550,8 @@ async function unitChecks({ report }) {
       };
     });
     report(
-      'time boxes are plain text inputs with a light clock glyph',
-      timeInfo.type === 'text' && timeInfo.icon && timeInfo.stroke && timeInfo.cursor === 'pointer',
+      'desktop time boxes are plain text inputs with a light clock glyph',
+      timeInfo.type === 'text' && timeInfo.icon && timeInfo.stroke && timeInfo.cursor === 'text',
       JSON.stringify(timeInfo),
     );
 
@@ -607,55 +607,32 @@ async function unitChecks({ report }) {
       JSON.stringify(addBtnTheme),
     );
 
+    await page.evaluate(() => {
+      window.__pickerCalls = 0;
+      HTMLInputElement.prototype.showPicker = () => {
+        window.__pickerCalls += 1;
+      };
+    });
     const startBox = await page.locator('#aph-start').boundingBox();
     await page.mouse.click(startBox.x + 10, startBox.y + startBox.height / 2);
-    await page.waitForSelector('.tf-pop', { timeout: 5000 });
-    report('clicking anywhere in the time box opens the picker', true);
+    await delay(200);
+    const desktopClick = await page.evaluate(() => ({
+      focused: document.activeElement?.id,
+      popups: document.querySelectorAll('.tf-pop').length,
+      calls: window.__pickerCalls,
+    }));
+    report(
+      'desktop disables select-to-input — a click only focuses the box for typing',
+      desktopClick.focused === 'aph-start' && desktopClick.popups === 0 && desktopClick.calls === 0,
+      JSON.stringify(desktopClick),
+    );
 
     await page.fill('#aph-start', '12:59');
     await delay(200);
-    const typedWithPop = {
-      value: await page.locator('#aph-start').inputValue(),
-      popOpen: (await page.locator('.tf-pop').count()) === 1,
-    };
-    report(
-      'typing a whole time works directly with the picker open',
-      typedWithPop.value === '12:59' && typedWithPop.popOpen,
-      JSON.stringify(typedWithPop),
-    );
+    const typedWhole = await page.locator('#aph-start').inputValue();
+    report('typing a whole time works directly', typedWhole === '12:59', `value=${typedWhole}`);
 
-    await page.locator('.tf-grid--hours .tf-cell--sel').waitFor({ timeout: 5000 });
-    const selHour = (await page.locator('.tf-grid--hours .tf-cell--sel').textContent()) ?? '';
-    const selMinute = (await page.locator('.tf-grid--minutes .tf-cell--sel').textContent()) ?? '';
-    report(
-      'the picker highlights the typed value',
-      selHour.trim() === '12' && selMinute.trim() === '59',
-      `h=${selHour} m=${selMinute}`,
-    );
-
-    await page.locator('.tf-grid--hours .tf-cell', { hasText: '13' }).first().click();
-    await page.locator('.tf-grid--minutes .tf-cell', { hasText: '45' }).first().click();
-    await delay(200);
-    const pickedValue = await page.locator('#aph-start').inputValue();
-    report('picker clicks set the time', pickedValue === '13:45', `value=${pickedValue}`);
-
-    await page.keyboard.press('Escape');
-    await delay(200);
-    const afterEscape = {
-      pop: (await page.locator('.tf-pop').count()) === 0,
-      dialog: (await page.locator('.aph-dialog').count()) === 1,
-    };
-    report(
-      'Escape closes the picker, not the dialog',
-      afterEscape.pop && afterEscape.dialog,
-      JSON.stringify(afterEscape),
-    );
-
-    await page.mouse.click(startBox.x + startBox.width - 10, startBox.y + startBox.height / 2);
-    await page.waitForSelector('.tf-pop', { timeout: 5000 });
     await page.fill('#aph-start', '1259');
-    await page.keyboard.press('Escape');
-    await delay(150);
     await page.locator('#aph-note').click();
     await delay(300);
     const normalized = await page.locator('#aph-start').inputValue();
@@ -668,13 +645,20 @@ async function unitChecks({ report }) {
     await page.waitForSelector('.aph-add', { timeout: 5000 });
     await page.locator('.aph-add').click();
     await page.waitForSelector('.aph-dialog', { timeout: 5000 });
-    const mobileRo = await page.locator('#aph-start').evaluate((el) => el.readOnly);
+    const mInfo = await page.locator('#aph-start').evaluate((el) => ({
+      type: el.getAttribute('type'),
+      readOnly: el.readOnly,
+    }));
+    const callsBefore = await page.evaluate(() => window.__pickerCalls);
     const mobileBox = await page.locator('#aph-start').boundingBox();
     await page.mouse.click(mobileBox.x + 10, mobileBox.y + mobileBox.height / 2);
-    await page.waitForSelector('.tf-pop', { timeout: 5000 });
-    report('mobile disables typing but keeps the picker', mobileRo === true, `readonly=${mobileRo}`);
-    await page.keyboard.press('Escape');
     await delay(200);
+    const callsAfter = await page.evaluate(() => window.__pickerCalls);
+    report(
+      'mobile selects via the native system dual time selector',
+      mInfo.type === 'time' && mInfo.readOnly === false && callsAfter === callsBefore + 1,
+      JSON.stringify({ ...mInfo, calls: callsAfter - callsBefore }),
+    );
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.waitForSelector('.sf-root:not(.sf-root--mobile)', { timeout: 5000 });
     await delay(400);

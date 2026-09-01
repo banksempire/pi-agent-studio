@@ -643,8 +643,19 @@ async function unitChecks({ report }) {
     await delay(400);
     await page.locator('.sf-mobile-rp-btn').first().click();
     await page.waitForSelector('.aph-add', { timeout: 5000 });
+    const callsPreOpen = await page.evaluate(() => window.__pickerCalls);
     await page.locator('.aph-add').click();
     await page.waitForSelector('.sf-dialog', { timeout: 5000 });
+    await delay(150);
+    const mountState = await page.evaluate(() => ({
+      focused: document.activeElement?.id ?? '',
+      calls: window.__pickerCalls,
+    }));
+    report(
+      'mobile: opening the dialog leaves the time picker closed',
+      mountState.focused !== 'aph-start' && mountState.calls === callsPreOpen,
+      JSON.stringify({ pre: callsPreOpen, ...mountState }),
+    );
     const mInfo = await page.locator('#aph-start').evaluate((el) => ({
       type: el.getAttribute('type'),
       readOnly: el.readOnly,

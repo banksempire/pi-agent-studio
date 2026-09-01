@@ -519,6 +519,62 @@ async function unitChecks({ report }) {
     await page.waitForSelector('.aph-dialog', { timeout: 5000 });
     report('Escape closes the popup', closedByEscape, `closed=${closedByEscape}`);
 
+    const closeInfo = await page.locator('.aph-dialog-close').evaluate((el) => {
+      const cs = getComputedStyle(el);
+      const r = el.getBoundingClientRect();
+      return {
+        w: Math.round(r.width),
+        h: Math.round(r.height),
+        radius: cs.borderTopLeftRadius,
+        bg: cs.backgroundColor,
+        color: cs.color,
+      };
+    });
+    report(
+      'the popup close button is a red rounded square',
+      closeInfo.w === closeInfo.h &&
+        closeInfo.w >= 20 &&
+        closeInfo.radius !== '0px' &&
+        closeInfo.bg === 'rgb(244, 135, 113)' &&
+        closeInfo.color === 'rgb(255, 255, 255)',
+      JSON.stringify(closeInfo),
+    );
+
+    const timeInfo = await page.locator('#aph-start').evaluate((el) => {
+      const cs = getComputedStyle(el);
+      let nativeHidden = false;
+      for (const sheet of document.styleSheets) {
+        let rules;
+        try {
+          rules = sheet.cssRules;
+        } catch {
+          continue;
+        }
+        for (const r of rules) {
+          if (r.selectorText?.includes('calendar-picker-indicator') && r.style?.display === 'none')
+            nativeHidden = true;
+        }
+      }
+      return {
+        scheme: cs.colorScheme,
+        nativeHidden,
+        icon: cs.backgroundImage.includes('svg'),
+        stroke: cs.backgroundImage.includes('%23cccccc'),
+      };
+    });
+    report(
+      'time inputs drop the native black icon for a light clock glyph',
+      timeInfo.scheme === 'dark' && timeInfo.nativeHidden && timeInfo.icon && timeInfo.stroke,
+      JSON.stringify(timeInfo),
+    );
+
+    await page.locator('.aph-dialog-close').click();
+    await delay(200);
+    const closedByButton = (await page.locator('.aph-dialog').count()) === 0;
+    report('the close button closes the popup', closedByButton, `closed=${closedByButton}`);
+
+    await page.locator('.aph-add').click();
+    await page.waitForSelector('.aph-dialog', { timeout: 5000 });
     const modelSelectCount = await page.locator('#aph-model').count();
     const boundModel = (await page.locator('.aph-model-bound').textContent()) ?? '';
     report(

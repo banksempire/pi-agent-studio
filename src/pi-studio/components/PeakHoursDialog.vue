@@ -160,7 +160,7 @@ function onBackdropDown(e: MouseEvent) {
       <div class="aph-dialog" role="dialog" aria-modal="true" :aria-label="dialogTitle">
         <header class="aph-dialog-head">
           <span class="aph-dialog-title">{{ dialogTitle }}</span>
-          <button class="aph-btn aph-iconbtn aph-dialog-close" title="Close" @click="close">
+          <button class="aph-btn aph-dialog-close" title="Close" @click="close">
             <SvgIcon name="✕" />
           </button>
         </header>
@@ -275,10 +275,6 @@ function onBackdropDown(e: MouseEvent) {
   color: var(--sf-text-bright);
 }
 
-.aph-dialog-close {
-  flex-shrink: 0;
-}
-
 .aph-dialog-body {
   display: flex;
   flex-direction: column;
@@ -365,9 +361,22 @@ function onBackdropDown(e: MouseEvent) {
   }
 }
 
-.aph-iconbtn {
-  padding: 2px 5px;
-  background: var(--sf-bar);
+.aph-dialog-close {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: var(--sf-radius-sm);
+  background: var(--sf-danger);
+  border-color: var(--sf-danger);
+  color: var(--sf-text-on-accent);
+}
+
+@media (hover: hover) {
+  .aph-dialog-close:not(:disabled):hover {
+    box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
+    color: var(--sf-text-on-accent);
+  }
 }
 
 .aph-input {
@@ -395,6 +404,21 @@ function onBackdropDown(e: MouseEvent) {
 
 .aph-time {
   font-variant-numeric: tabular-nums;
+  color-scheme: dark;
+  padding-right: 30px;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none'><circle cx='12' cy='12' r='9' stroke='%23cccccc' stroke-width='2'/><path d='M12 7v5l3.5 2' stroke='%23cccccc' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+
+.aph-time::-webkit-calendar-picker-indicator {
+  display: none;
+  -webkit-appearance: none;
+}
+
+.aph-time:hover {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none'><circle cx='12' cy='12' r='9' stroke='%23e0e0e0' stroke-width='2'/><path d='M12 7v5l3.5 2' stroke='%23e0e0e0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/></svg>");
 }
 
 .aph-live {

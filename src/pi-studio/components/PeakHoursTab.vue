@@ -428,7 +428,7 @@ function windowText(e: PeakHourEntry): string {
   grid-template:
     'switch model actions' auto
     'switch window actions' auto / auto minmax(0, 1fr) auto;
-  row-gap: 3px;
+  row-gap: 4px;
   padding: 8px 12px;
   align-content: center;
 }
@@ -446,18 +446,27 @@ function windowText(e: PeakHourEntry): string {
   text-align: right;
 }
 
+.sf-root--mobile .pht-col--model,
+.sf-root--mobile .pht-col--window {
+  line-height: 20px;
+}
+
+.sf-root--mobile .pht-unknown {
+  line-height: 1;
+}
+
 .sf-root--mobile .pht-col--note {
   display: none;
 }
 
 .sf-root--mobile .pht-col--actions {
   grid-area: actions;
-  align-self: stretch;
 }
 
 .sf-root--mobile .pht-iconbtn {
+  width: 44px;
+  height: 44px;
   padding: 0;
-  aspect-ratio: 1;
   font-size: 16px;
 }
 </style>

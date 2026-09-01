@@ -14,6 +14,7 @@ import {
   toUtcMinutes,
   updatePeakHours,
 } from '../peakHours';
+import TimeField from './TimeField.vue';
 
 export interface PeakHourModelChoice {
   key: string;
@@ -52,7 +53,7 @@ const endUtcMin = ref(1020);
 
 const formError = ref('');
 const busy = ref(false);
-const startInput = ref<HTMLInputElement | null>(null);
+const startInput = ref<{ focus: () => void } | null>(null);
 
 const boundKey = computed(() => (editing ? src.key : chosenKey.value));
 
@@ -76,6 +77,16 @@ function recomputeUtcFromFields() {
   const e = parseHm(endField.value);
   if (s !== null) startUtcMin.value = toUtcMinutes(s, utcOffset.value);
   if (e !== null) endUtcMin.value = toUtcMinutes(e, utcOffset.value);
+}
+
+function onStartTime(v: string) {
+  startField.value = v;
+  recomputeUtcFromFields();
+}
+
+function onEndTime(v: string) {
+  endField.value = v;
+  recomputeUtcFromFields();
 }
 
 function rederiveFieldsFromUtc() {
@@ -141,15 +152,6 @@ function onDocKey(e: KeyboardEvent) {
   if (e.key === 'Escape') close();
 }
 
-function openPicker(e: MouseEvent) {
-  const el = e.currentTarget as HTMLInputElement;
-  const r = el.getBoundingClientRect();
-  if (e.clientX < r.right - 30) return;
-  try {
-    el.showPicker();
-  } catch {}
-}
-
 onMounted(() => {
   dialogTarget.value = (document.querySelector('.sf-root') as HTMLElement | null) ?? 'body';
   void nextTick(() => startInput.value?.focus());
@@ -190,26 +192,20 @@ function onBackdropDown(e: MouseEvent) {
           <div class="aph-times">
             <div class="aph-field">
               <label class="aph-label" for="aph-start">Peak start</label>
-              <input
+              <TimeField
                 id="aph-start"
                 ref="startInput"
-                v-model="startField"
-                class="aph-input aph-time"
-                type="time"
-                @input="recomputeUtcFromFields"
-                @click="openPicker"
-              >
+                :model-value="startField"
+                @update:model-value="(v) => onStartTime(v)"
+              />
             </div>
             <div class="aph-field">
               <label class="aph-label" for="aph-end">Peak end</label>
-              <input
+              <TimeField
                 id="aph-end"
-                v-model="endField"
-                class="aph-input aph-time"
-                type="time"
-                @input="recomputeUtcFromFields"
-                @click="openPicker"
-              >
+                :model-value="endField"
+                @update:model-value="(v) => onEndTime(v)"
+              />
             </div>
           </div>
           <div class="aph-field">
@@ -411,25 +407,6 @@ function onBackdropDown(e: MouseEvent) {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
-}
-
-.aph-time {
-  font-variant-numeric: tabular-nums;
-  color-scheme: dark;
-  padding-right: 30px;
-  cursor: pointer;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none'><circle cx='12' cy='12' r='9' stroke='%23cccccc' stroke-width='2'/><path d='M12 7v5l3.5 2' stroke='%23cccccc' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/></svg>");
-  background-repeat: no-repeat;
-  background-position: right 8px center;
-}
-
-.aph-time::-webkit-calendar-picker-indicator {
-  display: none;
-  -webkit-appearance: none;
-}
-
-.aph-time:hover {
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none'><circle cx='12' cy='12' r='9' stroke='%23e0e0e0' stroke-width='2'/><path d='M12 7v5l3.5 2' stroke='%23e0e0e0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/></svg>");
 }
 
 .aph-live {

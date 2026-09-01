@@ -542,29 +542,16 @@ async function unitChecks({ report }) {
 
     const timeInfo = await page.locator('#aph-start').evaluate((el) => {
       const cs = getComputedStyle(el);
-      let nativeHidden = false;
-      for (const sheet of document.styleSheets) {
-        let rules;
-        try {
-          rules = sheet.cssRules;
-        } catch {
-          continue;
-        }
-        for (const r of rules) {
-          if (r.selectorText?.includes('calendar-picker-indicator') && r.style?.display === 'none')
-            nativeHidden = true;
-        }
-      }
       return {
-        scheme: cs.colorScheme,
-        nativeHidden,
+        type: el.getAttribute('type'),
         icon: cs.backgroundImage.includes('svg'),
         stroke: cs.backgroundImage.includes('%23cccccc'),
+        cursor: cs.cursor,
       };
     });
     report(
-      'time inputs drop the native black icon for a light clock glyph',
-      timeInfo.scheme === 'dark' && timeInfo.nativeHidden && timeInfo.icon && timeInfo.stroke,
+      'time boxes are plain text inputs with a light clock glyph',
+      timeInfo.type === 'text' && timeInfo.icon && timeInfo.stroke && timeInfo.cursor === 'pointer',
       JSON.stringify(timeInfo),
     );
 
@@ -620,24 +607,79 @@ async function unitChecks({ report }) {
       JSON.stringify(addBtnTheme),
     );
 
-    await page.evaluate(() => {
-      window.__pickerCalls = 0;
-      HTMLInputElement.prototype.showPicker = () => {
-        window.__pickerCalls += 1;
-      };
-    });
     const startBox = await page.locator('#aph-start').boundingBox();
-    await page.mouse.click(startBox.x + startBox.width - 10, startBox.y + startBox.height / 2);
-    await delay(200);
-    const iconCalls = await page.evaluate(() => window.__pickerCalls);
     await page.mouse.click(startBox.x + 10, startBox.y + startBox.height / 2);
+    await page.waitForSelector('.tf-pop', { timeout: 5000 });
+    report('clicking anywhere in the time box opens the picker', true);
+
+    await page.fill('#aph-start', '12:59');
     await delay(200);
-    const fieldCalls = await page.evaluate(() => window.__pickerCalls);
+    const typedWithPop = {
+      value: await page.locator('#aph-start').inputValue(),
+      popOpen: (await page.locator('.tf-pop').count()) === 1,
+    };
     report(
-      'time inputs open the picker from the clock zone and stay typeable elsewhere',
-      iconCalls === 1 && fieldCalls === iconCalls,
-      `icon=${iconCalls} field=${fieldCalls}`,
+      'typing a whole time works directly with the picker open',
+      typedWithPop.value === '12:59' && typedWithPop.popOpen,
+      JSON.stringify(typedWithPop),
     );
+
+    await page.locator('.tf-grid--hours .tf-cell--sel').waitFor({ timeout: 5000 });
+    const selHour = (await page.locator('.tf-grid--hours .tf-cell--sel').textContent()) ?? '';
+    const selMinute = (await page.locator('.tf-grid--minutes .tf-cell--sel').textContent()) ?? '';
+    report(
+      'the picker highlights the typed value',
+      selHour.trim() === '12' && selMinute.trim() === '59',
+      `h=${selHour} m=${selMinute}`,
+    );
+
+    await page.locator('.tf-grid--hours .tf-cell', { hasText: '13' }).first().click();
+    await page.locator('.tf-grid--minutes .tf-cell', { hasText: '45' }).first().click();
+    await delay(200);
+    const pickedValue = await page.locator('#aph-start').inputValue();
+    report('picker clicks set the time', pickedValue === '13:45', `value=${pickedValue}`);
+
+    await page.keyboard.press('Escape');
+    await delay(200);
+    const afterEscape = {
+      pop: (await page.locator('.tf-pop').count()) === 0,
+      dialog: (await page.locator('.aph-dialog').count()) === 1,
+    };
+    report(
+      'Escape closes the picker, not the dialog',
+      afterEscape.pop && afterEscape.dialog,
+      JSON.stringify(afterEscape),
+    );
+
+    await page.mouse.click(startBox.x + startBox.width - 10, startBox.y + startBox.height / 2);
+    await page.waitForSelector('.tf-pop', { timeout: 5000 });
+    await page.fill('#aph-start', '1259');
+    await page.keyboard.press('Escape');
+    await delay(150);
+    await page.locator('#aph-note').click();
+    await delay(300);
+    const normalized = await page.locator('#aph-start').inputValue();
+    report('loose input normalizes on blur', normalized === '12:59', `value=${normalized}`);
+
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.waitForSelector('.sf-root--mobile', { timeout: 5000 });
+    await delay(400);
+    await page.locator('.sf-mobile-rp-btn').first().click();
+    await page.waitForSelector('.aph-add', { timeout: 5000 });
+    await page.locator('.aph-add').click();
+    await page.waitForSelector('.aph-dialog', { timeout: 5000 });
+    const mobileRo = await page.locator('#aph-start').evaluate((el) => el.readOnly);
+    const mobileBox = await page.locator('#aph-start').boundingBox();
+    await page.mouse.click(mobileBox.x + 10, mobileBox.y + mobileBox.height / 2);
+    await page.waitForSelector('.tf-pop', { timeout: 5000 });
+    report('mobile disables typing but keeps the picker', mobileRo === true, `readonly=${mobileRo}`);
+    await page.keyboard.press('Escape');
+    await delay(200);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForSelector('.sf-root:not(.sf-root--mobile)', { timeout: 5000 });
+    await delay(400);
+    await page.locator('.aph-add').click();
+    await page.waitForSelector('.aph-dialog', { timeout: 5000 });
 
     await page.selectOption('#aph-tz', '120');
     await page.fill('#aph-start', '09:00');

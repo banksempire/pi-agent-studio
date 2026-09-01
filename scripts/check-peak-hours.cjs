@@ -481,8 +481,8 @@ async function unitChecks({ report }) {
     );
 
     await page.locator('.aph-add').click();
-    await page.waitForSelector('.aph-dialog', { timeout: 5000 });
-    const dialogInfo = await page.locator('.aph-dialog').evaluate((el) => {
+    await page.waitForSelector('.sf-dialog', { timeout: 5000 });
+    const dialogInfo = await page.locator('.sf-dialog').evaluate((el) => {
       const cs = getComputedStyle(el);
       const r = el.getBoundingClientRect();
       const back = el.parentElement;
@@ -514,12 +514,12 @@ async function unitChecks({ report }) {
 
     await page.keyboard.press('Escape');
     await delay(200);
-    const closedByEscape = (await page.locator('.aph-dialog').count()) === 0;
+    const closedByEscape = (await page.locator('.sf-dialog').count()) === 0;
     await page.locator('.aph-add').click();
-    await page.waitForSelector('.aph-dialog', { timeout: 5000 });
+    await page.waitForSelector('.sf-dialog', { timeout: 5000 });
     report('Escape closes the popup', closedByEscape, `closed=${closedByEscape}`);
 
-    const closeInfo = await page.locator('.aph-dialog-close').evaluate((el) => {
+    const closeInfo = await page.locator('.sf-dialog-close').evaluate((el) => {
       const cs = getComputedStyle(el);
       const r = el.getBoundingClientRect();
       return {
@@ -555,13 +555,13 @@ async function unitChecks({ report }) {
       JSON.stringify(timeInfo),
     );
 
-    await page.locator('.aph-dialog-close').click();
+    await page.locator('.sf-dialog-close').click();
     await delay(200);
-    const closedByButton = (await page.locator('.aph-dialog').count()) === 0;
+    const closedByButton = (await page.locator('.sf-dialog').count()) === 0;
     report('the close button closes the popup', closedByButton, `closed=${closedByButton}`);
 
     await page.locator('.aph-add').click();
-    await page.waitForSelector('.aph-dialog', { timeout: 5000 });
+    await page.waitForSelector('.sf-dialog', { timeout: 5000 });
     const modelSelectCount = await page.locator('#aph-model').count();
     const boundModel = (await page.locator('.aph-model-bound').textContent()) ?? '';
     report(
@@ -644,7 +644,7 @@ async function unitChecks({ report }) {
     await page.locator('.sf-mobile-rp-btn').first().click();
     await page.waitForSelector('.aph-add', { timeout: 5000 });
     await page.locator('.aph-add').click();
-    await page.waitForSelector('.aph-dialog', { timeout: 5000 });
+    await page.waitForSelector('.sf-dialog', { timeout: 5000 });
     const mInfo = await page.locator('#aph-start').evaluate((el) => ({
       type: el.getAttribute('type'),
       readOnly: el.readOnly,
@@ -663,7 +663,7 @@ async function unitChecks({ report }) {
     await page.waitForSelector('.sf-root:not(.sf-root--mobile)', { timeout: 5000 });
     await delay(400);
     await page.locator('.aph-add').click();
-    await page.waitForSelector('.aph-dialog', { timeout: 5000 });
+    await page.waitForSelector('.sf-dialog', { timeout: 5000 });
 
     await page.selectOption('#aph-tz', '120');
     await page.fill('#aph-start', '09:00');
@@ -675,7 +675,7 @@ async function unitChecks({ report }) {
       `hint=${liveHint}`,
     );
     await page.locator('.aph-save').click();
-    await page.waitForSelector('.aph-dialog', { state: 'detached', timeout: 10000 });
+    await page.waitForSelector('.sf-dialog', { state: 'detached', timeout: 10000 });
     await page.locator('.aph-row').waitFor({ timeout: 10000 });
 
     let row = await page.locator('.aph-row').first().textContent();
@@ -707,7 +707,7 @@ async function unitChecks({ report }) {
     const entryId = r.body.entries[0].id;
 
     await page.locator('.aph-row .aph-actions button[title="Edit window"]').first().click();
-    await page.waitForSelector('.aph-dialog', { timeout: 5000 });
+    await page.waitForSelector('.sf-dialog', { timeout: 5000 });
     await page.selectOption('#aph-tz', '0');
     const editStart = await page.locator('#aph-start').inputValue();
     const editEnd = await page.locator('#aph-end').inputValue();
@@ -718,7 +718,7 @@ async function unitChecks({ report }) {
       `start=${editStart} end=${editEnd} hint=${editHint}`,
     );
     await page.locator('.aph-save').click();
-    await page.waitForSelector('.aph-dialog', { state: 'detached', timeout: 10000 });
+    await page.waitForSelector('.sf-dialog', { state: 'detached', timeout: 10000 });
     await page.locator('.aph-row').waitFor({ timeout: 10000 });
     r = await jfetch('/api/peak-hours');
     report(
@@ -736,7 +736,7 @@ async function unitChecks({ report }) {
     );
 
     await page.locator('.aph-row .aph-actions button[title="Edit window"]').first().click();
-    await page.waitForSelector('.aph-dialog', { timeout: 5000 });
+    await page.waitForSelector('.sf-dialog', { timeout: 5000 });
     await page.fill('#aph-start', '09:00');
     await page.fill('#aph-end', '09:00');
     const saveDisabled = await page.locator('.aph-save').isDisabled();
@@ -806,13 +806,13 @@ async function unitChecks({ report }) {
     );
 
     await page.locator('.pht-add').click();
-    await page.waitForSelector('.aph-dialog', { timeout: 5000 });
+    await page.waitForSelector('.sf-dialog', { timeout: 5000 });
     await page.selectOption('#aph-model', 'stub/stub-mini');
     await page.selectOption('#aph-tz', '0');
     await page.fill('#aph-start', '03:00');
     await page.fill('#aph-end', '06:00');
     await page.locator('.aph-save').click();
-    await page.waitForSelector('.aph-dialog', { state: 'detached', timeout: 10000 });
+    await page.waitForSelector('.sf-dialog', { state: 'detached', timeout: 10000 });
     await delay(500);
     report(
       'adding from the tab goes through a model selector',

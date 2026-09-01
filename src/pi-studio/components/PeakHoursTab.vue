@@ -3,7 +3,7 @@ import SvgIcon from '@sf/components/SvgIcon.vue';
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import type { ModelCatalogView } from '../modelInfo';
 import { loadModelCatalog } from '../modelInfo';
-import { deletePeakHours, type PeakHourEntry, shortOffsetLabel, updatePeakHours } from '../peakHours';
+import { deletePeakHours, offsetLabel, type PeakHourEntry, updatePeakHours } from '../peakHours';
 import { useChatStore } from '../store/chat';
 import PeakHoursDialog, { type PeakHourModelChoice } from './PeakHoursDialog.vue';
 
@@ -113,7 +113,7 @@ function onRowClick(e: PeakHourEntry) {
 }
 
 function windowText(e: PeakHourEntry): string {
-  return `${e.start} - ${e.end} (${shortOffsetLabel(e.utcOffset)})`;
+  return `${e.start} - ${e.end} ${offsetLabel(e.utcOffset)}`;
 }
 </script>
 

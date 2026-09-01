@@ -828,9 +828,8 @@ async function unitChecks({ report }) {
     report(
       'the tab lists every window and flags models absent from the catalog',
       (await page.locator('.pht-row').count()) === 2 &&
-        ghostRow.includes('22:00 - 02:00 (+0)') &&
+        ghostRow.includes('22:00 - 02:00 UTC') &&
         !ghostRow.includes('↻') &&
-        !ghostRow.includes('UTC') &&
         ghostChip === 1 &&
         ghostWindowTitle.includes('crosses midnight UTC'),
       `row=${ghostRow} chips=${ghostChip} title=${ghostWindowTitle}`,
@@ -871,8 +870,8 @@ async function unitChecks({ report }) {
 
     const miniRowText = (await page.locator('.pht-row', { hasText: 'stub/stub-mini' }).textContent()) ?? '';
     report(
-      'window text uses the hh:mm - hh:mm (+offset) layout',
-      miniRowText.includes('03:00 - 06:00 (+0)') && !miniRowText.includes('UTC'),
+      'window text uses the hh:mm - hh:mm UTC±n layout',
+      miniRowText.includes('03:00 - 06:00 UTC'),
       `row=${miniRowText}`,
     );
 
@@ -1025,7 +1024,7 @@ async function unitChecks({ report }) {
             c.btnBgs[1] === 'rgb(244, 135, 113)' &&
             c.btnColors[0] !== 'rgb(244, 135, 113)' &&
             c.btnColors[1] === 'rgb(255, 255, 255)' &&
-            !c.text.includes('UTC') &&
+            c.text.includes(' UTC') &&
             !c.text.includes('↻'),
         ),
       JSON.stringify(mobCards),

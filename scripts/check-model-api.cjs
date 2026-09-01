@@ -640,6 +640,13 @@ const STUB_MODELS = [
       JSON.stringify(detailDef ?? null),
     );
 
+    const prefDef = catalogSubs.find((s) => s.id === 'model-preference');
+    report(
+      'Preference subsection is content-fit, not variable-height',
+      prefDef?.height === 'fixed' && prefDef?.minHeight === undefined,
+      JSON.stringify(prefDef ?? null),
+    );
+
     await page.locator('.sf-tab-label', { hasText: 'model-api-check' }).first().click({ force: true });
     await delay(400);
     const chatTitle = (await page.locator('.sf-panel--right .sf-panel-title').textContent()) ?? '';

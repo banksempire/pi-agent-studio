@@ -251,7 +251,7 @@
             {
               "id": "model-preference",
               "label": "Preference",
-              "height": "variable",
+              "height": "fixed",
               "components": [
                 {
                   "type": "component",

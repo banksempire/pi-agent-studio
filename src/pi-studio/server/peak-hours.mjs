@@ -7,7 +7,7 @@ const MAX_ENTRIES = 400;
 const MAX_PROVIDER_LEN = 64;
 const MAX_MODEL_LEN = 128;
 const MAX_NOTE_LEN = 200;
-const OFFSET_ABS_MAX = 14 * 60;
+const OFFSET_ABS_MAX = 12 * 60;
 const NOT_FOUND = 'peak-hours entry not found';
 
 export function parseHm(value) {

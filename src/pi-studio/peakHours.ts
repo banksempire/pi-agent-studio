@@ -38,7 +38,7 @@ export function offsetLabel(minutes: number): string {
 
 export const OFFSET_OPTIONS: Array<{ value: number; label: string }> = (() => {
   const out: Array<{ value: number; label: string }> = [];
-  for (let h = -12; h <= 14; h++) out.push({ value: h * 60, label: offsetLabel(h * 60) });
+  for (let h = -12; h <= 12; h++) out.push({ value: h * 60, label: offsetLabel(h * 60) });
   return out;
 })();
 

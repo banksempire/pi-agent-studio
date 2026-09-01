@@ -215,7 +215,7 @@ async function unitChecks({ report }) {
 
   const bad = [
     [{ provider: 'x', model: 'y', start: '09:00', end: '09:00', utcOffset: 0 }, 'start and end must differ'],
-    [{ provider: 'x', model: 'y', start: '09:00', end: '17:00', utcOffset: 900 }, 'utcOffset'],
+    [{ provider: 'x', model: 'y', start: '09:00', end: '17:00', utcOffset: 780 }, 'utcOffset'],
     [{ provider: '   ', model: 'y', start: '09:00', end: '17:00', utcOffset: 0 }, 'provider is required'],
     [{ provider: 'x', model: '', start: '09:00', end: '17:00', utcOffset: 0 }, 'model is required'],
     [
@@ -521,13 +521,14 @@ async function unitChecks({ report }) {
         els.map((e) => ({ value: Number(e.value), label: (e.textContent || '').trim() })),
       );
     report(
-      'timezone selector offers whole-hour offsets only (UTC-12..UTC+14)',
-      tzOptions.length === 27 &&
+      'timezone selector offers whole-hour offsets only (UTC-12..UTC+12)',
+      tzOptions.length === 25 &&
         tzOptions.every((o) => Number.isInteger(o.value) && o.value % 60 === 0) &&
         tzOptions[0].value === -720 &&
-        tzOptions[tzOptions.length - 1].value === 840 &&
+        tzOptions[tzOptions.length - 1].value === 720 &&
+        !tzOptions.some((o) => Math.abs(o.value) > 720) &&
         tzOptions.every((o) => !o.label.includes(':')) &&
-        tzOptions.some((o) => o.label === 'UTC+14') &&
+        tzOptions.some((o) => o.label === 'UTC+12') &&
         tzOptions.some((o) => o.label === 'UTC-12'),
       JSON.stringify({
         n: tzOptions.length,

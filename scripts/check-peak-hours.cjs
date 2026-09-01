@@ -1006,6 +1006,7 @@ async function unitChecks({ report }) {
           actions: rect(row.querySelector('.pht-col--actions')),
           buttons: btns.map(rect),
           btnColors: btns.map((b) => getComputedStyle(b).color),
+          btnBgs: btns.map((b) => getComputedStyle(b).backgroundColor),
           text: row.textContent ?? '',
         };
       }),
@@ -1020,8 +1021,10 @@ async function unitChecks({ report }) {
             c.windowAlign === 'left' &&
             c.noteDisplay === 'none' &&
             c.buttons.length === 2 &&
+            c.btnBgs[0] !== 'rgb(244, 135, 113)' &&
+            c.btnBgs[1] === 'rgb(244, 135, 113)' &&
             c.btnColors[0] !== 'rgb(244, 135, 113)' &&
-            c.btnColors[1] === 'rgb(244, 135, 113)' &&
+            c.btnColors[1] === 'rgb(255, 255, 255)' &&
             !c.text.includes('UTC') &&
             !c.text.includes('↻'),
         ),

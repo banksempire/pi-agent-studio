@@ -403,7 +403,9 @@ function windowText(e: PeakHourEntry): string {
 }
 
 .pht-iconbtn--danger {
-  color: var(--sf-danger);
+  background: var(--sf-danger);
+  border-color: var(--sf-danger);
+  color: var(--sf-text-on-accent);
 }
 
 .pht-empty {

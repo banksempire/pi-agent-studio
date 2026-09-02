@@ -796,6 +796,18 @@ async function unitChecks({ report }) {
       pressedMonFri === 5,
       `pressed=${pressedMonFri}`,
     );
+    const daysTrack = await page.locator('.aph-days .sf-ms-track').boundingBox();
+    const daysField = await page.locator('.aph-days').boundingBox();
+    const daysChip = await page.locator('.aph-days .sf-ms-item').first().boundingBox();
+    report(
+      'the weekday selector fills the row left to right with taller chips',
+      !!daysTrack &&
+        !!daysField &&
+        !!daysChip &&
+        Math.abs(daysTrack.width - daysField.width) < 4 &&
+        daysChip.height >= 30,
+      JSON.stringify({ track: daysTrack?.width, field: daysField?.width, chip: daysChip?.height }),
+    );
 
     await page.selectOption('#aph-tz', '120');
     await page.fill('#aph-start', '09:00');

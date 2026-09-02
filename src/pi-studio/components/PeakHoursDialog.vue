@@ -290,6 +290,19 @@ async function save() {
   font-size: 13px;
 }
 
+.aph-days :deep(.sf-ms-track) {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.aph-days :deep(.sf-ms-item) {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 8px 0;
+  text-align: center;
+}
+
+
 .aph-live {
   font-size: 12px;
   color: var(--sf-text-muted);

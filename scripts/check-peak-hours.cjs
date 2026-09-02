@@ -482,6 +482,16 @@ async function unitChecks({ report }) {
 
     await page.locator('.aph-add').click();
     await page.waitForSelector('.sf-dialog', { timeout: 5000 });
+    await delay(150);
+    const desktopFocus = await page.evaluate(() => ({
+      focused: document.activeElement?.id ?? '',
+      tag: document.activeElement?.tagName ?? '',
+    }));
+    report(
+      'desktop: opening the dialog does not focus the time input',
+      desktopFocus.focused !== 'aph-start' && desktopFocus.tag !== 'INPUT',
+      JSON.stringify(desktopFocus),
+    );
     const dialogInfo = await page.locator('.sf-dialog').evaluate((el) => {
       const cs = getComputedStyle(el);
       const r = el.getBoundingClientRect();

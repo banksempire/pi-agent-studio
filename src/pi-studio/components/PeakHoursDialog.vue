@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import Dialog from '@sf/components/Dialog.vue';
-import { kIsMobile } from '@sf/composables/useWorkspace';
-import { computed, inject, nextTick, onMounted, type Ref, ref } from 'vue';
+import { computed, ref } from 'vue';
 import type { PeakHourEntry } from '../peakHours';
 import {
   browserUtcOffset,
@@ -54,10 +53,6 @@ const endUtcMin = ref(1020);
 
 const formError = ref('');
 const busy = ref(false);
-const startInput = ref<{ focus: () => void } | null>(null);
-
-const injectedMobile = inject<Ref<boolean> | null>(kIsMobile, null);
-const isMobile = computed(() => injectedMobile?.value ?? false);
 
 const boundKey = computed(() => (editing ? src.key : chosenKey.value));
 
@@ -148,11 +143,6 @@ async function save() {
     busy.value = false;
   }
 }
-
-onMounted(() => {
-  if (isMobile.value) return;
-  void nextTick(() => startInput.value?.focus());
-});
 </script>
 
 <template>
@@ -181,7 +171,6 @@ onMounted(() => {
         <label class="aph-label" for="aph-start">Peak start</label>
         <TimeField
           id="aph-start"
-          ref="startInput"
           :model-value="startField"
           @update:model-value="(v) => onStartTime(v)"
         />

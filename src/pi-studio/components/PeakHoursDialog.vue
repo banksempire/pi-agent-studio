@@ -296,28 +296,6 @@ async function save() {
   gap: 10px;
 }
 
-.aph-days {
-  font-size: 13px;
-}
-
-.aph-days :deep(.sf-ms-track) {
-  width: 100%;
-  height: 36px;
-  box-sizing: border-box;
-  padding: 3px;
-  align-items: stretch;
-}
-
-.aph-days :deep(.sf-ms-item) {
-  flex: 1 1 0;
-  min-width: 0;
-  align-self: stretch;
-  padding: 0;
-  line-height: 1;
-  text-align: center;
-}
-
-
 .aph-live {
   font-size: 12px;
   color: var(--sf-text-muted);

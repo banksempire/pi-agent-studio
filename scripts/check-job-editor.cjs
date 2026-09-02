@@ -441,10 +441,12 @@ function writeSessionFile(name) {
       const ts = document.querySelector('.sf-ms-track')
         ? getComputedStyle(document.querySelector('.sf-ms-track'))
         : null;
+      const inset = ts ? Number.parseFloat(ts.paddingTop) + Number.parseFloat(ts.borderTopWidth) : NaN;
       const gap = ts ? Number.parseFloat(ts.gap) : NaN;
       return {
         trackBorder: ts?.borderTopWidth ?? '',
         trackRadius: ts?.borderTopLeftRadius ?? '',
+        expectedRadius: ts ? Number.parseFloat(ts.borderTopLeftRadius) - inset : NaN,
         gap,
         mon: geo(pick('Mon')),
         wed: geo(pick('Wed')),
@@ -467,7 +469,7 @@ function writeSessionFile(name) {
         runGeometry.fri.on &&
         !runGeometry.fri.cont &&
         runGeometry.fri.left === '0px' &&
-        runGeometry.fri.right === '8px' &&
+        Number.parseFloat(runGeometry.fri.right) === runGeometry.expectedRadius &&
         !runGeometry.sun.on &&
         runGeometry.sun.left === '0px' &&
         runGeometry.sun.right === '0px' &&
@@ -855,7 +857,7 @@ function writeSessionFile(name) {
     await page.evaluate(() => {
       const s = document.createElement('style');
       s.id = 'force-ms-wrap';
-      s.textContent = '.sf-ms-track{flex-wrap:wrap!important;max-width:220px!important}';
+      s.textContent = '.sf-ms-track{flex-wrap:wrap!important;max-width:150px!important}';
       document.head.appendChild(s);
     });
     await page.locator('.sf-ms-item', { hasText: 'Sun' }).click();
@@ -873,6 +875,9 @@ function writeSessionFile(name) {
         }
       }
       if (boundary === -1) return { rows, boundary };
+      const trackStyle = getComputedStyle(track);
+      const trackRadius = Number.parseFloat(trackStyle.borderTopLeftRadius);
+      const inset = Number.parseFloat(trackStyle.paddingTop) + Number.parseFloat(trackStyle.borderTopWidth);
       const last = getComputedStyle(items[boundary], '::before');
       const lead = getComputedStyle(items[boundary + 1], '::before');
       return {
@@ -883,6 +888,7 @@ function writeSessionFile(name) {
         lastRadius: last.borderTopRightRadius,
         leadBorderLeft: lead.borderLeftWidth,
         leadRadius: lead.borderTopLeftRadius,
+        expectedRadius: trackRadius - inset,
       };
     });
     report(
@@ -890,9 +896,9 @@ function writeSessionFile(name) {
       wrapped.rows >= 2 &&
         wrapped.lastRight === '0px' &&
         wrapped.lastBorderRight === '1px' &&
-        wrapped.lastRadius === '8px' &&
+        Number.parseFloat(wrapped.lastRadius) === wrapped.expectedRadius &&
         wrapped.leadBorderLeft === '1px' &&
-        wrapped.leadRadius === '8px',
+        Number.parseFloat(wrapped.leadRadius) === wrapped.expectedRadius,
       JSON.stringify(wrapped),
     );
     await page.evaluate(() => document.getElementById('force-ms-wrap')?.remove());

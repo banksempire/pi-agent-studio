@@ -799,6 +799,10 @@ async function unitChecks({ report }) {
     const daysTrack = await page.locator('.aph-days .sf-ms-track').boundingBox();
     const daysField = await page.locator('.aph-days').boundingBox();
     const daysChip = await page.locator('.aph-days .sf-ms-item').first().boundingBox();
+    const pillRadius = await page.evaluate(() => {
+      const el = document.querySelector('.aph-days .sf-ms-item--on');
+      return el ? getComputedStyle(el, '::before').borderTopLeftRadius : null;
+    });
     report(
       'the weekday selector fills the row left to right with taller chips',
       !!daysTrack &&
@@ -806,12 +810,14 @@ async function unitChecks({ report }) {
         !!daysChip &&
         Math.abs(daysTrack.width - daysField.width) < 4 &&
         daysChip.height >= 27 &&
-        daysChip.y - daysTrack.y >= 3.5,
+        daysChip.y - daysTrack.y >= 3.5 &&
+        pillRadius === '4px',
       JSON.stringify({
         track: daysTrack?.width,
         field: daysField?.width,
         chip: daysChip?.height,
         inset: daysChip && daysTrack ? Math.round((daysChip.y - daysTrack.y) * 10) / 10 : null,
+        pillRadius,
       }),
     );
     const ctlHeights = await page.evaluate(() => {

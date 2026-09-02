@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import Dialog from '@sf/components/Dialog.vue';
+import MultiSelectGroup from '@sf/components/MultiSelectGroup.vue';
 import { computed, ref } from 'vue';
 import type { PeakHourEntry } from '../peakHours';
 import {
+  ALL_WEEKDAYS,
   browserUtcOffset,
   createPeakHours,
+  DOW_OPTIONS,
   fmtHm,
   OFFSET_OPTIONS,
   offsetLabel,
@@ -44,6 +47,7 @@ const chosenKey = ref(
 );
 const note = ref(editing ? src.note : '');
 const utcOffset = ref(editing ? src.utcOffset : browserUtcOffset());
+const weekdays = ref<number[]>([...(editing ? (src.weekdays ?? ALL_WEEKDAYS) : ALL_WEEKDAYS)]);
 const startField = ref(
   editing ? fmtHm(toLocalMinutes(parseHm(src.startUtc) ?? 540, utcOffset.value)) : '09:00',
 );
@@ -105,6 +109,7 @@ const liveHint = computed(
 const problems = computed<string[]>(() => {
   const list: string[] = [];
   if (!splitModelKey(boundKey.value)) list.push('model');
+  if (weekdays.value.length === 0) list.push('at least one weekday');
   if (parseHm(startField.value) === null) list.push('start time');
   if (parseHm(endField.value) === null) list.push('end time');
   if (parseHm(startField.value) !== null && parseHm(endField.value) !== null) {
@@ -132,6 +137,7 @@ async function save() {
       start: startField.value,
       end: endField.value,
       utcOffset: utcOffset.value,
+      weekdays: [...weekdays.value],
       note: note.value.trim(),
     };
     if (editing) await updatePeakHours(src.id, input);
@@ -183,6 +189,15 @@ async function save() {
           @update:model-value="(v) => onEndTime(v)"
         />
       </div>
+    </div>
+    <div class="aph-field">
+      <span class="aph-label">Days</span>
+      <MultiSelectGroup
+        class="aph-days"
+        :options="DOW_OPTIONS"
+        :model-value="weekdays"
+        @update:model-value="(v) => (weekdays = v as number[])"
+      />
     </div>
     <div class="aph-field">
       <label class="aph-label" for="aph-tz">Timezone</label>
@@ -269,6 +284,10 @@ async function save() {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
+}
+
+.aph-days {
+  font-size: 13px;
 }
 
 .aph-live {

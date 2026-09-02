@@ -317,7 +317,9 @@ async function main() {
         phEntry?.startUtc === '06:00' &&
         phEntry?.endUtc === '10:00' &&
         phEntry?.utcOffset === 480 &&
-        phEntry?.enabled === true,
+        phEntry?.enabled === true &&
+        Array.isArray(phEntry?.weekdays) &&
+        phEntry?.weekdays.join() === '0,1,2,3,4,5,6',
       `exit=${phAdd.status} out=${phAdd.stdout.trim().slice(0, 80)} entry=${JSON.stringify(phEntry)}`,
     );
 
@@ -348,14 +350,67 @@ async function main() {
       `exit=${phAgain.status} out=${phAgain.stdout.trim().slice(0, 80)}`,
     );
 
+    const phWeekdays = studio(
+      [
+        '-i',
+        ID,
+        'peak-hours',
+        'add',
+        '--model',
+        'cli-pro/m3',
+        '--start',
+        '09:00',
+        '--end',
+        '12:00',
+        '--weekdays',
+        'mon-fri',
+      ],
+      { label: 'peak-hours add weekdays' },
+    );
+    phAll = await getJson(backendPort, '/api/peak-hours');
+    const phM3 = (phAll?.entries ?? []).find((e) => e.key === 'cli-pro/m3');
+    report(
+      'add --weekdays mon-fri stores working days only',
+      phWeekdays.status === 0 &&
+        phM3?.weekdays?.join() === '1,2,3,4,5' &&
+        /Mon–Fri/.test(phWeekdays.stdout) &&
+        /cli-pro\/m3/.test(phWeekdays.stdout),
+      `exit=${phWeekdays.status} out=${phWeekdays.stdout.trim().slice(0, 80)} m3=${JSON.stringify(phM3?.weekdays)}`,
+    );
+
     const phList = studio(['-i', ID, 'peak-hours', 'list'], { label: 'peak-hours list' });
     report(
       'peak-hours list shows key, window and UTC equivalent',
       phList.status === 0 &&
         /cli-pro\/m1/.test(phList.stdout) &&
         /14:00 - 18:00 UTC\+8/.test(phList.stdout) &&
-        /06:00 - 10:00 UTC/.test(phList.stdout),
+        /06:00 - 10:00 UTC/.test(phList.stdout) &&
+        /cli-pro\/m3.*Mon–Fri/.test(phList.stdout.replace(/\s+/g, ' ')) &&
+        /cli-pro\/m1[^\n]*daily/.test(phList.stdout),
       phList.stdout.split('\n').slice(0, 4).join(' | '),
+    );
+
+    const phBadWeekdays = studio(
+      [
+        '-i',
+        ID,
+        'peak-hours',
+        'add',
+        '--model',
+        'cli-pro/m2',
+        '--start',
+        '09:00',
+        '--end',
+        '12:00',
+        '--weekdays',
+        'soonday',
+      ],
+      { label: 'peak-hours bad weekdays' },
+    );
+    report(
+      'an unparsable --weekdays is rejected client-side',
+      phBadWeekdays.status === 2 && /--weekdays/.test(phBadWeekdays.stderr),
+      `exit=${phBadWeekdays.status}`,
     );
 
     const phNoProvider = studio(

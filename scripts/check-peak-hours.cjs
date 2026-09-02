@@ -213,6 +213,57 @@ async function unitChecks({ report }) {
       !store.list().find((e) => e.id === r3.entry.id).enabled,
   );
 
+  const wdPath = path.join(RUN_ROOT, 'wd-peak.json');
+  const wdStore = mod.createPeakHoursStore({ persistPath: wdPath });
+  const wdEntry = wdStore.create({
+    provider: 'openai',
+    model: 'gpt-x',
+    start: '09:00',
+    end: '17:00',
+    utcOffset: 0,
+    weekdays: [5, 1, 3, 1],
+  });
+  report(
+    'unit: weekdays are normalized to sorted unique day numbers',
+    wdEntry.entry?.weekdays?.join() === '1,3,5' && wdStore.list().length === 1,
+    JSON.stringify(wdEntry.entry ?? wdEntry),
+  );
+  const badWd = wdStore.create({
+    provider: 'openai',
+    model: 'gpt-x2',
+    start: '09:00',
+    end: '17:00',
+    utcOffset: 0,
+    weekdays: [1, 9],
+  });
+  const emptyWd = wdStore.create({
+    provider: 'openai',
+    model: 'gpt-x2',
+    start: '09:00',
+    end: '17:00',
+    utcOffset: 0,
+    weekdays: [],
+  });
+  report(
+    'unit: out-of-range or empty weekday sets are rejected',
+    !!badWd.error && /weekdays/.test(badWd.error) && !!emptyWd.error,
+    `bad=${JSON.stringify(badWd)} empty=${JSON.stringify(emptyWd)}`,
+  );
+  const wedOnly = [{ provider: 'o', model: 'm', enabled: true, startUtc: 540, endUtc: 1020, weekdays: [3] }];
+  report(
+    'unit: isPeakAt gates on the window weekday (Jan 14 2026 is a Wednesday)',
+    mod.isPeakAt(wedOnly, 'o', 'm', at(10, 0)) === true &&
+      mod.isPeakAt(wedOnly, 'o', 'm', Date.UTC(2026, 0, 15, 10, 0)) === false,
+  );
+  const tzTail = [
+    { provider: 'o', model: 'm', enabled: true, startUtc: 840, endUtc: 1080, utcOffset: 480, weekdays: [3] },
+  ];
+  report(
+    'unit: the weekday is evaluated on the window clock, not UTC',
+    mod.isPeakAt(tzTail, 'o', 'm', Date.UTC(2026, 0, 13, 17, 0)) === true &&
+      mod.isPeakAt(tzTail, 'o', 'm', Date.UTC(2026, 0, 14, 17, 0)) === false,
+  );
+
   const bad = [
     [{ provider: 'x', model: 'y', start: '09:00', end: '09:00', utcOffset: 0 }, 'start and end must differ'],
     [{ provider: 'x', model: 'y', start: '09:00', end: '17:00', utcOffset: 780 }, 'utcOffset'],
@@ -303,21 +354,39 @@ async function unitChecks({ report }) {
           createdAt: 1,
           updatedAt: 1,
         },
+        {
+          id: 'legacy1',
+          provider: 'ok',
+          model: 'model-2',
+          startUtc: 480,
+          endUtc: 1020,
+          utcOffset: 0,
+          note: '',
+          enabled: true,
+          createdAt: 1,
+          updatedAt: 1,
+        },
       ],
     }),
   );
   const hand = mod.createPeakHoursStore({ persistPath: handPath });
+  const handLegacy = hand.list().find((e) => e.id === 'legacy1');
   report(
     'unit: hand-edited invalid entries are skipped on load',
-    hand.list().length === 1 && hand.list()[0].id === 'good1',
+    hand.list().length === 2 && hand.list()[0].id === 'good1',
     JSON.stringify(hand.list()),
+  );
+  report(
+    'unit: entries written before weekdays load as daily',
+    handLegacy?.weekdays?.join() === '0,1,2,3,4,5,6',
+    JSON.stringify(handLegacy ?? null),
   );
 
   report(
     'unit: remove deletes and persists',
     hand.remove('good1') &&
-      hand.list().length === 0 &&
-      mod.createPeakHoursStore({ persistPath: handPath }).list().length === 0,
+      hand.list().length === 1 &&
+      mod.createPeakHoursStore({ persistPath: handPath }).list().length === 1,
   );
   report('unit: removing an unknown id reports false', hand.remove('nope') === false);
 }
@@ -703,12 +772,30 @@ async function unitChecks({ report }) {
     );
     await page.locator('.aph-add').click();
     await page.waitForSelector('.sf-dialog', { timeout: 5000 });
+    const mobileDayBtns = await page.locator('.aph-days .sf-ms-item').count();
+    report('mobile dialog shows the weekday selector', mobileDayBtns === 7, `buttons=${mobileDayBtns}`);
 
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.waitForSelector('.sf-root:not(.sf-root--mobile)', { timeout: 5000 });
     await delay(400);
     await page.locator('.aph-add').click();
     await page.waitForSelector('.sf-dialog', { timeout: 5000 });
+
+    const dayCount = await page.locator('.aph-days .sf-ms-item').count();
+    const pressedDefault = await page.locator('.aph-days .sf-ms-item[aria-pressed="true"]').count();
+    report(
+      'the dialog offers a weekday selector defaulting to every day',
+      dayCount === 7 && pressedDefault === 7,
+      `buttons=${dayCount} pressed=${pressedDefault}`,
+    );
+    await page.locator('.aph-days .sf-ms-item', { hasText: 'Sun' }).click();
+    await page.locator('.aph-days .sf-ms-item', { hasText: 'Sat' }).click();
+    const pressedMonFri = await page.locator('.aph-days .sf-ms-item[aria-pressed="true"]').count();
+    report(
+      'weekday chips toggle; Sun/Sat off leaves Mon–Fri',
+      pressedMonFri === 5,
+      `pressed=${pressedMonFri}`,
+    );
 
     await page.selectOption('#aph-tz', '120');
     await page.fill('#aph-start', '09:00');
@@ -726,7 +813,10 @@ async function unitChecks({ report }) {
     let row = await page.locator('.aph-row').first().textContent();
     report(
       'created row shows the window in its timezone plus the UTC equivalent',
-      row.includes('09:00–17:00') && row.includes('UTC+2') && row.includes('07:00–15:00 UTC'),
+      row.includes('09:00–17:00') &&
+        row.includes('UTC+2') &&
+        row.includes('07:00–15:00 UTC') &&
+        row.includes('Mon–Fri'),
       `row=${row}`,
     );
 
@@ -741,18 +831,28 @@ async function unitChecks({ report }) {
         r.body.entries[0].model === 'stub-pro' &&
         r.body.entries[0].startUtc === '07:00' &&
         r.body.entries[0].endUtc === '15:00' &&
+        r.body.entries[0].weekdays?.join() === '1,2,3,4,5' &&
         disk1.version === 1 &&
         disk1.entries[0].provider === 'stub' &&
         disk1.entries[0].model === 'stub-pro' &&
         disk1.entries[0].startUtc === 420 &&
         disk1.entries[0].endUtc === 900 &&
-        disk1.entries[0].utcOffset === 120,
+        disk1.entries[0].utcOffset === 120 &&
+        disk1.entries[0].weekdays?.join() === '1,2,3,4,5',
       JSON.stringify({ entry: r.body.entries[0], disk: disk1.entries[0] }),
     );
     const entryId = r.body.entries[0].id;
 
     await page.locator('.aph-row .aph-actions button[title="Edit window"]').first().click();
     await page.waitForSelector('.sf-dialog', { timeout: 5000 });
+    const editPressed = await page.locator('.aph-days .sf-ms-item[aria-pressed="true"]').count();
+    const editSun =
+      (await page.locator('.aph-days .sf-ms-item', { hasText: 'Sun' }).getAttribute('aria-pressed')) ?? '';
+    report(
+      'editing preselects the stored days',
+      editPressed === 5 && editSun === 'false',
+      `pressed=${editPressed} sun=${editSun}`,
+    );
     await page.selectOption('#aph-tz', '0');
     const editStart = await page.locator('#aph-start').inputValue();
     const editEnd = await page.locator('#aph-end').inputValue();
@@ -782,6 +882,19 @@ async function unitChecks({ report }) {
 
     await page.locator('.aph-row .aph-actions button[title="Edit window"]').first().click();
     await page.waitForSelector('.sf-dialog', { timeout: 5000 });
+    for (let i = 0; i < 5; i++) {
+      await page.locator('.aph-days .sf-ms-item[aria-pressed="true"]').first().click();
+    }
+    const noDaysSave = await page.locator('.aph-save').isDisabled();
+    const noDaysNeeds = (await page.locator('.aph-live--warn').textContent()) ?? '';
+    report(
+      'saving with no weekday selected is blocked',
+      noDaysSave && noDaysNeeds.includes('at least one weekday'),
+      `disabled=${noDaysSave} needs=${noDaysNeeds}`,
+    );
+    for (const d of ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']) {
+      await page.locator('.aph-days .sf-ms-item', { hasText: d }).click();
+    }
     await page.fill('#aph-start', '09:00');
     await page.fill('#aph-end', '09:00');
     const saveDisabled = await page.locator('.aph-save').isDisabled();
@@ -894,6 +1007,13 @@ async function unitChecks({ report }) {
       'window text uses the hh:mm - hh:mm UTC±n layout',
       miniRowText.includes('03:00 - 06:00 UTC'),
       `row=${miniRowText}`,
+    );
+
+    const proRowText = (await page.locator('.pht-row', { hasText: 'stub/stub-pro' }).textContent()) ?? '';
+    report(
+      'tab window text carries the weekday label only when not daily',
+      proRowText.includes('Mon–Fri') && !miniRowText.includes('·') && !ghostRow.includes('·'),
+      `pro=${proRowText} mini=${miniRowText} ghost=${ghostRow}`,
     );
 
     await page.locator('.pht-row', { hasText: 'stub/stub-pro' }).click();

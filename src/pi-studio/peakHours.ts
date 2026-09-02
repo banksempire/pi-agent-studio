@@ -10,6 +10,7 @@ export interface PeakHourEntry {
   start: string;
   end: string;
   utcOffset: number;
+  weekdays?: number[];
   note: string;
   enabled: boolean;
   createdAt: number;
@@ -23,8 +24,34 @@ export interface PeakHourInput {
   start: string;
   end: string;
   utcOffset: number;
+  weekdays?: number[];
   note?: string;
   enabled?: boolean;
+}
+
+export const ALL_WEEKDAYS = [0, 1, 2, 3, 4, 5, 6];
+
+export const DOW_OPTIONS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((name, d) => ({
+  value: d,
+  label: name,
+  title: name,
+}));
+
+export function weekdaysLabel(days: number[] | undefined): string {
+  const wd = [...(days ?? [])].sort((a, b) => a - b);
+  if (wd.length === 0) return '';
+  if (wd.length === 7) return 'daily';
+  const runs: string[] = [];
+  let i = 0;
+  while (i < wd.length) {
+    let j = i;
+    while (j + 1 < wd.length && wd[j + 1] === wd[j] + 1) j++;
+    const first = DOW_OPTIONS[wd[i]].label;
+    const last = DOW_OPTIONS[wd[j]].label;
+    runs.push(j > i ? `${first}–${last}` : first);
+    i = j + 1;
+  }
+  return runs.join(', ');
 }
 
 export function offsetLabel(minutes: number): string {

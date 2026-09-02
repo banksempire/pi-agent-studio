@@ -15,6 +15,10 @@ window:
   --end <HH:MM>              window end on the --offset clock (may wrap midnight)
   --offset <spec>            window timezone: UTC+8 | +8 | -5:30 | minutes
                              (default UTC)
+  --weekdays <spec>          days the window applies to: mon-fri | mon,wed,fri |
+                             1-5 | sun | weekend | all (default all)
+                             — days are counted on the window's own clock, and
+                             a window wrapping midnight needs its tail day too
 
 options:
   --note <text>              note (max 200 chars)
@@ -99,6 +103,60 @@ function offsetLabel(minutes) {
   return mm === 0 ? `UTC${sign}${h}` : `UTC${sign}${h}:${String(mm).padStart(2, '0')}`;
 }
 
+const DOW_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+const DOW_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function dowToken(token) {
+  const t = String(token ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+  if (/^[0-6]$/.test(t)) return Number(t);
+  const name = DOW_NAMES.findIndex((n) => n === t || (t.length > 3 && n.startsWith(t)));
+  return name >= 0 ? name : null;
+}
+
+function parseWeekdays(spec) {
+  const s = String(spec ?? '')
+    .trim()
+    .toLowerCase();
+  if (!s) return null;
+  if (s === 'all' || s === 'daily' || s === 'everyday') return [0, 1, 2, 3, 4, 5, 6];
+  if (s === 'weekend' || s === 'weekends') return [0, 6];
+  const out = new Set();
+  for (const part of s.split(',')) {
+    const range = part.split('-');
+    if (range.length === 2) {
+      const a = dowToken(range[0]);
+      const b = dowToken(range[1]);
+      if (a === null || b === null) return null;
+      const lo = Math.min(a, b);
+      const hi = Math.max(a, b);
+      for (let d = lo; d <= hi; d++) out.add(d);
+      continue;
+    }
+    const d = dowToken(part);
+    if (d === null) return null;
+    out.add(d);
+  }
+  return out.size ? [...out].sort((a, b) => a - b) : null;
+}
+
+function weekdaysLabel(days) {
+  const wd = [...(days ?? [])].sort((a, b) => a - b);
+  if (wd.length === 0) return '—';
+  if (wd.length === 7) return 'daily';
+  const runs = [];
+  let i = 0;
+  while (i < wd.length) {
+    let j = i;
+    while (j + 1 < wd.length && wd[j + 1] === wd[j] + 1) j++;
+    runs.push(j > i ? `${DOW_SHORT[wd[i]]}–${DOW_SHORT[wd[j]]}` : DOW_SHORT[wd[i]]);
+    i = j + 1;
+  }
+  return runs.join(',');
+}
+
 function windowText(e) {
   return `${e.start} - ${e.end} ${offsetLabel(e.utcOffset)}`;
 }
@@ -160,8 +218,16 @@ export async function cmdPeakHours(out, instance, args) {
       return;
     }
     printTable(
-      ['ID', 'MODEL', 'WINDOW', 'UTC', 'ON', 'NOTE'],
-      entries.map((e) => [e.id, e.key, windowText(e), utcText(e), e.enabled ? 'yes' : 'off', e.note || '—']),
+      ['ID', 'MODEL', 'WINDOW', 'UTC', 'DAYS', 'ON', 'NOTE'],
+      entries.map((e) => [
+        e.id,
+        e.key,
+        windowText(e),
+        utcText(e),
+        weekdaysLabel(e.weekdays),
+        e.enabled ? 'yes' : 'off',
+        e.note || '—',
+      ]),
     );
     return;
   }
@@ -179,7 +245,17 @@ export async function cmdPeakHours(out, instance, args) {
       throw new CliError(`--offset: cannot parse '${flags.offset}' (use UTC+8, +8, -5:30, or minutes)`, 2);
     }
     if (Math.abs(offset) > 720) throw new CliError('--offset: must stay within ±12 hours', 2);
-    const body = { start, end, utcOffset: offset, note: flags.note ? String(flags.note) : '' };
+    let weekdays = [0, 1, 2, 3, 4, 5, 6];
+    if (flags.weekdays !== undefined && flags.weekdays !== true) {
+      weekdays = parseWeekdays(flags.weekdays);
+      if (!weekdays) {
+        throw new CliError(
+          `--weekdays: cannot parse '${flags.weekdays}' (use mon-fri, mon,wed,fri, 1-5, weekend or all)`,
+          2,
+        );
+      }
+    }
+    const body = { start, end, utcOffset: offset, weekdays, note: flags.note ? String(flags.note) : '' };
     if (flags.disabled) body.enabled = false;
     const targets = await targetsFor(port, flags);
     const created = [];
@@ -202,7 +278,9 @@ export async function cmdPeakHours(out, instance, args) {
       return;
     }
     for (const k of created)
-      out.line(`created ${paint('cyan', k)} — ${start} - ${end} ${offsetLabel(offset)}`);
+      out.line(
+        `created ${paint('cyan', k)} — ${start} - ${end} ${offsetLabel(offset)} · ${weekdaysLabel(weekdays)}`,
+      );
     for (const k of skipped) out.line(`skip     ${k} — identical window already exists`);
     for (const f of failed) out.line(`FAILED   ${f}`);
     out.line(`${created.length} created, ${skipped.length} skipped, ${failed.length} failed`);
@@ -270,7 +348,7 @@ export async function cmdPeakHours(out, instance, args) {
 function parsePeakHoursArgs(rest) {
   const positional = [];
   const flags = {};
-  const valueFlags = ['provider', 'model', 'start', 'end', 'offset', 'note', 'key'];
+  const valueFlags = ['provider', 'model', 'start', 'end', 'offset', 'weekdays', 'note', 'key'];
   for (let i = 0; i < rest.length; i++) {
     const t = rest[i];
     if ((t.startsWith('--') || t.startsWith('-')) && t.length > 1 && !/^-\d+$/.test(t)) {

@@ -9,6 +9,7 @@ const MAX_MODEL_LEN = 128;
 const MAX_NOTE_LEN = 200;
 const OFFSET_ABS_MAX = 12 * 60;
 const NOT_FOUND = 'peak-hours entry not found';
+const ALL_WEEKDAYS = [0, 1, 2, 3, 4, 5, 6];
 
 export function parseHm(value) {
   if (typeof value !== 'string') return null;
@@ -38,6 +39,12 @@ export function utcMinutesAt(at) {
   return d.getUTCHours() * 60 + d.getUTCMinutes();
 }
 
+export function localDayOfWeekAt(at, offset) {
+  const d = new Date(at);
+  const carry = Math.floor((utcMinutesAt(at) + (offset ?? 0)) / 1440);
+  return (d.getUTCDay() + carry + 7) % 7;
+}
+
 export function windowIsPeakAt(startUtc, endUtc, at) {
   const mins = utcMinutesAt(at);
   return startUtc <= endUtc ? mins >= startUtc && mins < endUtc : mins >= startUtc || mins < endUtc;
@@ -53,6 +60,7 @@ export function isPeakAt(entries, provider, model, at) {
     (e) =>
       modelKeyOf(e.provider, e.model).toLowerCase() === want &&
       e.enabled &&
+      (e.weekdays ?? ALL_WEEKDAYS).includes(localDayOfWeekAt(at, e.utcOffset)) &&
       windowIsPeakAt(e.startUtc, e.endUtc, at),
   );
 }
@@ -78,8 +86,23 @@ function validStoredEntry(e) {
     Math.abs(e.utcOffset) <= OFFSET_ABS_MAX &&
     typeof e.enabled === 'boolean' &&
     Number.isFinite(e.createdAt) &&
-    Number.isFinite(e.updatedAt)
+    Number.isFinite(e.updatedAt) &&
+    validWeekdays(e.weekdays)
   );
+}
+
+function validWeekdays(value) {
+  if (value === undefined) return true;
+  if (!Array.isArray(value) || value.length === 0) return false;
+  return value.every((d) => Number.isInteger(d) && d >= 0 && d <= 6);
+}
+
+function normWeekdays(value, fallback) {
+  if (value === undefined) return { weekdays: [...fallback] };
+  if (!validWeekdays(value)) {
+    return { error: 'weekdays must be an array of day numbers 0–6 (at least one)' };
+  }
+  return { weekdays: [...new Set(value)].sort((a, b) => a - b) };
 }
 
 function normToken(name, value, fallback, maxLen) {
@@ -126,6 +149,7 @@ function view(e) {
     start: fmtHm(toLocalMinutes(e.startUtc, e.utcOffset)),
     end: fmtHm(toLocalMinutes(e.endUtc, e.utcOffset)),
     utcOffset: e.utcOffset,
+    weekdays: e.weekdays ?? ALL_WEEKDAYS,
     note: e.note,
     enabled: e.enabled,
     createdAt: e.createdAt,
@@ -172,6 +196,7 @@ export function createPeakHoursStore({
         startUtc: e.startUtc,
         endUtc: e.endUtc,
         utcOffset: e.utcOffset,
+        weekdays: e.weekdays ? [...new Set(e.weekdays)].sort((a, b) => a - b) : [...ALL_WEEKDAYS],
         note: e.note,
         enabled: e.enabled,
         createdAt: e.createdAt,
@@ -195,7 +220,8 @@ export function createPeakHoursStore({
         e.provider === entry.provider &&
         e.model === entry.model &&
         e.startUtc === entry.startUtc &&
-        e.endUtc === entry.endUtc
+        e.endUtc === entry.endUtc &&
+        (e.weekdays ?? ALL_WEEKDAYS).join() === entry.weekdays.join()
       ) {
         return true;
       }
@@ -216,6 +242,8 @@ export function createPeakHoursStore({
     if (noteR.error) return { error: noteR.error };
     const enabledR = normEnabled(input.enabled, true);
     if (enabledR.error) return { error: enabledR.error };
+    const weekdaysR = normWeekdays(input.weekdays, ALL_WEEKDAYS);
+    if (weekdaysR.error) return { error: weekdaysR.error };
     const startLocal = parseHm(input.start);
     if (startLocal === null) return { error: 'start must be HH:MM (00:00–23:59)' };
     const endLocal = parseHm(input.end);
@@ -232,6 +260,7 @@ export function createPeakHoursStore({
       startUtc,
       endUtc,
       utcOffset: offsetR.offset,
+      weekdays: weekdaysR.weekdays,
       note: noteR.note,
       enabled: enabledR.enabled,
       createdAt: t,
@@ -265,6 +294,8 @@ export function createPeakHoursStore({
     if (noteR.error) return { error: noteR.error };
     const enabledR = normEnabled(patch.enabled, existing.enabled);
     if (enabledR.error) return { error: enabledR.error };
+    const weekdaysR = normWeekdays(patch.weekdays, existing.weekdays ?? ALL_WEEKDAYS);
+    if (weekdaysR.error) return { error: weekdaysR.error };
     const startLocal =
       patch.start === undefined ? toLocalMinutes(existing.startUtc, offsetR.offset) : parseHm(patch.start);
     if (startLocal === null) return { error: 'start must be HH:MM (00:00–23:59)' };
@@ -281,6 +312,7 @@ export function createPeakHoursStore({
       startUtc,
       endUtc,
       utcOffset: offsetR.offset,
+      weekdays: weekdaysR.weekdays,
       note: noteR.note,
       enabled: enabledR.enabled,
       updatedAt: now(),

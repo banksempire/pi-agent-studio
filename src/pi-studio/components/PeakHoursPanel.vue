@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import SvgIcon from '@sf/components/SvgIcon.vue';
 import { computed, onMounted, reactive, ref } from 'vue';
-import { deletePeakHours, offsetLabel, type PeakHourEntry, updatePeakHours } from '../peakHours';
+import {
+  deletePeakHours,
+  offsetLabel,
+  type PeakHourEntry,
+  updatePeakHours,
+  weekdaysLabel,
+} from '../peakHours';
 import { useChatStore } from '../store/chat';
 import PeakHoursDialog from './PeakHoursDialog.vue';
 
@@ -63,7 +69,9 @@ async function remove(e: PeakHourEntry) {
 }
 
 function windowText(e: PeakHourEntry): string {
-  return `${e.start}–${e.end} ${offsetLabel(e.utcOffset)}`;
+  const days = weekdaysLabel(e.weekdays);
+  const base = `${e.start}–${e.end} ${offsetLabel(e.utcOffset)}`;
+  return days && days !== 'daily' ? `${base} · ${days}` : base;
 }
 
 function utcText(e: PeakHourEntry): string {

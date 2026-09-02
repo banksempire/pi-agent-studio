@@ -805,8 +805,14 @@ async function unitChecks({ report }) {
         !!daysField &&
         !!daysChip &&
         Math.abs(daysTrack.width - daysField.width) < 4 &&
-        daysChip.height >= 30,
-      JSON.stringify({ track: daysTrack?.width, field: daysField?.width, chip: daysChip?.height }),
+        daysChip.height >= 27 &&
+        daysChip.y - daysTrack.y >= 3.5,
+      JSON.stringify({
+        track: daysTrack?.width,
+        field: daysField?.width,
+        chip: daysChip?.height,
+        inset: daysChip && daysTrack ? Math.round((daysChip.y - daysTrack.y) * 10) / 10 : null,
+      }),
     );
     const ctlHeights = await page.evaluate(() => {
       const h = (sel) => {

@@ -304,7 +304,7 @@ async function save() {
   width: 100%;
   height: 36px;
   box-sizing: border-box;
-  padding: 0 3px;
+  padding: 3px;
   align-items: stretch;
 }
 

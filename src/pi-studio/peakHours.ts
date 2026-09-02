@@ -95,6 +95,10 @@ export function fmtHm(minutes: number): string {
   return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 }
 
+export function windowLabel(start: string, end: string, utcOffset: number): string {
+  return `(${offsetLabel(utcOffset)}) ${start}-${end}`;
+}
+
 export function splitModelKey(key: string): { provider: string; model: string } | null {
   const t = key.trim();
   const sep = t.indexOf('/');

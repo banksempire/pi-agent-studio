@@ -501,7 +501,7 @@ Example — rate-limit window for a whole provider, working days only:
 ```
 $ studio -i main peak-hours add --provider zai-coding-cn \
     --start 14:00 --end 18:00 --offset UTC+8 --weekdays mon-fri
-created zai-coding-cn/glm-4.7 — 14:00 - 18:00 UTC+8 · Mon–Fri
+created zai-coding-cn/glm-4.7 — (UTC+8) 14:00-18:00 · Mon–Fri
 …
 10 created, 0 skipped, 0 failed
 ```

@@ -3,10 +3,10 @@ import SvgIcon from '@sf/components/SvgIcon.vue';
 import { computed, onMounted, reactive, ref } from 'vue';
 import {
   deletePeakHours,
-  offsetLabel,
   type PeakHourEntry,
   updatePeakHours,
   weekdaysLabel,
+  windowLabel,
 } from '../peakHours';
 import { useChatStore } from '../store/chat';
 import PeakHoursDialog from './PeakHoursDialog.vue';
@@ -70,12 +70,12 @@ async function remove(e: PeakHourEntry) {
 
 function windowText(e: PeakHourEntry): string {
   const days = weekdaysLabel(e.weekdays);
-  const base = `${e.start}–${e.end} ${offsetLabel(e.utcOffset)}`;
+  const base = windowLabel(e.start, e.end, e.utcOffset);
   return days && days !== 'daily' ? `${base} · ${days}` : base;
 }
 
 function utcText(e: PeakHourEntry): string {
-  return `${e.startUtc}–${e.endUtc} UTC${e.wrapsMidnightUtc ? ' ↻' : ''}`;
+  return `(UTC) ${e.startUtc}-${e.endUtc}${e.wrapsMidnightUtc ? ' ↻' : ''}`;
 }
 </script>
 
@@ -107,7 +107,7 @@ function utcText(e: PeakHourEntry): string {
           :title="e.enabled ? 'Disable window' : 'Enable window'"
           @click="toggle(e)"
         ><span class="md-switch-knob" /></button>
-        <span class="aph-window" :title="`peak ${e.start}–${e.end} ${offsetLabel(e.utcOffset)}`">
+        <span class="aph-window" :title="`peak ${windowText(e)}`">
           {{ windowText(e) }}
         </span>
         <span class="aph-actions">

@@ -103,7 +103,7 @@ const wraps = computed(() => startUtcMin.value !== endUtcMin.value && endUtcMin.
 
 const liveHint = computed(
   () =>
-    `= ${fmtHm(startUtcMin.value)}–${fmtHm(endUtcMin.value)} UTC${wraps.value ? ' · wraps midnight' : ''}`,
+    `= (UTC) ${fmtHm(startUtcMin.value)}-${fmtHm(endUtcMin.value)}${wraps.value ? ' · wraps midnight' : ''}`,
 );
 
 const problems = computed<string[]>(() => {

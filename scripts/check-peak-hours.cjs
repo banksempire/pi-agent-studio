@@ -870,7 +870,7 @@ async function unitChecks({ report }) {
     const liveHint = (await page.locator('.aph-live').first().textContent()) ?? '';
     report(
       'live hint shows the UTC equivalent while editing',
-      liveHint.includes('07:00–15:00 UTC'),
+      liveHint.includes('= (UTC) 07:00-15:00'),
       `hint=${liveHint}`,
     );
     await page.locator('.aph-save').click();
@@ -880,10 +880,7 @@ async function unitChecks({ report }) {
     let row = await page.locator('.aph-row').first().textContent();
     report(
       'created row shows the window in its timezone plus the UTC equivalent',
-      row.includes('09:00–17:00') &&
-        row.includes('UTC+2') &&
-        row.includes('07:00–15:00 UTC') &&
-        row.includes('Mon–Fri'),
+      row.includes('(UTC+2) 09:00-17:00') && row.includes('(UTC) 07:00-15:00') && row.includes('Mon–Fri'),
       `row=${row}`,
     );
 
@@ -926,7 +923,7 @@ async function unitChecks({ report }) {
     const editHint = (await page.locator('.aph-live').first().textContent()) ?? '';
     report(
       'changing the timezone re-derives the fields, keeping the absolute window',
-      editStart === '07:00' && editEnd === '15:00' && editHint.includes('07:00–15:00 UTC'),
+      editStart === '07:00' && editEnd === '15:00' && editHint.includes('= (UTC) 07:00-15:00'),
       `start=${editStart} end=${editEnd} hint=${editHint}`,
     );
     await page.locator('.aph-save').click();
@@ -941,11 +938,7 @@ async function unitChecks({ report }) {
       JSON.stringify(r.body.entries[0]),
     );
     row = await page.locator('.aph-row').first().textContent();
-    report(
-      'row re-renders in the new timezone',
-      row.includes('07:00–15:00') && row.includes('UTC'),
-      `row=${row}`,
-    );
+    report('row re-renders in the new timezone', row.includes('(UTC) 07:00-15:00'), `row=${row}`);
 
     await page.locator('.aph-row .aph-actions button[title="Edit window"]').first().click();
     await page.waitForSelector('.sf-dialog', { timeout: 5000 });
@@ -1029,7 +1022,7 @@ async function unitChecks({ report }) {
     report(
       'the tab lists every window and flags models absent from the catalog',
       (await page.locator('.pht-row').count()) === 2 &&
-        ghostRow.includes('22:00 - 02:00 UTC') &&
+        ghostRow.includes('(UTC) 22:00-02:00') &&
         !ghostRow.includes('↻') &&
         ghostChip === 1 &&
         ghostWindowTitle.includes('crosses midnight UTC'),
@@ -1072,7 +1065,7 @@ async function unitChecks({ report }) {
     const miniRowText = (await page.locator('.pht-row', { hasText: 'stub/stub-mini' }).textContent()) ?? '';
     report(
       'window text uses the hh:mm - hh:mm UTC±n layout',
-      miniRowText.includes('03:00 - 06:00 UTC'),
+      miniRowText.includes('(UTC) 03:00-06:00'),
       `row=${miniRowText}`,
     );
 
@@ -1232,7 +1225,7 @@ async function unitChecks({ report }) {
             c.btnBgs[1] === 'rgb(244, 135, 113)' &&
             c.btnColors[0] !== 'rgb(244, 135, 113)' &&
             c.btnColors[1] === 'rgb(255, 255, 255)' &&
-            c.text.includes(' UTC') &&
+            /\(UTC[+\-0-9:]*\) \d\d:\d\d-\d\d:\d\d/.test(c.text) &&
             !c.text.includes('↻'),
         ),
       JSON.stringify(mobCards),

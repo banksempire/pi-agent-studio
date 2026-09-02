@@ -5,10 +5,10 @@ import type { ModelCatalogView } from '../modelInfo';
 import { loadModelCatalog } from '../modelInfo';
 import {
   deletePeakHours,
-  offsetLabel,
   type PeakHourEntry,
   updatePeakHours,
   weekdaysLabel,
+  windowLabel,
 } from '../peakHours';
 import { useChatStore } from '../store/chat';
 import PeakHoursDialog, { type PeakHourModelChoice } from './PeakHoursDialog.vue';
@@ -120,7 +120,7 @@ function onRowClick(e: PeakHourEntry) {
 
 function windowText(e: PeakHourEntry): string {
   const days = weekdaysLabel(e.weekdays);
-  const base = `${e.start} - ${e.end} ${offsetLabel(e.utcOffset)}`;
+  const base = windowLabel(e.start, e.end, e.utcOffset);
   return days && days !== 'daily' ? `${base} · ${days}` : base;
 }
 </script>

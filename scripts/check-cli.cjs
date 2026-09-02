@@ -383,8 +383,8 @@ async function main() {
       'peak-hours list shows key, window and UTC equivalent',
       phList.status === 0 &&
         /cli-pro\/m1/.test(phList.stdout) &&
-        /14:00 - 18:00 UTC\+8/.test(phList.stdout) &&
-        /06:00 - 10:00 UTC/.test(phList.stdout) &&
+        /\(UTC\+8\) 14:00-18:00/.test(phList.stdout) &&
+        /\(UTC\) 06:00-10:00/.test(phList.stdout) &&
         /cli-pro\/m3.*Mon–Fri/.test(phList.stdout.replace(/\s+/g, ' ')) &&
         /cli-pro\/m1[^\n]*daily/.test(phList.stdout),
       phList.stdout.split('\n').slice(0, 4).join(' | '),

@@ -158,11 +158,11 @@ function weekdaysLabel(days) {
 }
 
 function windowText(e) {
-  return `${e.start} - ${e.end} ${offsetLabel(e.utcOffset)}`;
+  return `(${offsetLabel(e.utcOffset)}) ${e.start}-${e.end}`;
 }
 
 function utcText(e) {
-  return `${e.startUtc} - ${e.endUtc} UTC`;
+  return `(UTC) ${e.startUtc}-${e.endUtc}`;
 }
 
 async function listEntries(port) {
@@ -279,7 +279,7 @@ export async function cmdPeakHours(out, instance, args) {
     }
     for (const k of created)
       out.line(
-        `created ${paint('cyan', k)} — ${start} - ${end} ${offsetLabel(offset)} · ${weekdaysLabel(weekdays)}`,
+        `created ${paint('cyan', k)} — (${offsetLabel(offset)}) ${start}-${end} · ${weekdaysLabel(weekdays)}`,
       );
     for (const k of skipped) out.line(`skip     ${k} — identical window already exists`);
     for (const f of failed) out.line(`FAILED   ${f}`);

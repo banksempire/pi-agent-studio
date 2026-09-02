@@ -133,10 +133,11 @@ defineExpose({
 
 .tf-input {
   width: 100%;
+  height: 36px;
   box-sizing: border-box;
-  background: var(--sf-bg);
+  background: rgba(0, 0, 0, 0.15);
   border: 1px solid var(--sf-border);
-  border-radius: var(--sf-radius-sm);
+  border-radius: 8px;
   color: var(--sf-text);
   font-family: var(--sf-font);
   font-size: 14px;

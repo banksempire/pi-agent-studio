@@ -267,9 +267,9 @@ async function save() {
   width: 100%;
   height: 36px;
   box-sizing: border-box;
-  background: var(--sf-bg);
+  background: rgba(0, 0, 0, 0.15);
   border: 1px solid var(--sf-border);
-  border-radius: var(--sf-radius-sm);
+  border-radius: 8px;
   color: var(--sf-text);
   font-family: var(--sf-font);
   font-size: 14px;
@@ -279,11 +279,6 @@ async function save() {
 
 #aph-note {
   font-size: 16px;
-}
-
-.aph-times :deep(.tf-input) {
-  height: 36px;
-  box-sizing: border-box;
 }
 
 .aph-input:focus {

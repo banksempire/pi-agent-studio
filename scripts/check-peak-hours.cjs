@@ -832,14 +832,36 @@ async function unitChecks({ report }) {
         days: h('.aph-days .sf-ms-track'),
       };
     });
+    const boxStyles = await page.evaluate(() => {
+      const read = (sel) => {
+        const el = document.querySelector(sel);
+        if (!el) return null;
+        const cs = getComputedStyle(el);
+        return { radius: cs.borderTopLeftRadius, bg: cs.backgroundColor };
+      };
+      return {
+        tz: read('#aph-tz'),
+        start: read('#aph-start'),
+        note: read('#aph-note'),
+        days: read('.aph-days .sf-ms-track'),
+      };
+    });
     const noteFont = await page.evaluate(
       () => getComputedStyle(document.querySelector('#aph-note')).fontSize,
     );
     const hs = Object.values(ctlHeights);
+    const boxes = Object.values(boxStyles);
     report(
       'all dialog controls share one height; the note box uses chat input text size',
       hs.every((x) => x !== null) && Math.max(...hs) - Math.min(...hs) < 1 && noteFont === '16px',
       JSON.stringify({ ...ctlHeights, noteFont }),
+    );
+    report(
+      'every dialog box uses the selector rounded-corner style',
+      boxes.every((b) => b !== null) &&
+        boxes.every((b) => b.radius === '8px') &&
+        new Set(boxes.map((b) => b.bg)).size === 1,
+      JSON.stringify(boxStyles),
     );
 
     await page.selectOption('#aph-tz', '120');

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import SvgIcon from '@sf/components/SvgIcon.vue';
+import Table from '@sf/components/Table.vue';
+import type { TableColumn } from '@sf/types/table';
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import type { ModelCatalogView } from '../modelInfo';
 import { loadModelCatalog } from '../modelInfo';
@@ -16,7 +18,6 @@ import PeakHoursDialog, { type PeakHourModelChoice } from './PeakHoursDialog.vue
 const store = useChatStore();
 
 const catalog = ref<ModelCatalogView | null>(null);
-const filter = ref('');
 const actionError = ref('');
 const selected = ref('');
 
@@ -59,22 +60,57 @@ const modelChoices = computed<PeakHourModelChoice[]>(() => {
 
 const catalogModelKeys = computed(() => new Set(modelChoices.value.map((c) => c.key)));
 
-const entries = computed(() => {
-  const q = filter.value.trim().toLowerCase();
-  const list = [...store.peakHours];
-  if (q) {
-    return list.filter((e) => e.key.toLowerCase().includes(q) || (e.note ?? '').toLowerCase().includes(q));
-  }
-  return list.sort((a, b) => a.key.localeCompare(b.key) || a.startUtc.localeCompare(b.startUtc));
-});
+const columns: TableColumn[] = [
+  { key: 'enabled', label: 'On', width: 46, mobile: 'lead' },
+  { key: 'key', label: 'Model', sortable: true, filter: 'text', mobile: 'title' },
+  { key: 'window', label: 'Window', width: 200, sortable: true, mobile: 'sub' },
+  { key: 'note', label: 'Note', filter: 'text' },
+];
+
+const displayRows = computed(() =>
+  [...store.peakHours]
+    .sort((a, b) => a.key.localeCompare(b.key) || a.startUtc.localeCompare(b.startUtc))
+    .map((e) => ({
+      id: e.id,
+      key: e.key,
+      enabled: e.enabled,
+      window: windowText(e),
+      note: e.note ?? '',
+      wraps: e.wrapsMidnightUtc,
+      entry: e,
+    })),
+);
+
+function windowText(e: PeakHourEntry): string {
+  const days = weekdaysLabel(e.weekdays);
+  const base = windowLabel(e.start, e.end, e.utcOffset);
+  return days && days !== 'daily' ? `${base} · ${days}` : base;
+}
+
+function rowClass(row: Record<string, unknown>): Record<string, boolean> {
+  return {
+    'pht-row--clickable': catalogModelKeys.value.has(String(row.key)),
+    'pht-row--selected': row.key === selected.value,
+    'pht-row--off': row.enabled !== true,
+  };
+}
+
+function onRowClick(row: Record<string, unknown>) {
+  const key = String(row.key);
+  const m = (catalog.value?.models ?? []).find((x) => `${x.provider}/${x.id}` === key);
+  if (!m) return;
+  selected.value = key;
+  const d = catalog.value?.default;
+  store.requestModelDetail(m, !!d && key === `${d.provider}/${d.id}`);
+}
 
 function openAdd() {
   dialog.entry = null;
   dialog.open = true;
 }
 
-function openEdit(e: PeakHourEntry) {
-  dialog.entry = e;
+function openEdit(row: Record<string, unknown>) {
+  dialog.entry = row.entry as PeakHourEntry;
   dialog.open = true;
 }
 
@@ -88,7 +124,8 @@ async function onSaved() {
   await store.refreshPeakHours();
 }
 
-async function toggle(e: PeakHourEntry) {
+async function toggle(row: Record<string, unknown>) {
+  const e = row.entry as PeakHourEntry;
   actionError.value = '';
   try {
     await updatePeakHours(e.id, { enabled: !e.enabled });
@@ -98,7 +135,8 @@ async function toggle(e: PeakHourEntry) {
   }
 }
 
-async function remove(e: PeakHourEntry) {
+async function remove(row: Record<string, unknown>) {
+  const e = row.entry as PeakHourEntry;
   if (!window.confirm(`Delete peak hours for ${e.key}?`)) return;
   actionError.value = '';
   try {
@@ -109,32 +147,12 @@ async function remove(e: PeakHourEntry) {
     if (!(err instanceof TypeError)) actionError.value = String((err as Error)?.message ?? err);
   }
 }
-
-function onRowClick(e: PeakHourEntry) {
-  const m = (catalog.value?.models ?? []).find((x) => `${x.provider}/${x.id}` === e.key);
-  if (!m) return;
-  selected.value = e.key;
-  const d = catalog.value?.default;
-  store.requestModelDetail(m, !!d && e.key === `${d.provider}/${d.id}`);
-}
-
-function windowText(e: PeakHourEntry): string {
-  const days = weekdaysLabel(e.weekdays);
-  const base = windowLabel(e.start, e.end, e.utcOffset);
-  return days && days !== 'daily' ? `${base} · ${days}` : base;
-}
 </script>
 
 <template>
   <div class="pht">
     <div class="pht-bar">
-      <input
-        v-model="filter"
-        class="pht-filter"
-        type="text"
-        placeholder="Filter peak hours…"
-      >
-      <span class="pht-count">{{ entries.length }} windows</span>
+      <span class="pht-count">{{ store.peakHours.length }} windows</span>
       <button
         class="pht-add"
         :disabled="!modelChoices.length"
@@ -147,62 +165,58 @@ function windowText(e: PeakHourEntry): string {
     <div v-if="store.peakHoursError" class="pht-note pht-note--err">{{ store.peakHoursError }}</div>
     <div v-else-if="actionError" class="pht-note pht-note--err">{{ actionError }}</div>
     <div class="pht-body">
-      <div class="pht-head-row">
-        <span class="pht-col pht-col--switch" />
-        <span class="pht-col pht-col--model">Model</span>
-        <span class="pht-col pht-col--window">Window</span>
-        <span class="pht-col pht-col--note">Note</span>
-        <span class="pht-col pht-col--actions" />
-      </div>
-      <div
-        v-for="e in entries"
-        :key="e.id"
-        class="pht-row"
-        :class="{
-          'pht-row--off': !e.enabled,
-          'pht-row--clickable': catalogModelKeys.has(e.key),
-          'pht-row--selected': e.key === selected,
-        }"
-        :title="e.key"
-        @click="onRowClick(e)"
+      <Table
+        :columns="columns"
+        :rows="displayRows"
+        row-key="id"
+        :row-title="(row) => String(row.key)"
+        :row-class="rowClass"
+        @row-click="onRowClick"
       >
-        <div class="pht-cell pht-col--switch">
+        <template #cell-enabled="{ row }">
           <button
-            class="md-switch sf-panel-btn pht-switch"
-            :class="{ 'md-switch--on': e.enabled }"
+            class="md-switch pht-switch"
+            :class="{ 'md-switch--on': row.enabled }"
             role="switch"
-            :aria-checked="e.enabled"
-            :title="e.enabled ? 'Disable window' : 'Enable window'"
-            @click="toggle(e)"
+            :aria-checked="row.enabled === true"
+            :title="row.enabled ? 'Disable window' : 'Enable window'"
+            @click.stop="toggle(row)"
           ><span class="md-switch-knob" /></button>
-        </div>
-        <div class="pht-cell pht-col--model">
-          <span class="pht-key">{{ e.key }}</span>
+        </template>
+        <template #cell-key="{ row }">
+          <span class="pht-key">{{ row.key }}</span>
           <span
-            v-if="!catalogModelKeys.has(e.key)"
+            v-if="!catalogModelKeys.has(String(row.key))"
             class="pht-unknown"
             title="This model is not in the current catalog — the window is kept"
           >not in catalog</span>
-        </div>
-        <div
-          class="pht-cell pht-col--window"
-          :title="e.wrapsMidnightUtc ? `${windowText(e)} · crosses midnight UTC` : windowText(e)"
-        >
-          {{ windowText(e) }}
-        </div>
-        <div class="pht-cell pht-col--note" :title="e.note || undefined">{{ e.note }}</div>
-        <div class="pht-cell pht-col--actions">
-          <button class="pht-iconbtn" title="Edit window" @click="openEdit(e)">
+        </template>
+        <template #cell-window="{ row }">
+          <span
+            class="pht-muted pht-window-text"
+            :title="row.wraps ? `${row.window} · crosses midnight UTC` : String(row.window)"
+          >{{ row.window }}</span>
+        </template>
+        <template #cell-note="{ row }">
+          <span class="pht-muted" :title="row.note ? String(row.note) : undefined">{{ row.note }}</span>
+        </template>
+        <template #actions="{ row }">
+          <button class="sf-tbl-btn" type="button" title="Edit window" @click.stop="openEdit(row)">
             <SvgIcon name="✎" />
           </button>
-          <button class="pht-iconbtn pht-iconbtn--danger" title="Delete window" @click="remove(e)">
+          <button
+            class="sf-tbl-btn sf-tbl-btn--danger"
+            type="button"
+            title="Delete window"
+            @click.stop="remove(row)"
+          >
             <SvgIcon name="✕" />
           </button>
-        </div>
-      </div>
-      <div v-if="!entries.length && store.peakHoursLoaded" class="pht-empty">
-        {{ filter.trim() ? 'No windows match the filter.' : 'No peak hours yet.' }}
-      </div>
+        </template>
+        <template #empty="{ filtered }">
+          {{ filtered ? 'No windows match the filter.' : 'No peak hours yet.' }}
+        </template>
+      </Table>
     </div>
 
     <PeakHoursDialog
@@ -232,24 +246,6 @@ function windowText(e: PeakHourEntry): string {
   padding: 8px 12px;
   border-bottom: 1px solid var(--sf-border);
   flex-shrink: 0;
-}
-
-.pht-filter {
-  flex: 1;
-  min-width: 120px;
-  max-width: 320px;
-  background: var(--sf-bg);
-  border: 1px solid var(--sf-border);
-  border-radius: 4px;
-  color: var(--sf-text);
-  font-family: var(--sf-font);
-  font-size: 16px;
-  padding: 5px 8px;
-  outline: none;
-}
-
-.pht-filter:focus {
-  border-color: var(--sf-accent);
 }
 
 .pht-count {
@@ -302,73 +298,32 @@ function windowText(e: PeakHourEntry): string {
   overflow-y: auto;
 }
 
-.pht-head-row,
-.pht-row {
-  display: grid;
-  grid-template-columns: 30px minmax(0, 2fr) minmax(0, 0.75fr) minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: center;
-  padding: 4px 12px;
-}
-
-.pht-head-row {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  height: 30px;
-  padding: 0 12px;
-  font-size: 16px;
-  font-weight: 600;
-  letter-spacing: 0.4px;
-  text-transform: uppercase;
-  color: var(--sf-text-bright);
-  background: var(--sf-bg-lighter);
-  border-bottom: 1px solid var(--sf-border);
-  user-select: none;
-}
-
-.pht-col--window {
-  font-variant-numeric: tabular-nums;
-}
-
-.pht-row {
-  min-height: 32px;
-  font-size: 16px;
-  border-bottom: 1px solid var(--sf-border);
-}
-
-@media (hover: hover) {
-  .pht-row:hover {
-    box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
-  }
-}
-
-.pht-row--clickable {
+.pht :deep(.sf-tbl-row.pht-row--clickable) {
   cursor: pointer;
 }
 
-.pht-row--selected {
+.pht :deep(.sf-tbl-row.pht-row--selected) {
   background: var(--sf-selection);
 }
 
-.pht-row--off {
+.pht :deep(.sf-tbl-row.pht-row--off) {
   opacity: 0.55;
 }
 
-.pht-cell {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.pht-col--window,
-.pht-col--note {
-  color: var(--sf-text-muted);
+.pht :deep(.sf-tbl-head) {
+  font-size: 16px;
 }
 
 .pht-key {
   font-weight: 600;
+}
+
+.pht-muted {
+  color: var(--sf-text-muted);
+}
+
+.pht-window-text {
+  font-variant-numeric: tabular-nums;
 }
 
 .pht-unknown {
@@ -385,98 +340,16 @@ function windowText(e: PeakHourEntry): string {
   padding: 0;
 }
 
-.pht-col--actions {
-  display: flex;
-  gap: 4px;
-}
-
-.pht-iconbtn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--sf-bar);
-  border: 1px solid var(--sf-border);
-  border-radius: var(--sf-radius-sm);
-  color: var(--sf-text);
-  font-family: var(--sf-font);
-  font-size: 14px;
-  padding: 2px 5px;
-  cursor: pointer;
-}
-
-@media (hover: hover) {
-  .pht-iconbtn:hover {
-    box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
-  }
-}
-
-.pht-iconbtn--danger {
-  background: var(--sf-danger);
-  border-color: var(--sf-danger);
-  color: var(--sf-text-on-accent);
-}
-
-.pht-empty {
-  padding: 24px;
-  text-align: center;
-  color: var(--sf-text-muted);
-}
-
-.sf-root--mobile .pht-bar {
-  flex-wrap: wrap;
-}
-
-.sf-root--mobile .pht-filter {
-  max-width: none;
-}
-
-.sf-root--mobile .pht-head-row {
-  display: none;
-}
-
-.sf-root--mobile .pht-row {
-  grid-template:
-    'switch model actions' auto
-    'switch window actions' auto / auto minmax(0, 1fr) auto;
-  row-gap: 4px;
+.sf-root--mobile .pht :deep(.sf-tbl-row) {
   padding: 8px 12px;
-  align-content: center;
 }
 
-.sf-root--mobile .pht-col--switch {
-  grid-area: switch;
-}
-
-.sf-root--mobile .pht-col--model {
-  grid-area: model;
-}
-
-.sf-root--mobile .pht-col--window {
-  grid-area: window;
-  text-align: left;
-}
-
-.sf-root--mobile .pht-col--model,
-.sf-root--mobile .pht-col--window {
+.sf-root--mobile .pht :deep(.sf-tbl-c--title),
+.sf-root--mobile .pht :deep(.sf-tbl-c--sub) {
   line-height: 20px;
 }
 
-.sf-root--mobile .pht-unknown {
+.sf-root--mobile .pht :deep(.pht-unknown) {
   line-height: 1;
-}
-
-.sf-root--mobile .pht-col--note {
-  display: none;
-}
-
-.sf-root--mobile .pht-col--actions {
-  grid-area: actions;
-}
-
-.sf-root--mobile .pht-iconbtn {
-  width: 44px;
-  height: 44px;
-  padding: 0;
-  font-size: 16px;
 }
 </style>

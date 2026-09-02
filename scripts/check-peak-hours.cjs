@@ -1007,21 +1007,21 @@ async function unitChecks({ report }) {
     await page.locator('.sf-menu-row', { hasText: 'Peak Hours…' }).waitFor({ timeout: 5000 });
     await page.locator('.sf-menu-row', { hasText: 'Peak Hours…' }).click();
     await page.waitForSelector('.pht', { timeout: 10000 });
-    await page.locator('.pht-row').first().waitFor({ timeout: 10000 });
+    await page.locator('.pht .sf-tbl-row').first().waitFor({ timeout: 10000 });
     const peakTab = await page.locator('.sf-tab-label', { hasText: 'Peak Hours' }).count();
     report('the Model menu Peak Hours… item opens a workspace tab', peakTab === 1, `tab=${peakTab}`);
 
-    await page.locator('.pht-row', { hasText: 'ghost/ghost-model' }).waitFor({ timeout: 5000 });
-    const ghostRow = await page.locator('.pht-row', { hasText: 'ghost/ghost-model' }).textContent();
+    await page.locator('.pht .sf-tbl-row', { hasText: 'ghost/ghost-model' }).waitFor({ timeout: 5000 });
+    const ghostRow = await page.locator('.pht .sf-tbl-row', { hasText: 'ghost/ghost-model' }).textContent();
     const ghostChip = await page.locator('.pht-unknown').count();
     const ghostWindowTitle =
       (await page
-        .locator('.pht-row', { hasText: 'ghost/ghost-model' })
-        .locator('.pht-col--window')
+        .locator('.pht .sf-tbl-row', { hasText: 'ghost/ghost-model' })
+        .locator('.sf-tbl-c--sub span')
         .getAttribute('title')) ?? '';
     report(
       'the tab lists every window and flags models absent from the catalog',
-      (await page.locator('.pht-row').count()) === 2 &&
+      (await page.locator('.pht .sf-tbl-row').count()) === 2 &&
         ghostRow.includes('(UTC) 22:00-02:00') &&
         !ghostRow.includes('↻') &&
         ghostChip === 1 &&
@@ -1029,7 +1029,7 @@ async function unitChecks({ report }) {
       `row=${ghostRow} chips=${ghostChip} title=${ghostWindowTitle}`,
     );
 
-    const headText = (await page.locator('.pht-head-row').textContent()) ?? '';
+    const headText = (await page.locator('.pht .sf-tbl-head').textContent()) ?? '';
     report('the tab table has no UTC column', !headText.includes('UTC'), `head=${headText}`);
 
     const peakTabPanelDef = layoutDefs.rightPanels?.['peak-hours'];
@@ -1051,8 +1051,8 @@ async function unitChecks({ report }) {
     await delay(500);
     report(
       'adding from the tab goes through a model selector',
-      (await page.locator('.pht-row').count()) === 3,
-      `rows=${await page.locator('.pht-row').count()}`,
+      (await page.locator('.pht .sf-tbl-row').count()) === 3,
+      `rows=${await page.locator('.pht .sf-tbl-row').count()}`,
     );
     r = await jfetch('/api/peak-hours');
     const miniEntry = r.body.entries.find((e) => e.key === 'stub/stub-mini');
@@ -1062,24 +1062,26 @@ async function unitChecks({ report }) {
       JSON.stringify(miniEntry ?? null),
     );
 
-    const miniRowText = (await page.locator('.pht-row', { hasText: 'stub/stub-mini' }).textContent()) ?? '';
+    const miniRowText =
+      (await page.locator('.pht .sf-tbl-row', { hasText: 'stub/stub-mini' }).textContent()) ?? '';
     report(
       'window text uses the hh:mm - hh:mm UTC±n layout',
       miniRowText.includes('(UTC) 03:00-06:00'),
       `row=${miniRowText}`,
     );
 
-    const proRowText = (await page.locator('.pht-row', { hasText: 'stub/stub-pro' }).textContent()) ?? '';
+    const proRowText =
+      (await page.locator('.pht .sf-tbl-row', { hasText: 'stub/stub-pro' }).textContent()) ?? '';
     report(
       'tab window text carries the weekday label only when not daily',
       proRowText.includes('Mon–Fri') && !miniRowText.includes('·') && !ghostRow.includes('·'),
       `pro=${proRowText} mini=${miniRowText} ghost=${ghostRow}`,
     );
 
-    await page.locator('.pht-row', { hasText: 'stub/stub-pro' }).click();
+    await page.locator('.pht .sf-tbl-row', { hasText: 'stub/stub-pro' }).click();
     await delay(300);
     const selRowCls =
-      (await page.locator('.pht-row', { hasText: 'stub/stub-pro' }).getAttribute('class')) ?? '';
+      (await page.locator('.pht .sf-tbl-row', { hasText: 'stub/stub-pro' }).getAttribute('class')) ?? '';
     const detailText = (await page.locator('.model-detail').textContent()) ?? '';
     report(
       'clicking a tab entry shows its model details in the right panel',
@@ -1089,19 +1091,19 @@ async function unitChecks({ report }) {
       `cls=${selRowCls} detail=${detailText.slice(0, 120)}`,
     );
 
-    await page.locator('.pht-row', { hasText: 'ghost/ghost-model' }).click();
+    await page.locator('.pht .sf-tbl-row', { hasText: 'ghost/ghost-model' }).click();
     await delay(300);
     const ghostSelCls =
-      (await page.locator('.pht-row', { hasText: 'ghost/ghost-model' }).getAttribute('class')) ?? '';
+      (await page.locator('.pht .sf-tbl-row', { hasText: 'ghost/ghost-model' }).getAttribute('class')) ?? '';
     report(
       'entries absent from the catalog are not selectable',
       !ghostSelCls.includes('pht-row--selected') && !ghostSelCls.includes('pht-row--clickable'),
       `cls=${ghostSelCls}`,
     );
 
-    await page.locator('.pht-row', { hasText: 'stub/stub-pro' }).locator('.pht-switch').click();
+    await page.locator('.pht .sf-tbl-row', { hasText: 'stub/stub-pro' }).locator('.pht-switch').click();
     await delay(600);
-    const offRow = await page.locator('.pht-row', { hasText: 'stub/stub-pro' }).getAttribute('class');
+    const offRow = await page.locator('.pht .sf-tbl-row', { hasText: 'stub/stub-pro' }).getAttribute('class');
     r = await jfetch('/api/peak-hours');
     report(
       'the switch toggles enabled via PATCH',
@@ -1110,11 +1112,11 @@ async function unitChecks({ report }) {
     );
 
     await page
-      .locator('.pht-row', { hasText: 'stub/stub-pro' })
+      .locator('.pht .sf-tbl-row', { hasText: 'stub/stub-pro' })
       .locator('button[title="Delete window"]')
       .click();
     await delay(800);
-    const rowsAfterDelete = await page.locator('.pht-row').count();
+    const rowsAfterDelete = await page.locator('.pht .sf-tbl-row').count();
     r = await jfetch('/api/peak-hours');
     report(
       'delete removes the row and persists',
@@ -1124,6 +1126,56 @@ async function unitChecks({ report }) {
         JSON.parse(fs.readFileSync(PEAK_HOURS_PATH, 'utf8')).entries.length === 2,
       `rows=${rowsAfterDelete}`,
     );
+
+    const modelHead = page.locator('.pht .sf-tbl-th', { hasText: 'Model' });
+    const rowsText = () => page.locator('.pht .sf-tbl-row').allTextContents();
+    const beforeSort = await rowsText();
+    await modelHead.locator('.sf-tbl-sortbtn').click();
+    await delay(200);
+    const ascRows = await rowsText();
+    report(
+      'header click sorts the tab by model',
+      ascRows.length === 2 &&
+        ascRows.every((t, i) => t === [...beforeSort].sort()[i]) &&
+        (await modelHead.locator('.sf-tbl-sortind').textContent()) === '↑',
+      `before=${beforeSort} after=${ascRows}`,
+    );
+    await modelHead.locator('.sf-tbl-sortbtn').click();
+    await delay(200);
+    const descRows = await rowsText();
+    report(
+      'second click sorts descending',
+      descRows[0] === ascRows[ascRows.length - 1] &&
+        (await modelHead.locator('.sf-tbl-sortind').textContent()) === '↓',
+      `desc=${descRows}`,
+    );
+    await modelHead.locator('.sf-tbl-sortbtn').click();
+    await delay(200);
+    await modelHead.locator('.sf-tbl-filterbtn').click();
+    await delay(100);
+    await page.locator('.pht .sf-tbl-pop-input').fill('ghost');
+    await delay(200);
+    const filteredRows = await rowsText();
+    const emptyText = ((await page.locator('.pht .sf-tbl-empty').count()) ?? 0) > 0;
+    report(
+      'per-column filter narrows the tab rows',
+      filteredRows.length === 1 && filteredRows[0].includes('ghost/ghost-model') && !emptyText,
+      `rows=${filteredRows}`,
+    );
+    await page.locator('.pht .sf-tbl-pop-input').fill('zzz');
+    await delay(200);
+    const emptyMsg = (await page.locator('.pht .sf-tbl-empty').textContent()) ?? '';
+    report(
+      'the empty state distinguishes filtered from empty',
+      emptyMsg.trim() === 'No windows match the filter.',
+      emptyMsg,
+    );
+    await page.locator('.pht .sf-tbl-pop-input').fill('');
+    await delay(200);
+    await page.mouse.click(700, 10);
+    await delay(150);
+    const afterClear = await rowsText();
+    report('clearing the filter restores the rows', afterClear.length === 2, `rows=${afterClear.length}`);
 
     const badPosts = [
       [{ provider: 'stub', model: 'stub-pro', start: '08:00', end: '08:00', utcOffset: 0 }, 400],
@@ -1187,23 +1239,23 @@ async function unitChecks({ report }) {
     await page.setViewportSize({ width: 375, height: 812 });
     await page.waitForSelector('.sf-root--mobile', { timeout: 5000 });
     await delay(400);
-    const mobCards = await page.locator('.pht-row').evaluateAll((rows) =>
+    const mobCards = await page.locator('.pht .sf-tbl-row').evaluateAll((rows) =>
       rows.map((row) => {
         const rect = (el) => {
           const b = el.getBoundingClientRect();
           return { l: b.left, r: b.right, t: b.top, b: b.bottom, w: b.width, h: b.height };
         };
-        const note = row.querySelector('.pht-col--note');
-        const win = row.querySelector('.pht-col--window');
-        const btns = Array.from(row.querySelectorAll('.pht-col--actions button'));
+        const note = row.querySelector('.sf-tbl-c--hidden');
+        const win = row.querySelector('.sf-tbl-c--sub');
+        const btns = Array.from(row.querySelectorAll('.sf-tbl-c--actions button'));
         return {
           card: rect(row),
           switch: rect(row.querySelector('.pht-switch')),
-          model: rect(row.querySelector('.pht-col--model')),
+          model: rect(row.querySelector('.sf-tbl-c--title')),
           window: rect(win),
           windowAlign: getComputedStyle(win).textAlign,
           noteDisplay: note ? getComputedStyle(note).display : null,
-          actions: rect(row.querySelector('.pht-col--actions')),
+          actions: rect(row.querySelector('.sf-tbl-c--actions')),
           buttons: btns.map(rect),
           btnColors: btns.map((b) => getComputedStyle(b).color),
           btnBgs: btns.map((b) => getComputedStyle(b).backgroundColor),

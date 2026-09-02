@@ -265,6 +265,7 @@ async function save() {
 
 .aph-input {
   width: 100%;
+  height: 36px;
   box-sizing: border-box;
   background: var(--sf-bg);
   border: 1px solid var(--sf-border);
@@ -274,6 +275,15 @@ async function save() {
   font-size: 14px;
   padding: 5px 7px;
   outline: none;
+}
+
+#aph-note {
+  font-size: 16px;
+}
+
+.aph-times :deep(.tf-input) {
+  height: 36px;
+  box-sizing: border-box;
 }
 
 .aph-input:focus {
@@ -292,13 +302,18 @@ async function save() {
 
 .aph-days :deep(.sf-ms-track) {
   width: 100%;
+  height: 36px;
   box-sizing: border-box;
+  padding: 0 3px;
+  align-items: stretch;
 }
 
 .aph-days :deep(.sf-ms-item) {
   flex: 1 1 0;
   min-width: 0;
-  padding: 8px 0;
+  align-self: stretch;
+  padding: 0;
+  line-height: 1;
   text-align: center;
 }
 

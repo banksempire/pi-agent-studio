@@ -808,6 +808,27 @@ async function unitChecks({ report }) {
         daysChip.height >= 30,
       JSON.stringify({ track: daysTrack?.width, field: daysField?.width, chip: daysChip?.height }),
     );
+    const ctlHeights = await page.evaluate(() => {
+      const h = (sel) => {
+        const el = document.querySelector(sel);
+        return el ? Math.round(el.getBoundingClientRect().height * 10) / 10 : null;
+      };
+      return {
+        tz: h('#aph-tz'),
+        start: h('#aph-start'),
+        note: h('#aph-note'),
+        days: h('.aph-days .sf-ms-track'),
+      };
+    });
+    const noteFont = await page.evaluate(
+      () => getComputedStyle(document.querySelector('#aph-note')).fontSize,
+    );
+    const hs = Object.values(ctlHeights);
+    report(
+      'all dialog controls share one height; the note box uses chat input text size',
+      hs.every((x) => x !== null) && Math.max(...hs) - Math.min(...hs) < 1 && noteFont === '16px',
+      JSON.stringify({ ...ctlHeights, noteFont }),
+    );
 
     await page.selectOption('#aph-tz', '120');
     await page.fill('#aph-start', '09:00');

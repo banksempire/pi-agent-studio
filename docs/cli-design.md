@@ -252,7 +252,9 @@ studio [-i <instance>] <command> …        # auto-detects instance from CWD's p
   peak-hours add …            add window(s): --provider <id> (every catalog model)
                               | --model <provider/model>; --start/--end HH:MM on the
                               --offset clock (UTC+8 | +8 | -5:30 | minutes, default UTC);
-                              --note <text>, --disabled; identical windows are skipped
+                              --note <text>, --disabled; --weekdays mon-fri |
+                              mon,wed,fri | 1-5 | weekend | all (default all);
+                              identical windows are skipped
   peak-hours rm <id> | --key <provider/model> | --provider <id>
                               delete window(s)
   peak-hours enable|disable <id>
@@ -472,13 +474,20 @@ tab); the CLI is the batch/agent surface.
   (`UTC+8`, `+8`, `-5:30`, or raw minutes; default UTC); the backend stores
   canonical UTC minutes plus the display clock. A window may wrap midnight.
   `--start` must differ from `--end`.
+- **Weekdays**: `--weekdays <spec>` scopes the window to specific days —
+  `mon-fri` | `mon,wed,fri` | `1-5` | `sun` | `weekend` | `all` (default
+  `all`). Days are counted on the window's own clock (the `--offset`
+  clock), so a UTC+8 window peaks on Beijing days; a window wrapping
+  midnight needs its tail day included too (Mon 22:00–02:00 covering
+  Tuesday 01:00 wants `mon,tue`). Weekdays take part in the
+  identical-window guard: same clock, different days = distinct rules.
 - **Targets**: `--model <provider/model>` (or `--provider <id>` +
   `--model <id>`) for one model, or `--provider <id>` alone to fan out over
   every model of that provider in the live catalog (`GET /api/models`).
   Fan-out is **idempotent**: models that already have an identical window
   are reported as skipped, so re-running converges instead of failing.
 - **`list [--provider <id>]`** prints id, model, window (display clock),
-  UTC equivalent, enabled state, note. `--json` emits the raw entries.
+  UTC equivalent, days, enabled state, note. `--json` emits the raw entries.
 - **`rm`** deletes by entry id, by `--key <provider/model>`, or every window
   of `--provider <id>`; reports how many were removed.
 - **`enable|disable <id>`** toggles without editing.
@@ -487,12 +496,12 @@ tab); the CLI is the batch/agent surface.
   failures; the backend re-validates everything (identical-window guard,
   note length, offset range).
 
-Example — rate-limit window for a whole provider:
+Example — rate-limit window for a whole provider, working days only:
 
 ```
 $ studio -i main peak-hours add --provider zai-coding-cn \
-    --start 14:00 --end 18:00 --offset UTC+8
-created zai-coding-cn/glm-4.7 — 14:00 - 18:00 UTC+8
+    --start 14:00 --end 18:00 --offset UTC+8 --weekdays mon-fri
+created zai-coding-cn/glm-4.7 — 14:00 - 18:00 UTC+8 · Mon–Fri
 …
 10 created, 0 skipped, 0 failed
 ```

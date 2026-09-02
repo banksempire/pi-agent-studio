@@ -62,9 +62,9 @@ const catalogModelKeys = computed(() => new Set(modelChoices.value.map((c) => c.
 
 const columns: TableColumn[] = [
   { key: 'enabled', label: 'On', width: 46, mobile: 'lead' },
-  { key: 'key', label: 'Model', sortable: true, filter: 'text', mobile: 'title' },
+  { key: 'key', label: 'Model', sortable: true, filter: true, mobile: 'title' },
   { key: 'window', label: 'Window', width: 200, sortable: true, mobile: 'sub' },
-  { key: 'note', label: 'Note', filter: 'text' },
+  { key: 'note', label: 'Note', filter: true },
 ];
 
 const displayRows = computed(() =>

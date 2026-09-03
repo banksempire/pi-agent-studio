@@ -1130,29 +1130,29 @@ async function unitChecks({ report }) {
     const modelHead = page.locator('.pht .sf-tbl-th', { hasText: 'Model' });
     const rowsText = () => page.locator('.pht .sf-tbl-row').allTextContents();
     const beforeSort = await rowsText();
-    await modelHead.locator('.sf-tbl-sortbtn').click();
+    await modelHead.locator('.sf-tbl-hbtn').click();
+    await delay(100);
+    await page.locator('.pht .sf-tbl-pop-sortbtn').first().click();
     await delay(200);
     const ascRows = await rowsText();
     report(
-      'header click sorts the tab by model',
+      'header dropdown A→Z sorts the tab by model',
       ascRows.length === 2 &&
         ascRows.every((t, i) => t === [...beforeSort].sort()[i]) &&
         (await modelHead.locator('.sf-tbl-sortind').textContent()) === '↑',
       `before=${beforeSort} after=${ascRows}`,
     );
-    await modelHead.locator('.sf-tbl-sortbtn').click();
+    await page.locator('.pht .sf-tbl-pop-sortbtn').nth(1).click();
     await delay(200);
     const descRows = await rowsText();
     report(
-      'second click sorts descending',
+      'dropdown Z→A sorts descending',
       descRows[0] === ascRows[ascRows.length - 1] &&
         (await modelHead.locator('.sf-tbl-sortind').textContent()) === '↓',
       `desc=${descRows}`,
     );
-    await modelHead.locator('.sf-tbl-sortbtn').click();
+    await page.locator('.pht .sf-tbl-pop-sortbtn').nth(1).click();
     await delay(200);
-    await modelHead.locator('.sf-tbl-filterbtn').click();
-    await delay(100);
     await page.locator('.pht .sf-tbl-pop-input').fill('ghost');
     await delay(200);
     const filteredRows = await rowsText();

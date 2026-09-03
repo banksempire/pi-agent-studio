@@ -1217,15 +1217,18 @@ async function unitChecks({ report }) {
 
     const fill = await page.evaluate(() => {
       const body = document.querySelector('.pht-body');
+      const wrap = document.querySelector('.pht .sf-tbl-wrap');
       const scroller = document.querySelector('.pht .sf-tbl-scroll');
       return {
         bodyH: Math.round(body.getBoundingClientRect().height),
-        tblH: Math.round(scroller.getBoundingClientRect().height),
+        tblH: Math.round(wrap.getBoundingClientRect().height),
+        scrollFills:
+          Math.abs(scroller.getBoundingClientRect().bottom - wrap.getBoundingClientRect().bottom) <= 1,
       };
     });
     report(
       'the table area fills the tab height',
-      fill.tblH >= fill.bodyH - 2 && fill.tblH > 200,
+      fill.tblH >= fill.bodyH - 2 && fill.tblH > 200 && fill.scrollFills,
       JSON.stringify(fill),
     );
 
@@ -1391,6 +1394,66 @@ async function unitChecks({ report }) {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.waitForSelector('.sf-root:not(.sf-root--mobile)', { timeout: 5000 });
     await delay(400);
+
+    for (let i = 0; i < 40; i++) {
+      r = await jfetch('/api/peak-hours', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: 'stub',
+          model: `stress-${String(i).padStart(2, '0')}`,
+          start: '02:00',
+          end: '06:00',
+          utcOffset: 3,
+        }),
+      });
+      if (r.status !== 201) break;
+    }
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.sf-docker', { timeout: 60000 });
+    await page.locator('.sf-menu-item', { hasText: 'Model' }).click();
+    await page.locator('.sf-menu-row', { hasText: 'Peak Hours…' }).waitFor({ timeout: 5000 });
+    await page.locator('.sf-menu-row', { hasText: 'Peak Hours…' }).click();
+    await page.waitForSelector('.pht', { timeout: 10000 });
+    await page.locator('.pht .sf-tbl-row').first().waitFor({ timeout: 10000 });
+    await delay(600);
+
+    const tabGeom = () =>
+      page.evaluate(() => {
+        const bar = document.querySelector('.pht .sf-tbl-search');
+        const scroller = document.querySelector('.pht .sf-tbl-scroll');
+        const head = document.querySelector('.pht .sf-tbl-head');
+        const row = document.querySelector('.pht .sf-tbl-row');
+        const sr = scroller.getBoundingClientRect();
+        return {
+          barTop: Math.round(bar.getBoundingClientRect().top),
+          headTop: Math.round(head.getBoundingClientRect().top),
+          rowTop: Math.round(row.getBoundingClientRect().top),
+          scrollTop: scroller.scrollTop,
+          overflows: scroller.scrollHeight > scroller.clientHeight + 100,
+          x: sr.left + 200,
+          y: sr.top + sr.height / 2,
+        };
+      });
+    const tabBefore = await tabGeom();
+    await page.mouse.move(tabBefore.x, tabBefore.y);
+    await page.mouse.wheel(0, 200);
+    await delay(300);
+    const tabAfter = await tabGeom();
+    report(
+      'the peak tab scrolls only the rows: toolbar and header stay at the top',
+      tabBefore.overflows &&
+        tabAfter.scrollTop > 100 &&
+        Math.abs(tabAfter.barTop - tabBefore.barTop) <= 1 &&
+        Math.abs(tabAfter.headTop - tabBefore.headTop) <= 1 &&
+        tabAfter.rowTop < tabBefore.rowTop - 100,
+      JSON.stringify({ before: tabBefore, after: tabAfter }),
+    );
+
+    r = await jfetch('/api/peak-hours');
+    for (const e of r.body.entries.filter((en) => en.key.startsWith('stub/stress-'))) {
+      await jfetch(`/api/peak-hours/${encodeURIComponent(e.id)}`, { method: 'DELETE' });
+    }
 
     const secondPort = await freePort();
     procs.push(

@@ -1360,6 +1360,34 @@ async function unitChecks({ report }) {
       }) && Math.abs(mobCards[0].card.h - mobCards[1].card.h) < 2,
       JSON.stringify(mobCards.map((c) => ({ card: c.card, buttons: c.buttons }))),
     );
+
+    const mobToolbar = await page.evaluate(() => {
+      const bar = document.querySelector('.pht .sf-tbl-search');
+      const add = document.querySelector('.pht .pht-add');
+      return {
+        barH: Math.round(bar.getBoundingClientRect().height),
+        addH: Math.round(add.getBoundingClientRect().height),
+        addDisabled: add.disabled,
+      };
+    });
+    report(
+      'mobile: the toolbar is a full 60px bar with a touch-sized add button',
+      mobToolbar.barH === 60 && mobToolbar.addH >= 36 && !mobToolbar.addDisabled,
+      JSON.stringify(mobToolbar),
+    );
+
+    const mobBounce = await page.evaluate(() => {
+      const scroller = document.querySelector('.pht .sf-tbl-scroll');
+      return {
+        diff: scroller.scrollHeight - scroller.clientHeight,
+        clientH: scroller.clientHeight,
+      };
+    });
+    report(
+      'mobile: the table area bounces even when the rows do not overflow it',
+      mobBounce.diff >= 1 && mobBounce.clientH > 400,
+      JSON.stringify(mobBounce),
+    );
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.waitForSelector('.sf-root:not(.sf-root--mobile)', { timeout: 5000 });
     await delay(400);

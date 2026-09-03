@@ -249,6 +249,11 @@ async function remove(row: Record<string, unknown>) {
   font-variant-numeric: tabular-nums;
 }
 
+.sf-root--mobile .pht-add {
+  font-size: 16px;
+  padding: 8px 14px;
+}
+
 .pht-add {
   display: inline-flex;
   align-items: center;

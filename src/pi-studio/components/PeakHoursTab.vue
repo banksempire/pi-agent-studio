@@ -169,6 +169,8 @@ async function remove(row: Record<string, unknown>) {
         :columns="columns"
         :rows="displayRows"
         row-key="id"
+        searchable
+        search-placeholder="Search windows…"
         :row-title="(row) => String(row.key)"
         :row-class="rowClass"
         @row-click="onRowClick"

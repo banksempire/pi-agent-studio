@@ -1177,6 +1177,18 @@ async function unitChecks({ report }) {
     const afterClear = await rowsText();
     report('clearing the filter restores the rows', afterClear.length === 2, `rows=${afterClear.length}`);
 
+    await page.locator('.pht .sf-tbl-search-input').fill('ghost');
+    await delay(200);
+    const searched = await rowsText();
+    report(
+      'the top search box filters the tab across all columns',
+      searched.length === 1 && searched[0].includes('ghost/ghost-model'),
+      `rows=${searched}`,
+    );
+    await page.locator('.pht .sf-tbl-search-clear').click();
+    await delay(200);
+    report('clearing the top search restores the rows', (await rowsText()).length === 2);
+
     const badPosts = [
       [{ provider: 'stub', model: 'stub-pro', start: '08:00', end: '08:00', utcOffset: 0 }, 400],
       [{ provider: 'stub', model: 'stub-pro', start: '08:00', end: '09:00', utcOffset: 1080 }, 400],

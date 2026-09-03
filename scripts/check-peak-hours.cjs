@@ -1185,9 +1185,67 @@ async function unitChecks({ report }) {
       searched.length === 1 && searched[0].includes('ghost/ghost-model'),
       `rows=${searched}`,
     );
+    const searchedCount = await page.locator('.pht .sf-tbl-search-side--end').textContent();
+    report('the count reads filtered/total', searchedCount?.trim() === '1/2', searchedCount);
     await page.locator('.pht .sf-tbl-search-clear').click();
     await delay(200);
     report('clearing the top search restores the rows', (await rowsText()).length === 2);
+
+    const modelFit = await page.evaluate(() => {
+      const head = document.querySelector('.pht .sf-tbl-head');
+      return getComputedStyle(head).gridTemplateColumns.split(' ').map(parseFloat);
+    });
+    report(
+      'auto-fitted columns size to their content on startup',
+      modelFit[1] >= 100,
+      JSON.stringify(modelFit),
+    );
+
+    const toolbar = await page.evaluate(() => {
+      const pht = document.querySelector('.pht');
+      const add = pht.querySelector('.pht-add');
+      const input = pht.querySelector('.sf-tbl-search-input');
+      const count = pht.querySelector('.pht-count');
+      const r = (el) => Math.round(el.getBoundingClientRect().left);
+      return { order: r(add) < r(input) && r(input) < r(count), count: count.textContent.trim() };
+    });
+    report(
+      'toolbar reads [add | search | count]',
+      toolbar.order && toolbar.count === '2/2',
+      JSON.stringify(toolbar),
+    );
+
+    const fill = await page.evaluate(() => {
+      const body = document.querySelector('.pht-body');
+      const scroller = document.querySelector('.pht .sf-tbl-scroll');
+      return {
+        bodyH: Math.round(body.getBoundingClientRect().height),
+        tblH: Math.round(scroller.getBoundingClientRect().height),
+      };
+    });
+    report(
+      'the table area fills the tab height',
+      fill.tblH >= fill.bodyH - 2 && fill.tblH > 200,
+      JSON.stringify(fill),
+    );
+
+    await page.locator('.pht .sf-tbl-th', { hasText: 'Model' }).locator('.sf-tbl-hbtn').click();
+    await delay(200);
+    const drop = await page.evaluate(() => {
+      const scroller = document.querySelector('.pht .sf-tbl-scroll');
+      const pop = document.querySelector('.pht .sf-tbl-pop');
+      if (!pop) return { visible: false };
+      const pr = pop.getBoundingClientRect();
+      const sr = scroller.getBoundingClientRect();
+      return { visible: pr.bottom <= sr.bottom + 1 && pr.top >= sr.top - 1 };
+    });
+    report(
+      'with few rows the sort/filter dropdown still fits inside the table area',
+      drop.visible,
+      JSON.stringify(drop),
+    );
+    await page.mouse.click(700, 10);
+    await delay(150);
 
     const badPosts = [
       [{ provider: 'stub', model: 'stub-pro', start: '08:00', end: '08:00', utcOffset: 0 }, 400],

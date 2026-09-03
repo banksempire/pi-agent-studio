@@ -151,17 +151,6 @@ async function remove(row: Record<string, unknown>) {
 
 <template>
   <div class="pht">
-    <div class="pht-bar">
-      <span class="pht-count">{{ store.peakHours.length }} windows</span>
-      <button
-        class="pht-add"
-        :disabled="!modelChoices.length"
-        :title="modelChoices.length ? 'Add peak hours' : 'The model catalog is not loaded yet'"
-        @click="openAdd"
-      >
-        <SvgIcon name="＋" />add
-      </button>
-    </div>
     <div v-if="store.peakHoursError" class="pht-note pht-note--err">{{ store.peakHoursError }}</div>
     <div v-else-if="actionError" class="pht-note pht-note--err">{{ actionError }}</div>
     <div class="pht-body">
@@ -175,6 +164,19 @@ async function remove(row: Record<string, unknown>) {
         :row-class="rowClass"
         @row-click="onRowClick"
       >
+        <template #search-lead>
+          <button
+            class="pht-add"
+            :disabled="!modelChoices.length"
+            :title="modelChoices.length ? 'Add peak hours' : 'The model catalog is not loaded yet'"
+            @click="openAdd"
+          >
+            <SvgIcon name="＋" />add
+          </button>
+        </template>
+        <template #search-end="{ filtered, total }">
+          <span class="pht-count">{{ filtered }}/{{ total }}</span>
+        </template>
         <template #cell-enabled="{ row }">
           <button
             class="md-switch pht-switch"
@@ -241,19 +243,10 @@ async function remove(row: Record<string, unknown>) {
   background: var(--sf-bg);
 }
 
-.pht-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--sf-border);
-  flex-shrink: 0;
-}
-
 .pht-count {
   color: var(--sf-text-muted);
   font-size: 16px;
-  margin-right: auto;
+  font-variant-numeric: tabular-nums;
 }
 
 .pht-add {
@@ -266,8 +259,8 @@ async function remove(row: Record<string, unknown>) {
   border-radius: 4px;
   color: var(--sf-text-on-accent);
   font-family: var(--sf-font);
-  font-size: 16px;
-  padding: 5px 14px;
+  font-size: 13px;
+  padding: 3px 10px;
   cursor: pointer;
 }
 
@@ -297,7 +290,8 @@ async function remove(row: Record<string, unknown>) {
 .pht-body {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .pht :deep(.sf-tbl-row.pht-row--clickable) {

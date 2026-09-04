@@ -71,8 +71,19 @@ async function toggleHistory(job: JobInfo) {
 }
 
 function scheduleText(job: JobInfo): string {
+  if (job.scheduleType === 'nonpeak') return `off-peak ${job.cron ?? ''}`.trim();
   return job.scheduleType === 'cron' ? `cron ${job.cron}` : `once ${fmtTime(job.runAt)}`;
 }
+
+const schedLine = computed(() => {
+  const s = store.scheduler;
+  if (!s) return '';
+  const bits: string[] = [];
+  if (s.running > 0) bits.push(`${s.running} running`);
+  if (s.waiting > 0) bits.push(`${s.waiting} waiting for a slot`);
+  if (bits.length === 0) return '';
+  return `${bits.join(' · ')} · limits ${s.limits.globalMax} global / ${s.limits.providerMax} per provider / ${s.limits.modelMax} per model`;
+});
 
 function targetText(job: JobInfo): string {
   const t = job.payload.target;
@@ -108,6 +119,7 @@ onMounted(() => {
 
 <template>
   <div class="jobs-panel">
+    <div v-if="schedLine" class="jobs-sched-line" :title="schedLine">{{ schedLine }}</div>
     <div v-if="error" class="jobs-error">{{ error }}</div>
 
     <div v-if="sortedJobs.length === 0 && store.jobsLoaded" class="jobs-empty">
@@ -180,6 +192,14 @@ onMounted(() => {
   padding: 8px;
   min-height: 0;
   overflow-y: auto;
+}
+.jobs-sched-line {
+  padding: 4px 8px;
+  font-size: 12px;
+  opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .jobs-error {
   padding: 6px 8px;

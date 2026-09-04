@@ -127,7 +127,7 @@ export interface JobInfo {
   name: string;
   enabled: boolean;
   kind: string;
-  scheduleType: 'once' | 'cron';
+  scheduleType: 'once' | 'cron' | 'nonpeak';
   runAt: number | null;
   cron: string | null;
   payload: { message: string; target: JobTarget; model?: string | null; thinkLevel?: string | null };
@@ -139,10 +139,16 @@ export interface JobInfo {
   lastRun: JobRunInfo | null;
 }
 
+export interface SchedulerInfo {
+  running: number;
+  waiting: number;
+  limits: { globalMax: number; providerMax: number; modelMax: number };
+}
+
 export interface JobInput {
   name?: string;
   enabled?: boolean;
-  scheduleType?: 'once' | 'cron';
+  scheduleType?: 'once' | 'cron' | 'nonpeak';
   runAt?: number;
   cron?: string;
   message?: string;
@@ -201,6 +207,7 @@ interface ChatState {
   jobs: JobInfo[];
   jobsLoaded: boolean;
   jobsSort: JobsSort;
+  scheduler: SchedulerInfo | null;
 }
 
 const PREFS_KEY = 'sf-chat:prefs';
@@ -467,6 +474,7 @@ const state = reactive<ChatState>({
   jobs: [],
   jobsLoaded: false,
   jobsSort: loadJobsSort(),
+  scheduler: null,
   activeChatId: null,
   openViewTabIds: new Set(),
   reviewTabId: null,
@@ -759,8 +767,9 @@ let jobsRefreshTimer: number | null = null;
 
 async function refreshJobs() {
   try {
-    const { jobs } = await api<{ jobs: JobInfo[] }>('/api/jobs');
+    const { jobs, scheduler } = await api<{ jobs: JobInfo[]; scheduler: SchedulerInfo | null }>('/api/jobs');
     state.jobs = jobs;
+    state.scheduler = scheduler;
     state.jobsLoaded = true;
     syncJobEditorTabLabels();
   } catch {}
@@ -2375,6 +2384,9 @@ export const store = {
   },
   get jobs() {
     return state.jobs;
+  },
+  get scheduler() {
+    return state.scheduler;
   },
   get jobsLoaded() {
     return state.jobsLoaded;

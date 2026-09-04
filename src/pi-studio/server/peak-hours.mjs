@@ -65,6 +65,19 @@ export function isPeakAt(entries, provider, model, at) {
   );
 }
 
+const NON_PEAK_SCAN_MAX_MS = 8 * 1440 * 60_000;
+
+export function nextNonPeakAt(entries, provider, model, fromMs) {
+  if (!isPeakAt(entries, provider, model, fromMs)) return fromMs;
+  let t = Math.ceil(fromMs / 60_000) * 60_000;
+  const limit = fromMs + NON_PEAK_SCAN_MAX_MS;
+  while (t <= limit) {
+    if (!isPeakAt(entries, provider, model, t)) return t;
+    t += 60_000;
+  }
+  return null;
+}
+
 function validStoredEntry(e) {
   return (
     !!e &&
@@ -355,5 +368,6 @@ export function createPeakHoursStore({
     remove,
     list,
     isPeakAt: (provider, model, at) => isPeakAt([...entries.values()], provider, model, at),
+    nextNonPeakAt: (provider, model, fromMs) => nextNonPeakAt([...entries.values()], provider, model, fromMs),
   };
 }

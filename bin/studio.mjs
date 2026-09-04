@@ -48,7 +48,8 @@ commands:
   jobs list                 scheduled jobs on this instance's backend
   jobs add <name> …         add a job (--at <time> | --cron <expr>, --message,
                             --session <file> | --cwd <dir> [--mode new|reuse],
-                            --model, --think, --missed coalesce|skip)
+                            --model, --think, --missed coalesce|skip,
+                            --nonpeak with --cron+--model for off-peak runs)
   jobs edit <id> …          update a job (--name/--message/--at/--cron/--cwd/…)
   jobs rm <id>              delete a job and its run history
   jobs run <id>             fire a job now (manual run, schedule untouched)

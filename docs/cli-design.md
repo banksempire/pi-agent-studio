@@ -239,7 +239,9 @@ studio [-i <instance>] <command> …        # auto-detects instance from CWD's p
   agents                      live agents via /api/agent-states: id, state, queue, activity
   abort <agent-id>            wraps POST /api/abort
   jobs list                   scheduled jobs (id, schedule, target, next run, last status)
-  jobs add <name> …           create a job: --at <time> (once) | --cron <expr> (periodic),
+  jobs add <name> …           create a job: --at <time> (once) | --cron <expr> (periodic)
+                              | --cron <expr> --nonpeak (waits out the model's
+                              peak windows; needs --model),
                               -m/--message, --session <file> | --cwd <dir> [--mode new|reuse],
                               --model, --think, --missed coalesce|skip, --by, --disabled
   jobs edit <id> …            update (--name/--message/--at/--cron/--session/--cwd/--model/--think/--missed)
@@ -434,8 +436,10 @@ General-purpose job scheduler, backend-owned. Jobs live in the journal
 SIGKILL restarts identically — same covenant as the prompt queue.
 
 - **Schedule types**: `once` (absolute `runAt` epoch-ms — e.g. "send this
-  off-peak tonight") and `cron` (5-field, server-local time — e.g. nightly
-  maintenance). Hand-rolled parser, no new dependencies.
+  off-peak tonight"), `cron` (5-field, server-local time — e.g. nightly
+  maintenance) and `nonpeak` (cron cadence, but each occurrence waits until
+  the job's model is outside its peak windows — requires a `--model`).
+  Hand-rolled parser, no new dependencies.
 - **Trigger**: 30s stateless tick + an armed `setTimeout` to the earliest
   `next_due` (`.unref()`'d) + boot catch-up. The tick re-derives everything
   from the clock and the journal, so restarts, clock jumps and lost timers
@@ -447,6 +451,13 @@ SIGKILL restarts identically — same covenant as the prompt queue.
 - **Targets**: existing session file, fresh session per run (`new`), or one
   session per cwd (`reuse`). `--model/--think` apply prefs to freshly
   created sessions.
+- **Concurrency**: simultaneous runs go through a governor — a global cap
+  (default 2), a per-provider cap (default 2) and a per-model cap (default 1)
+  — so bursty schedules can't hammer one provider or drain the container.
+  A due run that can't get a slot stays due and fires when one frees
+  (completion-triggered tick); `jobs run` waits for a slot too. Env knobs:
+  `PI_STUDIO_SCHED_GLOBAL_MAX`, `PI_STUDIO_SCHED_PROVIDER_MAX`,
+  `PI_STUDIO_SCHED_MODEL_MAX` (integers ≥ 1).
 - **Missed periodic runs** (backend down across occurrences): per-job
   `--missed coalesce` (run once on catch-up, default) or `skip` (advance to
   the next occurrence, record a `skipped` run).

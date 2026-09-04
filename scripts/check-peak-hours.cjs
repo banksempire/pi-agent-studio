@@ -1177,25 +1177,42 @@ async function unitChecks({ report }) {
 
     await page.locator('.pht .sf-tbl-th', { hasText: 'Model' }).click({ button: 'right' });
     await delay(200);
+    const peakTrackState = () =>
+      page.evaluate(() => {
+        const scroller = document.querySelector('.pht .sf-tbl-scroll');
+        const head = document.querySelector('.pht .sf-tbl-head');
+        const byLabel = {};
+        for (const th of head.querySelectorAll('.sf-tbl-th')) {
+          const label = (th.textContent || '').replace(/[^A-Za-z ]/g, '').trim();
+          if (label) byLabel[label] = th.getBoundingClientRect().width;
+        }
+        const lastTh = [...head.querySelectorAll('.sf-tbl-th')].pop();
+        const tracks = getComputedStyle(head).gridTemplateColumns.split(' ').map(parseFloat);
+        return {
+          edge: Math.abs(lastTh.getBoundingClientRect().right - scroller.getBoundingClientRect().right),
+          sum: tracks.reduce((a, b) => a + b, 0),
+          w: scroller.clientWidth,
+          model: byLabel.Model ?? 0,
+          window: byLabel.Window ?? 0,
+          note: byLabel.Note ?? 0,
+          noteVisible: 'Note' in byLabel,
+        };
+      });
+    const peakBeforeHide = await peakTrackState();
     await page.locator('.pht .sf-tbl-chk').filter({ hasText: 'Note' }).locator('input').click();
     await delay(250);
-    const peakAbsorb = await page.evaluate(() => {
-      const scroller = document.querySelector('.pht .sf-tbl-scroll');
-      const head = document.querySelector('.pht .sf-tbl-head');
-      const lastTh = [...head.querySelectorAll('.sf-tbl-th')].pop();
-      const tracks = getComputedStyle(head).gridTemplateColumns.split(' ').map(parseFloat);
-      return {
-        edge: Math.abs(lastTh.getBoundingClientRect().right - scroller.getBoundingClientRect().right),
-        sum: tracks.reduce((a, b) => a + b, 0),
-        w: scroller.clientWidth,
-        noteVisible: [...head.querySelectorAll('.sf-tbl-th')].some((t) => t.textContent.includes('Note')),
-      };
-    });
+    const peakAbsorb = await peakTrackState();
     report(
-      'hiding Note leaves no gap: the fixed-width Window column stretches to absorb it',
-      !peakAbsorb.noteVisible && peakAbsorb.edge <= 1 && Math.abs(peakAbsorb.sum - peakAbsorb.w) <= 1,
+      'hiding Note leaves no gap: the variable Model column absorbs the freed space',
+      !peakAbsorb.noteVisible &&
+        peakAbsorb.edge <= 1 &&
+        Math.abs(peakAbsorb.sum - peakAbsorb.w) <= 2 &&
+        Math.abs(peakAbsorb.window - 200) <= 1 &&
+        peakAbsorb.model > peakBeforeHide.model + 60,
       JSON.stringify(peakAbsorb),
     );
+    await page.mouse.click(700, 10);
+    await delay(200);
     await page.locator('.pht .sf-tbl-th', { hasText: 'Model' }).click({ button: 'right' });
     await delay(200);
     await page.locator('.pht .sf-tbl-chk').filter({ hasText: 'Note' }).locator('input').click();

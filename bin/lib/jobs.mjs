@@ -12,6 +12,9 @@ schedule (pick one):
                     tomorrow if already past; server-local timezone)
   --cron <expr>     periodic job — 5-field cron in server-local time
                     (min hour dom month dow), e.g. "0 3 * * *" = daily 03:00
+  --cron <expr> --nonpeak
+                    off-peak job — same cadence, but each run waits until the
+                    model is outside its peak windows (requires --model)
 
 target (pick one):
   --session <file>  send to an existing session file
@@ -95,6 +98,11 @@ function jobFromFlags(positional, flags) {
   if (flags.at && at === null) throw new CliError(`--at: cannot parse '${flags.at}'`, 2);
   const cron = flags.cron ? String(flags.cron) : null;
   if (!at && !cron) throw new CliError(`one of --at or --cron is required\n\n${ADD_USAGE}`, 2);
+  const nonpeak = !!flags.nonpeak;
+  if (nonpeak && !cron) throw new CliError(`--nonpeak requires --cron\n\n${ADD_USAGE}`, 2);
+  if (nonpeak && !flags.model) {
+    throw new CliError('--nonpeak requires --model (peak windows are per model)', 2);
+  }
   const target = {};
   if (flags.session) target.mode = 'file';
   else if (flags.cwd) target.mode = flags.mode === 'reuse' ? 'reuse' : 'new';
@@ -103,7 +111,7 @@ function jobFromFlags(positional, flags) {
   if (flags.cwd) target.cwd = path.resolve(String(flags.cwd));
   return {
     name,
-    scheduleType: cron ? 'cron' : 'once',
+    scheduleType: cron ? (nonpeak ? 'nonpeak' : 'cron') : 'once',
     runAt: cron ? undefined : at,
     cron: cron ?? undefined,
     message,
@@ -119,6 +127,7 @@ function jobFromFlags(positional, flags) {
 }
 
 function describeSchedule(job) {
+  if (job.scheduleType === 'nonpeak') return `off-peak cron ${job.cron}`;
   if (job.scheduleType === 'cron') return `cron ${job.cron}`;
   return `once ${new Date(job.runAt).toLocaleString()}`;
 }
@@ -216,9 +225,14 @@ export async function cmdJobs(out, instance, args) {
       body.runAt = at;
     }
     if (flags.cron) {
-      body.scheduleType = 'cron';
+      body.scheduleType = flags.nonpeak ? 'nonpeak' : 'cron';
       body.cron = String(flags.cron);
     }
+    if (flags.nonpeak && !flags.cron) {
+      if (!flags.model) throw new CliError('--nonpeak requires --model (peak windows are per model)', 2);
+      body.scheduleType = 'nonpeak';
+    }
+    if (flags.anytime) body.scheduleType = 'cron';
     if (flags.session) {
       body.targetMode = 'file';
       body.sessionFile = path.resolve(String(flags.session));

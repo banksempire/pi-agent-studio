@@ -17,7 +17,7 @@ Run as `npm run studio -- …` from this repo or `node pi-agent-studio/bin/studi
 - **Observation**: `status` / `logs [svc] [-f]` / `agents` / `abort <agent-id>`. Logs: `<state>/instances/main/logs/` (main) or `<branch>/.studio/state/logs/` (branches).
 - **Hygiene**: `doctor [--fix]` / `clean [--snapshots]`.
 - **Branches**: `worktree add <branch> [--from <ref>|--new]` / `worktree rm <branch> [--purge]` (there is no `worktree ls`). One branch = one folder = one instance (id = branch name): pair, sessions (`<branch>/.studio/sessions`), states file, and all runtime state live inside the branch folder — nothing leaks to `~/.local/state` or `~/.config`. Default workdir is the main pair root; override with `PI_STUDIO_WORKTREES`. `worktree rm --purge` leaves the git branch ref — delete it manually.
-- **Scheduler**: `jobs list|add|edit|rm|run|enable|disable|runs`. Durable jobs in the journal (`jobs`/`job_runs`); delivery is a scheduled message to a session; one-time (`--at`) and periodic (`--cron`, server-local time); per-job `--missed coalesce|skip`. Survives graceful+SIGKILL restarts; 30s stateless tick + armed timer + boot catch-up. Also the ⏰ Scheduler docker app in the web UI.
+- **Scheduler**: `jobs list|add|edit|rm|run|enable|disable|runs`. Durable jobs in the journal (`jobs`/`job_runs`); delivery is a scheduled message to a session; one-time (`--at`) and periodic (`--cron`, server-local time); per-job `--missed coalesce|skip`. Off-peak jobs (`--cron` + `--nonpeak` + `--model`, or the editor's "off-peak only" run window) wait out that model's peak-hours windows — a due occurrence during peak defers to the next open moment. Simultaneous runs pass a concurrency governor: global / per-provider / per-model caps (env `PI_STUDIO_SCHED_GLOBAL_MAX` / `_PROVIDER_MAX` / `_MODEL_MAX`, defaults 2/2/1); a due run without a slot stays due and fires when one frees (completion-triggered tick; `jobs run` waits for a slot too; manual runs bypass the peak gate). Survives graceful+SIGKILL restarts; 30s stateless tick + armed timer + boot catch-up. Also the ⏰ Scheduler docker app in the web UI (with a live running/waiting line).
 - **Config precedence**: CLI args > ENV (`PI_STUDIO_*`) > instance config (`.studio/config/instances/`) > defaults — the same ENV vars run the services containerized without the CLI.
 
 ### Graceful backend lifecycle
@@ -51,7 +51,7 @@ Run as `npm run studio -- …` from this repo or `node pi-agent-studio/bin/studi
 | SSE robustness | `check:sse` |
 | model picker / models API | `check:modelapi` |
 | model catalog peak hours (unit + CRUD UI + persistence) | `check:peakhours` |
-| scheduler (unit: cron math, fire, missed policy, catch-up) | `check:scheduler` |
+| scheduler (unit: cron math, fire, missed policy, catch-up, non-peak deferral, concurrency governor, job input validation) | `check:scheduler` |
 | job editor UI | `check:jobeditor` |
 | journal drain/recover (unit) | `check:registry` |
 | real-process restart recovery (SIGTERM/SIGKILL mid-generation → boot auto-resume) | `check:backend-restart`, `check:restart-selfkill` |

@@ -264,6 +264,47 @@ async function unitChecks({ report }) {
       mod.isPeakAt(tzTail, 'o', 'm', Date.UTC(2026, 0, 14, 17, 0)) === false,
   );
 
+  const npStore = mod.createPeakHoursStore({ persistPath: path.join(RUN_ROOT, 'np-peak.json') });
+  npStore.create({ provider: 'openai', model: 'gpt-np', start: '09:00', end: '17:00', utcOffset: 0 });
+  report(
+    'unit: nextNonPeakAt passes through when already off-peak',
+    npStore.nextNonPeakAt('openai', 'gpt-np', at(8, 0)) === at(8, 0) &&
+      npStore.nextNonPeakAt('openai', 'gpt-np', at(17, 0)) === at(17, 0) &&
+      npStore.nextNonPeakAt('openai', 'other', at(12, 0)) === at(12, 0),
+  );
+  report(
+    'unit: nextNonPeakAt inside a window returns its end',
+    npStore.nextNonPeakAt('openai', 'gpt-np', at(12, 30)) === at(17, 0),
+  );
+  const wrapStore = mod.createPeakHoursStore({ persistPath: path.join(RUN_ROOT, 'np-wrap.json') });
+  wrapStore.create({ provider: 'openai', model: 'gpt-w', start: '22:00', end: '02:00', utcOffset: 0 });
+  report(
+    'unit: nextNonPeakAt crosses midnight for wrap windows',
+    wrapStore.nextNonPeakAt('openai', 'gpt-w', at(23, 0)) === Date.UTC(2026, 0, 15, 2, 0),
+  );
+  const wdNpStore = mod.createPeakHoursStore({ persistPath: path.join(RUN_ROOT, 'np-wd.json') });
+  wdNpStore.create({
+    provider: 'openai',
+    model: 'gpt-wd',
+    start: '09:00',
+    end: '17:00',
+    utcOffset: 0,
+    weekdays: [3],
+  });
+  report(
+    'unit: nextNonPeakAt respects weekday windows',
+    wdNpStore.nextNonPeakAt('openai', 'gpt-wd', at(12, 0)) === at(17, 0) &&
+      wdNpStore.nextNonPeakAt('openai', 'gpt-wd', Date.UTC(2026, 0, 15, 12, 0)) ===
+        Date.UTC(2026, 0, 15, 12, 0),
+  );
+  const allStore = mod.createPeakHoursStore({ persistPath: path.join(RUN_ROOT, 'np-all.json') });
+  allStore.create({ provider: 'openai', model: 'gpt-all', start: '00:00', end: '12:00', utcOffset: 0 });
+  allStore.create({ provider: 'openai', model: 'gpt-all', start: '12:00', end: '00:00', utcOffset: 0 });
+  report(
+    'unit: a model peaked around the clock yields null',
+    allStore.nextNonPeakAt('openai', 'gpt-all', at(6, 0)) === null,
+  );
+
   const bad = [
     [{ provider: 'x', model: 'y', start: '09:00', end: '09:00', utcOffset: 0 }, 'start and end must differ'],
     [{ provider: 'x', model: 'y', start: '09:00', end: '17:00', utcOffset: 780 }, 'utcOffset'],

@@ -31,6 +31,14 @@ const MODE_OPTIONS: Array<{ id: SchedMode; title: string; hint: string }> = [
   { id: 'advanced', title: 'Advanced', hint: 'write the 5-field cron expression directly' },
 ];
 const MODE_PILL = MODE_OPTIONS.map((m) => ({ value: m.id, label: m.title, title: m.hint }));
+const PEAK_POLICY_PILL = [
+  { value: 'anytime', label: 'any time', title: 'Fire at the scheduled time regardless of peak hours' },
+  {
+    value: 'offpeak',
+    label: 'off-peak only',
+    title: 'Wait until the model is outside its peak windows (peak-hours catalog)',
+  },
+];
 const MISSED_POLICY_PILL = [
   { value: 'coalesce', label: 'run once', title: 'Run once on catch-up' },
   { value: 'skip', label: 'skip', title: 'Skip missed occurrences, wait for the next' },
@@ -63,6 +71,7 @@ const form = reactive({
 });
 
 const mode = ref<SchedMode>('once');
+const peakPolicy = ref<'anytime' | 'offpeak'>('anytime');
 const modelCatalog = ref<ModelCatalogView | null>(null);
 const modelError = ref('');
 const modelMenuOpen = ref(false);
@@ -127,6 +136,7 @@ function initForm(j: JobInfo | null) {
     form.model = j.payload.model ?? '';
     form.thinkLevel = j.payload.thinkLevel ?? '';
     form.missedPolicy = j.missedPolicy;
+    peakPolicy.value = j.scheduleType === 'nonpeak' ? 'offpeak' : 'anytime';
     if (j.scheduleType === 'once') {
       mode.value = 'once';
     } else {
@@ -150,6 +160,7 @@ function initForm(j: JobInfo | null) {
     form.model = '';
     form.thinkLevel = '';
     form.missedPolicy = 'coalesce';
+    peakPolicy.value = 'anytime';
     mode.value = 'once';
   }
   initialized.value = true;
@@ -267,6 +278,9 @@ const problems = computed<string[]>(() => {
   if (mode.value === 'once' && !runAtValid.value) list.push('run-at time');
   if (mode.value === 'advanced' && !cronOk.value) list.push('a valid cron expression');
   if (mode.value === 'weekly' && periodic.days.length === 0) list.push('at least one weekday');
+  if (mode.value !== 'once' && peakPolicy.value === 'offpeak' && !form.model.trim()) {
+    list.push('a model (off-peak waits on that model\u2019s peak windows)');
+  }
   if (form.targetMode === 'file' && !form.sessionFile) list.push('target session');
   if (form.targetMode !== 'file' && !form.cwd.trim()) list.push('working directory');
   if (!form.message.trim()) list.push('message');
@@ -278,7 +292,7 @@ const saveHint = computed(() => (problems.value.length === 0 ? '' : `missing: ${
 function buildInput() {
   const input: Record<string, unknown> = {
     name: form.name,
-    scheduleType: mode.value === 'once' ? 'once' : 'cron',
+    scheduleType: mode.value === 'once' ? 'once' : peakPolicy.value === 'offpeak' ? 'nonpeak' : 'cron',
     missedPolicy: form.missedPolicy,
     message: form.message,
     targetMode: form.targetMode,
@@ -537,6 +551,18 @@ function fmtRel(ms: number | null): string {
                 </div>
               </template>
               <span v-else class="je-cron-error">{{ cronErrorText }}</span>
+            </div>
+
+            <div v-if="mode !== 'once'" class="job-editor-field">
+              <label>Run window <span class="je-label-note">off-peak jobs need a model with peak windows</span></label>
+              <PillSelector class="je-peak-seg" :options="PEAK_POLICY_PILL" v-model="peakPolicy" />
+              <span v-if="peakPolicy === 'offpeak'" class="je-hint">
+                {{
+                  form.model
+                    ? `waits while ${modelButtonText} is inside a peak window, then runs at the first open moment`
+                    : 'pick a model below — peak windows are configured per model'
+                }}
+              </span>
             </div>
 
             <div v-if="mode !== 'once'" class="job-editor-field">

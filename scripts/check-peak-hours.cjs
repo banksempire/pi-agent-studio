@@ -1224,6 +1224,45 @@ async function unitChecks({ report }) {
       return Math.abs(tracks.reduce((a, b) => a + b, 0) - scroller.clientWidth) <= 1;
     });
     report('restoring Note keeps the tab grid exactly filled', peakRestored);
+
+    await page.locator('.pht .sf-tbl-th', { hasText: 'Model' }).click({ button: 'right' });
+    await delay(200);
+    await page.locator('.pht .sf-tbl-chk').filter({ hasText: 'Note' }).locator('input').click();
+    await delay(250);
+    await page.mouse.click(700, 10);
+    await delay(150);
+    await page.locator('.pht .sf-tbl-th', { hasText: 'Model' }).click({ button: 'right' });
+    await delay(200);
+    await page.locator('.pht .sf-tbl-chk').filter({ hasText: 'Window' }).locator('input').click();
+    await delay(250);
+    await page.mouse.click(700, 10);
+    await delay(150);
+    await page.locator('.pht .sf-tbl-th', { hasText: 'Model' }).click({ button: 'right' });
+    await delay(200);
+    await page.locator('.pht .sf-tbl-chk').filter({ hasText: 'Note' }).locator('input').click();
+    await delay(250);
+    const peakTakeBefore = await peakTrackState();
+    await page.mouse.click(700, 10);
+    await delay(150);
+    await page.locator('.pht .sf-tbl-th', { hasText: 'Model' }).click({ button: 'right' });
+    await delay(200);
+    await page.locator('.pht .sf-tbl-chk').filter({ hasText: 'Window' }).locator('input').click();
+    await delay(250);
+    const peakTakeAfter = await peakTrackState();
+    const tModel = peakTakeBefore.model - peakTakeAfter.model;
+    const tNote = peakTakeBefore.note - peakTakeAfter.note;
+    report(
+      'a shown column takes space from every variable column in proportion to their latest widths, never below their minimum',
+      peakTakeAfter.noteVisible &&
+        peakTakeBefore.model / peakTakeBefore.note > 2 &&
+        tModel > 100 &&
+        tNote > 20 &&
+        Math.abs(tModel / tNote - peakTakeBefore.model / peakTakeBefore.note) <=
+          0.4 * (peakTakeBefore.model / peakTakeBefore.note) &&
+        peakTakeAfter.note >= 48 &&
+        peakTakeAfter.model >= 48,
+      JSON.stringify({ before: peakTakeBefore, after: peakTakeAfter, tModel, tNote }),
+    );
     await page.mouse.click(700, 10);
     await delay(150);
     const afterClear = await rowsText();

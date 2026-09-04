@@ -1225,6 +1225,37 @@ async function unitChecks({ report }) {
     });
     report('restoring Note keeps the tab grid exactly filled', peakRestored);
 
+    const thEdges = () =>
+      page.evaluate(() => {
+        const out = {};
+        for (const th of document.querySelectorAll('.pht .sf-tbl-th')) {
+          const label = (th.textContent || '').replace(/[^A-Za-z ]/g, '').trim();
+          if (label) out[label] = Math.round(th.getBoundingClientRect().right);
+        }
+        return out;
+      });
+    const dragBefore = await thEdges();
+    const winBox = await page.locator('.pht .sf-tbl-th', { hasText: 'Window' }).boundingBox();
+    await page.mouse.move(winBox.x + winBox.width - 1, winBox.y + winBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(winBox.x + winBox.width + 59, winBox.y + winBox.height / 2, { steps: 5 });
+    await page.mouse.up();
+    await delay(250);
+    const dragAfter = await thEdges();
+    const winGrow = dragAfter.Window - dragBefore.Window;
+    const noteW = dragAfter.Note - dragAfter.Window;
+    const noteWBefore = dragBefore.Note - dragBefore.Window;
+    report(
+      'dragging the Window/Note border right grows Window from Note only — nothing left of the border moves',
+      Math.abs(dragAfter.Model - dragBefore.Model) <= 1 &&
+        Math.abs(dragAfter.On - dragBefore.On) <= 1 &&
+        winGrow >= 50 &&
+        winGrow <= 62 &&
+        noteW >= 48 &&
+        noteWBefore - noteW <= 62,
+      JSON.stringify({ before: dragBefore, after: dragAfter, winGrow, noteW, noteWBefore }),
+    );
+
     await page.locator('.pht .sf-tbl-th', { hasText: 'Model' }).click({ button: 'right' });
     await delay(200);
     await page.locator('.pht .sf-tbl-chk').filter({ hasText: 'Note' }).locator('input').click();

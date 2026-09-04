@@ -28,15 +28,15 @@ const MODE_OPTIONS: Array<{ id: SchedMode; title: string; hint: string }> = [
   { id: 'daily', title: 'Daily', hint: 'once a day, at a set time' },
   { id: 'weekly', title: 'Weekly', hint: 'on chosen weekdays, at a set time' },
   { id: 'monthly', title: 'Monthly', hint: 'on a day of the month, at a set time' },
-  { id: 'advanced', title: 'Advanced', hint: 'write the 5-field cron expression directly' },
+  { id: 'advanced', title: 'Advanced', hint: 'raw cron expression, or scheduler-picked off-peak runs' },
 ];
 const MODE_PILL = MODE_OPTIONS.map((m) => ({ value: m.id, label: m.title, title: m.hint }));
-const PEAK_POLICY_PILL = [
-  { value: 'anytime', label: 'any time', title: 'Fire at the scheduled time regardless of peak hours' },
+const ADVANCED_KIND_PILL = [
+  { value: 'cron', label: 'cron', title: 'Fire at the times this expression matches' },
   {
     value: 'offpeak',
-    label: 'off-peak only',
-    title: 'Wait until the model is outside its peak windows (peak-hours catalog)',
+    label: 'off peak',
+    title: 'No fixed time — the scheduler runs it once a day while the model is outside its peak windows',
   },
 ];
 const MISSED_POLICY_PILL = [
@@ -71,7 +71,7 @@ const form = reactive({
 });
 
 const mode = ref<SchedMode>('once');
-const peakPolicy = ref<'anytime' | 'offpeak'>('anytime');
+const advancedKind = ref<'cron' | 'offpeak'>('cron');
 const modelCatalog = ref<ModelCatalogView | null>(null);
 const modelError = ref('');
 const modelMenuOpen = ref(false);
@@ -136,9 +136,12 @@ function initForm(j: JobInfo | null) {
     form.model = j.payload.model ?? '';
     form.thinkLevel = j.payload.thinkLevel ?? '';
     form.missedPolicy = j.missedPolicy;
-    peakPolicy.value = j.scheduleType === 'nonpeak' ? 'offpeak' : 'anytime';
+    advancedKind.value = 'cron';
     if (j.scheduleType === 'once') {
       mode.value = 'once';
+    } else if (j.scheduleType === 'nonpeak') {
+      mode.value = 'advanced';
+      advancedKind.value = 'offpeak';
     } else {
       const p = cronToPattern(j.cron ?? '');
       if (p) {
@@ -160,7 +163,7 @@ function initForm(j: JobInfo | null) {
     form.model = '';
     form.thinkLevel = '';
     form.missedPolicy = 'coalesce';
-    peakPolicy.value = 'anytime';
+    advancedKind.value = 'cron';
     mode.value = 'once';
   }
   initialized.value = true;
@@ -252,10 +255,12 @@ const everyPill = computed(() => everyMinutesOptions.value.map((m) => ({ value: 
 const hourlyPill = computed(() => hourlyMinuteOptions.value.map((m) => ({ value: m, label: pad2(m) })));
 
 const currentCron = computed(() => {
-  if (mode.value === 'advanced') return form.cron.trim();
+  if (mode.value === 'advanced') return advancedKind.value === 'cron' ? form.cron.trim() : '';
   if (mode.value === 'once') return '';
   return patternToCron({ ...periodic, pattern: mode.value as BuilderPattern });
 });
+
+const offpeak = computed(() => mode.value === 'advanced' && advancedKind.value === 'offpeak');
 
 const cronOk = computed(() => checkCron(currentCron.value).ok);
 const cronErrorText = computed(() => {
@@ -276,11 +281,11 @@ const problems = computed<string[]>(() => {
   const list: string[] = [];
   if (!form.name.trim()) list.push('name');
   if (mode.value === 'once' && !runAtValid.value) list.push('run-at time');
-  if (mode.value === 'advanced' && !cronOk.value) list.push('a valid cron expression');
+  if (mode.value === 'advanced' && advancedKind.value === 'cron' && !cronOk.value)
+    list.push('a valid cron expression');
   if (mode.value === 'weekly' && periodic.days.length === 0) list.push('at least one weekday');
-  if (mode.value !== 'once' && peakPolicy.value === 'offpeak' && !form.model.trim()) {
+  if (offpeak.value && !form.model.trim())
     list.push('a model (off-peak waits on that model\u2019s peak windows)');
-  }
   if (form.targetMode === 'file' && !form.sessionFile) list.push('target session');
   if (form.targetMode !== 'file' && !form.cwd.trim()) list.push('working directory');
   if (!form.message.trim()) list.push('message');
@@ -292,7 +297,7 @@ const saveHint = computed(() => (problems.value.length === 0 ? '' : `missing: ${
 function buildInput() {
   const input: Record<string, unknown> = {
     name: form.name,
-    scheduleType: mode.value === 'once' ? 'once' : peakPolicy.value === 'offpeak' ? 'nonpeak' : 'cron',
+    scheduleType: mode.value === 'once' ? 'once' : offpeak.value ? 'nonpeak' : 'cron',
     missedPolicy: form.missedPolicy,
     message: form.message,
     targetMode: form.targetMode,
@@ -303,8 +308,7 @@ function buildInput() {
   if (mode.value === 'once') {
     if (!runAtValid.value) throw new Error('pick a valid run-at time');
     input.runAt = runAtTs.value;
-  } else {
-    if (!currentCron.value) throw new Error('schedule is empty');
+  } else if (currentCron.value) {
     input.cron = currentCron.value;
   }
   if (form.targetMode === 'file') {
@@ -464,16 +468,32 @@ function fmtRel(ms: number | null): string {
               <span v-if="runAtPast" class="je-hint je-hint--warn">this time is in the past</span>
             </div>
 
-            <div v-else-if="mode === 'advanced'" class="job-editor-field">
-              <label>Cron expression <span class="je-label-note">min hour dom month dow · server-local time</span></label>
-              <input
-                v-model="form.cron"
-                class="job-editor-input job-editor-input--mono job-editor-input--narrow"
-                placeholder="0 9 * * *"
-                spellcheck="false"
-              />
-              <span class="je-hint">advanced jobs keep this expression as-is — builder modes rewrite it</span>
-            </div>
+            <template v-else-if="mode === 'advanced'">
+              <div class="je-adv-kind">
+                <PillSelector class="je-adv-seg" :options="ADVANCED_KIND_PILL" v-model="advancedKind" />
+              </div>
+              <div v-if="advancedKind === 'cron'" class="job-editor-field">
+                <label>Cron expression <span class="je-label-note">min hour dom month dow · server-local time</span></label>
+                <input
+                  v-model="form.cron"
+                  class="job-editor-input job-editor-input--mono job-editor-input--narrow"
+                  placeholder="0 9 * * *"
+                  spellcheck="false"
+                />
+                <span class="je-hint">advanced jobs keep this expression as-is — builder modes rewrite it</span>
+              </div>
+              <div v-else class="je-offpeak-box">
+                <span class="je-offpeak-line">
+                  <span class="je-offpeak-title">scheduler-picked · once a day</span>
+                  <span class="je-mono">{{ form.model || 'no model picked' }}</span>
+                </span>
+                <span class="je-hint">{{
+                  form.model
+                    ? `runs at the first moment ${modelButtonText} is outside its peak windows — no fixed time, the scheduler decides`
+                    : 'pick the model under Agent → Model override below — peak windows are configured per model'
+                }}</span>
+              </div>
+            </template>
 
             <template v-else>
               <div v-if="mode === 'minutes'" class="je-ctrl">
@@ -551,18 +571,6 @@ function fmtRel(ms: number | null): string {
                 </div>
               </template>
               <span v-else class="je-cron-error">{{ cronErrorText }}</span>
-            </div>
-
-            <div v-if="mode !== 'once'" class="job-editor-field">
-              <label>Run window <span class="je-label-note">off-peak jobs need a model with peak windows</span></label>
-              <PillSelector class="je-peak-seg" :options="PEAK_POLICY_PILL" v-model="peakPolicy" />
-              <span v-if="peakPolicy === 'offpeak'" class="je-hint">
-                {{
-                  form.model
-                    ? `waits while ${modelButtonText} is inside a peak window, then runs at the first open moment`
-                    : 'pick a model below — peak windows are configured per model'
-                }}
-              </span>
             </div>
 
             <div v-if="mode !== 'once'" class="job-editor-field">
@@ -983,6 +991,37 @@ function fmtRel(ms: number | null): string {
 .je-cron-error {
   font-size: 16px;
   color: var(--sf-danger);
+}
+
+.je-adv-kind {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.je-offpeak-box {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px 12px;
+  border-radius: var(--sf-radius-inner);
+  border: 1px solid var(--sf-border);
+  background: rgba(127, 127, 127, 0.07);
+  overflow-wrap: anywhere;
+}
+.je-offpeak-line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  opacity: 0.9;
+}
+.je-offpeak-title {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+  opacity: 0.65;
 }
 
 .je-cards {

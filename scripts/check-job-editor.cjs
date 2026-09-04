@@ -221,7 +221,7 @@ function writeSessionFile(name) {
       kind: 'message',
       scheduleType: 'nonpeak',
       runAt: null,
-      cron: '15 9,17 * * mon-fri',
+      cron: null,
       payload: {
         message: 'offpeak probe',
         target: { mode: 'new', cwd: '/tmp' },
@@ -234,16 +234,26 @@ function writeSessionFile(name) {
       updatedAt: Date.now() - 60_000,
       lastRun: null,
     };
-    await page.route('**/api/jobs', (route) =>
-      route.fulfill({
-        status: 200,
+    const jobPosts = [];
+    await page.route('**/api/jobs', async (route) => {
+      if (route.request().method() !== 'POST') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            jobs: [CUSTOM_JOB, NONPEAK_JOB],
+            scheduler: { running: 1, waiting: 2, limits: { globalMax: 2, providerMax: 2, modelMax: 1 } },
+          }),
+        });
+        return;
+      }
+      jobPosts.push(route.request().postDataJSON());
+      await route.fulfill({
+        status: 201,
         contentType: 'application/json',
-        body: JSON.stringify({
-          jobs: [CUSTOM_JOB, NONPEAK_JOB],
-          scheduler: { running: 1, waiting: 2, limits: { globalMax: 2, providerMax: 2, modelMax: 1 } },
-        }),
-      }),
-    );
+        body: JSON.stringify({ job: { ...NONPEAK_JOB, id: 'posted1', name: 'posted job' } }),
+      });
+    });
     const STUB_MODELS = [
       {
         id: 'stub-pro',
@@ -310,8 +320,8 @@ function writeSessionFile(name) {
       JSON.stringify(onceDefaults),
     );
     report(
-      'run-window policy stays hidden for once jobs',
-      (await page.locator('.je-peak-seg').count()) === 0,
+      'advanced sub-type selector stays hidden for once jobs',
+      (await page.locator('.je-adv-seg').count()) === 0,
     );
     await page.waitForSelector('.jobs-sched-line', { timeout: 10000 });
     const schedLineText = await page.locator('.jobs-sched-line').textContent();
@@ -329,7 +339,7 @@ function writeSessionFile(name) {
       .textContent();
     report(
       'non-peak jobs render an off-peak schedule in the list',
-      npRowText.includes('off-peak 15 9,17 * * mon-fri'),
+      npRowText.includes('off-peak daily') && npRowText.includes('stub/stub-pro'),
       String(npRowText),
     );
 
@@ -450,20 +460,11 @@ function writeSessionFile(name) {
 
     await modeBtn('Daily').click();
     await delay(150);
-    const peakAnytime = await page.evaluate(() => {
-      const seg = document.querySelector('.je-peak-seg');
-      return {
-        visible: !!seg,
-        selected: seg?.querySelector('.sf-pill-item--on')?.textContent ?? '',
-        options: seg ? [...seg.querySelectorAll('.sf-pill-item')].map((b) => b.textContent) : [],
-      };
-    });
+    const builderHasAdvSeg = await page.locator('.je-adv-seg').count();
     report(
-      'periodic jobs offer the run-window policy, any time by default',
-      peakAnytime.visible &&
-        peakAnytime.selected === 'any time' &&
-        JSON.stringify(peakAnytime.options) === JSON.stringify(['any time', 'off-peak only']),
-      JSON.stringify(peakAnytime),
+      'builder modes carry no schedule sub-type — off-peak lives under Advanced only',
+      builderHasAdvSeg === 0,
+      `advSeg=${builderHasAdvSeg}`,
     );
     let cronRef = await page.locator('.je-cron-ref code').textContent();
     let wdDesc = await page.locator('.je-cron-desc').textContent();
@@ -811,20 +812,48 @@ function writeSessionFile(name) {
       `empty=${disabledAtStart} nameOnly=${disabledAfterName} allFilled=${enabledAfterAll}`,
     );
 
-    await page.locator('.je-peak-seg .sf-pill-item', { hasText: 'off-peak only' }).click();
+    await modeBtn('Advanced').click();
+    await delay(150);
+    const advDefaults = await page.evaluate(() => {
+      const seg = document.querySelector('.je-adv-seg');
+      return {
+        visible: !!seg,
+        selected: seg?.querySelector('.sf-pill-item--on')?.textContent ?? '',
+        options: seg ? [...seg.querySelectorAll('.sf-pill-item')].map((b) => b.textContent) : [],
+        cronInputVisible: !!document.querySelector('input[placeholder="0 9 * * *"]'),
+        offpeakBox: !!document.querySelector('.je-offpeak-box'),
+      };
+    });
+    report(
+      'advanced opens with cron and off peak sub-types, cron selected',
+      advDefaults.visible &&
+        advDefaults.selected === 'cron' &&
+        JSON.stringify(advDefaults.options) === JSON.stringify(['cron', 'off peak']) &&
+        advDefaults.cronInputVisible &&
+        !advDefaults.offpeakBox,
+      JSON.stringify(advDefaults),
+    );
+
+    await page.locator('.je-adv-seg .sf-pill-item', { hasText: 'off peak' }).click();
     await delay(200);
     const offPeakBlocked = {
       disabled: await saveBtn.isDisabled(),
       hint: await page.locator('.je-footer-hint').textContent(),
-      fieldHint: await page.evaluate(() =>
+      cronInputGone: (await page.locator('input[placeholder="0 9 * * *"]').count()) === 0,
+      boxModel: await page.locator('.je-offpeak-box .je-mono').textContent(),
+      boxHint: await page.evaluate(() =>
         [...document.querySelectorAll('.je-hint')]
           .map((h) => h.textContent ?? '')
-          .some((t) => t.includes('pick a model below')),
+          .some((t) => t.includes('pick the model under Agent')),
       ),
     };
     report(
-      'off-peak without a model blocks save and says why',
-      offPeakBlocked.disabled && /a model/.test(offPeakBlocked.hint) && offPeakBlocked.fieldHint,
+      'off peak hides the cron field and blocks save without a model',
+      offPeakBlocked.disabled &&
+        /a model/.test(offPeakBlocked.hint) &&
+        offPeakBlocked.cronInputGone &&
+        offPeakBlocked.boxModel.includes('no model picked') &&
+        offPeakBlocked.boxHint,
       JSON.stringify(offPeakBlocked),
     );
     await page.locator('.je-model-btn').click();
@@ -837,16 +866,33 @@ function writeSessionFile(name) {
     const offPeakReady = {
       disabled: await saveBtn.isDisabled(),
       model: await page.locator('.je-model-btn-text').textContent(),
-      waitsHint: await page.evaluate(() =>
+      boxModel: await page.locator('.je-offpeak-box .je-mono').textContent(),
+      boxHint: await page.evaluate(() =>
         [...document.querySelectorAll('.je-hint')]
           .map((h) => h.textContent ?? '')
-          .some((t) => t.includes('waits while')),
+          .some((t) => t.includes('the scheduler decides')),
       ),
     };
     report(
-      'picking a model unblocks the off-peak save and previews the wait',
-      !offPeakReady.disabled && /stub\/Stub Mini/.test(offPeakReady.model) && offPeakReady.waitsHint,
+      'picking a model unblocks the off-peak save and shows the picked model',
+      !offPeakReady.disabled &&
+        /stub\/Stub Mini/.test(offPeakReady.model) &&
+        offPeakReady.boxModel.includes('stub/stub-mini') &&
+        offPeakReady.boxHint,
       JSON.stringify(offPeakReady),
+    );
+
+    await saveBtn.click();
+    await delay(300);
+    const posted = jobPosts[0];
+    report(
+      'saving an off-peak job posts nonpeak with no cron and the picked model',
+      jobPosts.length === 1 &&
+        posted.scheduleType === 'nonpeak' &&
+        posted.cron === undefined &&
+        posted.model === 'stub/stub-mini' &&
+        posted.missedPolicy === 'coalesce',
+      JSON.stringify(posted),
     );
 
     const customItem = page.locator('.jobs-item', { hasText: 'custom-cron job' });
@@ -900,21 +946,23 @@ function writeSessionFile(name) {
     const npState = await page.evaluate(() => {
       const editors = [...document.querySelectorAll('.job-editor')];
       const ed = editors.find((e) => e.textContent?.includes('off-peak job')) ?? null;
-      const seg = ed?.querySelector('.je-peak-seg') ?? null;
+      const seg = ed?.querySelector('.je-adv-seg') ?? null;
       return {
         created: ed !== null,
-        policy: seg?.querySelector('.sf-pill-item--on')?.textContent ?? '',
+        kind: seg?.querySelector('.sf-pill-item--on')?.textContent ?? '',
         schedMode: ed?.querySelector('.je-sched-seg .sf-pill-item--on')?.textContent ?? '',
-        ref: ed?.querySelector('.je-cron-ref code')?.textContent ?? '',
+        cronRef: ed?.querySelector('.je-cron-ref code')?.textContent ?? '',
+        offpeakBox: !!ed?.querySelector('.je-offpeak-box'),
         model: ed?.querySelector('.je-model-btn-text')?.textContent ?? '',
       };
     });
     report(
-      'a non-peak job round-trips into the editor with its policy and model',
+      'a non-peak job round-trips into the editor on the off-peak sub-type',
       npState.created &&
-        npState.policy === 'off-peak only' &&
+        npState.kind === 'off peak' &&
         npState.schedMode === 'Advanced' &&
-        npState.ref === '15 9,17 * * mon-fri' &&
+        npState.cronRef === '' &&
+        npState.offpeakBox &&
         /stub/.test(npState.model),
       JSON.stringify(npState),
     );

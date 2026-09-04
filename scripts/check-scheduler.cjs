@@ -14,7 +14,7 @@ const report = (name, ok, extra = '') => {
 };
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
-let nextCronTime, countCronMatches, cronError, cronMatches, openJournal, Scheduler, _computeNextDue;
+let nextCronTime, countCronMatches, cronError, cronMatches, openJournal, Scheduler, computeNextDue;
 let normalizeJobInput, validateJob, payloadFromInput;
 
 async function loadModules() {
@@ -22,7 +22,7 @@ async function loadModules() {
     pathToFileURL(path.join(NEST, 'cron.mjs')).href
   ));
   ({ openJournal } = await import(pathToFileURL(path.join(NEST, 'journal.mjs')).href));
-  ({ Scheduler, _computeNextDue } = await import(pathToFileURL(path.join(NEST, 'scheduler.mjs')).href));
+  ({ Scheduler, computeNextDue } = await import(pathToFileURL(path.join(NEST, 'scheduler.mjs')).href));
   ({ normalizeJobInput, validateJob, payloadFromInput } = await import(
     pathToFileURL(path.join(PRODUCT_ROOT, 'src', 'pi-studio', 'server', 'job-input.mjs')).href
   ));
@@ -146,9 +146,11 @@ function cronJob(expr, over = {}) {
   });
 }
 
-function nonpeakJob(expr, model, over = {}) {
-  return cronJob(expr, {
+function nonpeakJob(model, over = {}) {
+  return onceJob({
     scheduleType: 'nonpeak',
+    cron: null,
+    runAt: null,
     payload: { message: 'np run', target: { mode: 'new', cwd: TMP }, model },
     ...over,
   });
@@ -385,11 +387,17 @@ async function schedulerTests() {
 async function jobInputTests() {
   console.log('job input validation');
 
-  const norm = normalizeJobInput({ scheduleType: 'nonpeak', cron: '0 3 * * *', model: 'prov/m1' });
+  const norm = normalizeJobInput({ scheduleType: 'nonpeak', model: 'prov/m1' });
   report(
-    'normalizeJobInput accepts the nonpeak schedule type',
+    'normalizeJobInput accepts the nonpeak schedule type without a cron',
     !norm.error && norm.value.scheduleType === 'nonpeak' && norm.value.model === 'prov/m1',
     JSON.stringify(norm),
+  );
+  const cronWithNonpeak = normalizeJobInput({ scheduleType: 'nonpeak', cron: '0 3 * * *', model: 'prov/m1' });
+  report(
+    'cron sent alongside nonpeak is rejected',
+    /take no cron/.test(cronWithNonpeak.error ?? ''),
+    JSON.stringify(cronWithNonpeak),
   );
   const badType = normalizeJobInput({ scheduleType: 'whenever' });
   report(
@@ -403,13 +411,13 @@ async function jobInputTests() {
     return {
       name: 'np',
       scheduleType: 'nonpeak',
-      cron: '0 3 * * *',
+      cron: null,
       runAt: null,
       ...rest,
       payload: { message: 'm', target: { mode: 'new', cwd: TMP }, model: 'prov/m1', ...payloadOver },
     };
   };
-  report('nonpeak with cron + model + target is valid', validateJob(baseJob()) === null);
+  report('nonpeak with a model + target is valid', validateJob(baseJob()) === null);
   report(
     'nonpeak without a model is rejected',
     /model/.test(validateJob(baseJob({ payload: { model: null } }) ?? '')),
@@ -419,10 +427,10 @@ async function jobInputTests() {
     /model/.test(validateJob(baseJob({ payload: { model: 'plainmodel' } }) ?? '')),
   );
   report(
-    'nonpeak without cron is rejected',
-    /cron is required/.test(validateJob(baseJob({ cron: null }) ?? '')),
+    'nonpeak carrying a legacy cron expression is rejected',
+    /take no cron/.test(validateJob(baseJob({ cron: '0 3 * * *' }) ?? '')),
   );
-  const cronNoModel = baseJob({ scheduleType: 'cron', payload: { model: undefined } });
+  const cronNoModel = baseJob({ scheduleType: 'cron', cron: '0 3 * * *', payload: { model: undefined } });
   report('plain cron jobs still work without a model', validateJob(cronNoModel) === null);
 
   const payload = payloadFromInput({
@@ -439,6 +447,19 @@ async function jobInputTests() {
   );
 }
 
+function localMidnightTomorrow(ms) {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + 1);
+  return d.getTime();
+}
+
+function localMidnight(ms) {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
 async function nonPeakTests() {
   console.log('non-peak schedule');
 
@@ -447,16 +468,41 @@ async function nonPeakTests() {
     return {
       state,
       isPeakAt: (_provider, _model, _at) => state.peak,
-      nextOpenAt: (_provider, _model, from) => (state.peak ? state.openAt : from),
+      nextOpenAt: (_provider, _model, from) => (state.peak ? Math.max(state.openAt, from) : from),
     };
   };
+
+  {
+    const from = Date.now();
+    const peak = mkPeak();
+    peak.state.openAt = localMidnightTomorrow(from) + 3 * 3600_000;
+    const asap = computeNextDue(nonpeakJob('prov/m1'), from, peak);
+    report(
+      'computeNextDue (fresh): earliest open moment, minute-clamped',
+      asap === Math.max(peak.state.openAt, from + 60_000),
+      `asap=${asap - from}ms`,
+    );
+    const anchored = computeNextDue(nonpeakJob('prov/m1'), from, peak, { dayAnchored: true });
+    report(
+      'computeNextDue (post-run): anchored to the next local day',
+      anchored === peak.state.openAt,
+      `anchored=${anchored - from}ms openAt=${peak.state.openAt - from}ms`,
+    );
+    const alwaysPeak = { isPeakAt: () => true, nextOpenAt: () => null };
+    const fallback = computeNextDue(nonpeakJob('prov/m1'), from, alwaysPeak, { dayAnchored: true });
+    report(
+      'computeNextDue: peaked around the clock falls back to +24h',
+      fallback === localMidnightTomorrow(from) + 24 * 3600_000,
+      `fallback=${fallback - from}ms`,
+    );
+  }
 
   {
     const jr = makeJournal('np-defer');
     const reg = fakeRegistry();
     const events = [];
     const peak = mkPeak();
-    const job = jr.insertJob(nonpeakJob('0 3 * * *', 'prov/m1'));
+    const job = jr.insertJob(nonpeakJob('prov/m1'));
     const s = new Scheduler({ journal: jr, registry: reg, onEvent: (e) => events.push(e), peak });
     await s.tick();
     await s.idle();
@@ -477,23 +523,73 @@ async function nonPeakTests() {
     const reg = fakeRegistry();
     const peak = mkPeak();
     peak.state.peak = false;
-    const job = jr.insertJob(nonpeakJob('0 3 * * *', 'prov/m1'));
+    const before = Date.now();
+    const job = jr.insertJob(nonpeakJob('prov/m1'));
     const s = new Scheduler({ journal: jr, registry: reg, peak });
     await s.tick();
     await s.idle();
-    report('non-peak now: fires like a cron job', reg.prompts.length === 1);
+    report('non-peak now: fires without a cron', reg.prompts.length === 1);
     report('non-peak now: run recorded ok', jr.lastRun(job.id)?.status === 'ok');
+    const nextDue = jr.getJob(job.id).nextDue;
     report(
-      'non-peak now: next_due advances to the next cron occurrence',
-      jr.getJob(job.id).nextDue > Date.now(),
+      'non-peak now: next_due anchors to the first open moment of tomorrow',
+      nextDue >= localMidnightTomorrow(before) && nextDue <= localMidnightTomorrow(before) + 5000,
+      `nextDue=${nextDue - before}ms midnight=${localMidnightTomorrow(before) - before}ms`,
     );
+    await s.tick();
+    report('once per day: no second fire on the next tick', reg.prompts.length === 1);
+    s.stop();
+  }
+
+  {
+    const jr = makeJournal('np-skip');
+    const reg = fakeRegistry();
+    const peak = mkPeak();
+    peak.state.peak = false;
+    const before = Date.now();
+    const job = jr.insertJob(
+      nonpeakJob('prov/m1', { missedPolicy: 'skip', nextDue: localMidnight(before) - 24 * 3600_000 }),
+    );
+    const s = new Scheduler({ journal: jr, registry: reg, peak });
+    await s.tick();
+    await s.idle();
+    const after = jr.getJob(job.id);
+    report(
+      'skip policy: occurrence missed on an earlier day is skipped',
+      reg.prompts.length === 0 && jr.lastRun(job.id)?.status === 'skipped',
+    );
+    report(
+      'skip policy: next_due moves to tomorrow\u2019s open moment',
+      after.nextDue >= localMidnightTomorrow(before) - 1000 &&
+        after.nextDue <= localMidnightTomorrow(before) + 5000,
+      `nextDue=${after.nextDue - before}ms`,
+    );
+    s.stop();
+  }
+
+  {
+    const jr = makeJournal('np-skip-sameday');
+    const reg = fakeRegistry();
+    const peak = mkPeak();
+    peak.state.peak = false;
+    const before = Date.now();
+    jr.insertJob(
+      nonpeakJob('prov/m1', {
+        missedPolicy: 'skip',
+        nextDue: Math.min(localMidnight(before) + 5 * 60_000, before - 1000),
+      }),
+    );
+    const s = new Scheduler({ journal: jr, registry: reg, peak });
+    await s.tick();
+    await s.idle();
+    report('skip policy: a same-day occurrence still runs', reg.prompts.length === 1);
     s.stop();
   }
 
   {
     const jr = makeJournal('np-no-gate');
     const reg = fakeRegistry();
-    jr.insertJob(nonpeakJob('0 3 * * *', 'prov/m1'));
+    jr.insertJob(nonpeakJob('prov/m1'));
     const s = new Scheduler({ journal: jr, registry: reg });
     await s.tick();
     await s.idle();
@@ -509,7 +605,7 @@ async function nonPeakTests() {
       nextOpenAt: () => null,
     };
     const before = Date.now();
-    const job = jr.insertJob(nonpeakJob('0 3 * * *', 'prov/m1'));
+    const job = jr.insertJob(nonpeakJob('prov/m1'));
     const s = new Scheduler({ journal: jr, registry: reg, peak });
     await s.tick();
     const nextDue = jr.getJob(job.id).nextDue;
@@ -527,7 +623,7 @@ async function nonPeakTests() {
     const reg = fakeRegistry();
     const peak = mkPeak();
     const job = jr.insertJob(
-      nonpeakJob('0 3 * * *', 'prov/m1', { runAt: Date.now() + 3600_000, nextDue: Date.now() + 3600_000 }),
+      nonpeakJob('prov/m1', { runAt: Date.now() + 3600_000, nextDue: Date.now() + 3600_000 }),
     );
     const s = new Scheduler({ journal: jr, registry: reg, peak });
     const r = await s.runNow(job.id);
@@ -547,9 +643,7 @@ async function concurrencyTests() {
       registry: reg,
       limits: { globalMax: 2, providerMax: 9, modelMax: 9 },
     });
-    const jobs = ['p1/m1', 'p2/m2', 'p3/m3'].map((m, i) =>
-      jr.insertJob(nonpeakJob('0 3 * * *', m, { name: `g${i}` })),
-    );
+    const jobs = ['p1/m1', 'p2/m2', 'p3/m3'].map((m, i) => jr.insertJob(nonpeakJob(m, { name: `g${i}` })));
     await s.tick();
     report('global cap: only 2 of 3 due jobs start', reg.prompts.length === 2);
     const stats = s.stats();
@@ -579,8 +673,8 @@ async function concurrencyTests() {
       registry: reg,
       limits: { globalMax: 9, providerMax: 9, modelMax: 1 },
     });
-    jr.insertJob(nonpeakJob('0 3 * * *', 'pa/ma', { name: 'm0' }));
-    jr.insertJob(nonpeakJob('0 3 * * *', 'pa/ma', { name: 'm1' }));
+    jr.insertJob(nonpeakJob('pa/ma', { name: 'm0' }));
+    jr.insertJob(nonpeakJob('pa/ma', { name: 'm1' }));
     await s.tick();
     report('per-model cap serializes the same model', reg.prompts.length === 1);
     reg.prompts[0].release();
@@ -599,8 +693,8 @@ async function concurrencyTests() {
       registry: reg,
       limits: { globalMax: 9, providerMax: 1, modelMax: 9 },
     });
-    jr.insertJob(nonpeakJob('0 3 * * *', 'pb/one', { name: 'pr0' }));
-    jr.insertJob(nonpeakJob('0 3 * * *', 'pb/two', { name: 'pr1' }));
+    jr.insertJob(nonpeakJob('pb/one', { name: 'pr0' }));
+    jr.insertJob(nonpeakJob('pb/two', { name: 'pr1' }));
     await s.tick();
     report('per-provider cap serializes sibling models', reg.prompts.length === 1);
     reg.prompts[0].release();
@@ -615,8 +709,8 @@ async function concurrencyTests() {
     const jr = makeJournal('conc-unblocked');
     const reg = gatedRegistry();
     const s = new Scheduler({ journal: jr, registry: reg });
-    jr.insertJob(nonpeakJob('0 3 * * *', 'pc/slow', { name: 'slow' }));
-    jr.insertJob(nonpeakJob('0 3 * * *', 'pd/fast', { name: 'fast' }));
+    jr.insertJob(nonpeakJob('pc/slow', { name: 'slow' }));
+    jr.insertJob(nonpeakJob('pd/fast', { name: 'fast' }));
     await s.tick();
     report('a slow in-flight run does not block other due jobs', reg.prompts.length === 2);
     for (const p of reg.prompts) p.release();
@@ -632,9 +726,9 @@ async function concurrencyTests() {
       registry: reg,
       limits: { globalMax: 1, providerMax: 9, modelMax: 9 },
     });
-    jr.insertJob(nonpeakJob('0 3 * * *', 'pe/occupier', { name: 'occ' }));
+    jr.insertJob(nonpeakJob('pe/occupier', { name: 'occ' }));
     const manual = jr.insertJob(
-      nonpeakJob('0 3 * * *', 'pf/waiter', {
+      nonpeakJob('pf/waiter', {
         name: 'wait',
         runAt: Date.now() + 3600_000,
         nextDue: Date.now() + 3600_000,

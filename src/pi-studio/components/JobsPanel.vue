@@ -71,7 +71,10 @@ async function toggleHistory(job: JobInfo) {
 }
 
 function scheduleText(job: JobInfo): string {
-  if (job.scheduleType === 'nonpeak') return `off-peak ${job.cron ?? ''}`.trim();
+  if (job.scheduleType === 'nonpeak') {
+    const model = job.payload.model;
+    return model ? `off-peak daily · ${model}` : 'off-peak daily';
+  }
   return job.scheduleType === 'cron' ? `cron ${job.cron}` : `once ${fmtTime(job.runAt)}`;
 }
 

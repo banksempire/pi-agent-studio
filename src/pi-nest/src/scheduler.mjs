@@ -3,9 +3,22 @@ import { countCronMatches, nextCronTime } from './cron.mjs';
 export const SCHEDULER_TICK_MS = 30_000;
 const TIMER_MAX_MS = 2 ** 31 - 1;
 export const DEFAULT_SCHED_LIMITS = { globalMax: 2, providerMax: 2, modelMax: 1 };
-const ALWAYS_OPEN_PEAK = { isPeakAt: () => false, nextOpenAt: () => null };
+const ALWAYS_OPEN_PEAK = { isPeakAt: () => false, nextOpenAt: (_p, _m, fromMs) => fromMs };
 const DEFER_FALLBACK_MS = 24 * 3600_000;
 const DEFER_MIN_MS = 60_000;
+
+function startOfLocalDay(ms) {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function startOfNextLocalDay(ms) {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + 1);
+  return d.getTime();
+}
 
 function normLimit(value, fallback) {
   const n = Number(value);
@@ -20,8 +33,22 @@ function jobModelKey(job) {
   return { provider: model.slice(0, sep).toLowerCase(), model: model.toLowerCase() };
 }
 
-export function computeNextDue(job, fromMs) {
-  if (job.scheduleType === 'cron' || job.scheduleType === 'nonpeak') return nextCronTime(job.cron, fromMs);
+function nextOpenFrom(peak, key, baseMs) {
+  let open = null;
+  if (key) {
+    try {
+      open = peak.nextOpenAt(key.provider, key.model, baseMs);
+    } catch {}
+  }
+  return Number.isFinite(open) ? open : baseMs + DEFER_FALLBACK_MS;
+}
+
+export function computeNextDue(job, fromMs, peak = ALWAYS_OPEN_PEAK, { dayAnchored = false } = {}) {
+  if (job.scheduleType === 'cron') return nextCronTime(job.cron, fromMs);
+  if (job.scheduleType === 'nonpeak') {
+    const base = dayAnchored ? startOfNextLocalDay(fromMs) : fromMs + DEFER_MIN_MS;
+    return nextOpenFrom(peak, jobModelKey(job), base);
+  }
   if (job.scheduleType === 'once') return job.runAt && job.runAt > fromMs ? job.runAt : fromMs;
   return null;
 }
@@ -107,9 +134,14 @@ export class Scheduler {
     try {
       const now = Date.now();
       for (const job of this.#journal.dueJobs(now)) {
-        if ((job.scheduleType === 'cron' || job.scheduleType === 'nonpeak') && job.missedPolicy === 'skip') {
-          const missed = countCronMatches(job.cron, job.nextDue, now);
-          if (missed >= 1) {
+        if (job.missedPolicy === 'skip') {
+          const missedOccurrence =
+            job.scheduleType === 'cron'
+              ? countCronMatches(job.cron, job.nextDue, now) >= 1
+              : job.scheduleType === 'nonpeak'
+                ? job.nextDue < startOfLocalDay(now)
+                : false;
+          if (missedOccurrence) {
             await this.#skipMissed(job, now);
             continue;
           }
@@ -163,7 +195,7 @@ export class Scheduler {
 
   async #skipMissed(job, now) {
     const runId = this.#journal.insertRun(job.id);
-    const nextDue = computeNextDue(job, now);
+    const nextDue = computeNextDue(job, now, this.#peak, { dayAnchored: true });
     this.#journal.updateJob({ ...job, nextDue });
     if (runId !== null) this.#journal.finishRun(runId, 'skipped', 'missed while backend was down');
     this.#emit('skipped', this.#journal.getJob(job.id), runId);
@@ -177,7 +209,7 @@ export class Scheduler {
       if (job.scheduleType === 'once') {
         updated.enabled = false;
       } else if (job.scheduleType === 'cron' || job.scheduleType === 'nonpeak') {
-        updated.nextDue = computeNextDue(job, now);
+        updated.nextDue = computeNextDue(job, now, this.#peak, { dayAnchored: true });
         if (updated.nextDue === null) {
           console.warn(`[scheduler] job '${job.name}' has no future occurrence — disabling`);
           updated.enabled = false;

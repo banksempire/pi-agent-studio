@@ -46,10 +46,11 @@ commands:
   agents                    live agents on this instance's backend
   abort <agent-id>          abort one agent
   jobs list                 scheduled jobs on this instance's backend
-  jobs add <name> …         add a job (--at <time> | --cron <expr>, --message,
+  jobs add <name> …         add a job (--at <time> | --cron <expr> | --nonpeak
+                            with --model — daily, scheduler-picked in
+                            off-peak hours; --message,
                             --session <file> | --cwd <dir> [--mode new|reuse],
-                            --model, --think, --missed coalesce|skip,
-                            --nonpeak with --cron+--model for off-peak runs)
+                            --model, --think, --missed coalesce|skip)
   jobs edit <id> …          update a job (--name/--message/--at/--cron/--cwd/…)
   jobs rm <id>              delete a job and its run history
   jobs run <id>             fire a job now (manual run, schedule untouched)

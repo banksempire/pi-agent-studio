@@ -653,7 +653,7 @@ function onViewportResize() {
 
 watch(input, () => nextTick(autoGrowInput));
 
-function send() {
+function send(viaKeyboard = false) {
   const text = input.value.trim();
   const imgs = attachments.value.map((a) => ({ data: a.data, mimeType: a.mimeType }));
   if ((!text && !imgs.length) || !session.value) return;
@@ -662,11 +662,12 @@ function send() {
   input.value = '';
   attachments.value = [];
   pinToBottom();
+  if (viaKeyboard) inputEl.value?.focus();
 }
 
 const queue = computed(() => queuedMessagesOf(props.sessionId));
 
-function queueMessage() {
+function queueMessage(viaKeyboard = false) {
   if (actionMode.value !== 'queue') return;
   const text = input.value.trim();
   const imgs = attachments.value.map((a) => ({ data: a.data, mimeType: a.mimeType }));
@@ -675,7 +676,7 @@ function queueMessage() {
   input.value = '';
   attachments.value = [];
   store.noteChatInteraction(props.sessionId);
-  inputEl.value?.focus();
+  if (viaKeyboard) inputEl.value?.focus();
 }
 
 const queueReview = ref<QueuedChatMessage | null>(null);
@@ -800,8 +801,8 @@ function onKeydown(e: KeyboardEvent) {
     e.key === 'Enter' && !e.isComposing && (store.prefs.sendKey === 'enter' ? !realShift : realShift);
   if (sendPressed) {
     e.preventDefault();
-    if (actionMode.value === 'queue') queueMessage();
-    else send();
+    if (actionMode.value === 'queue') queueMessage(true);
+    else send(true);
   }
 }
 
@@ -812,7 +813,6 @@ function onComposerInput() {
 function pinToBottom() {
   setSticky(true);
   nextTick(scrollToBottom);
-  if (!isMobile.value) inputEl.value?.focus();
 }
 
 function scrollToBottomNow() {
@@ -870,7 +870,6 @@ onMounted(() => {
   } else if (el && el.scrollHeight > el.clientHeight) {
     nextTick(() => restoreScroll(props.sessionId));
   }
-  inputEl.value?.focus();
   window.addEventListener('resize', onViewportResize);
   window.addEventListener('keydown', onWindowShiftKey, true);
   window.addEventListener('keyup', onWindowShiftKey, true);
@@ -1209,13 +1208,13 @@ watch(
             class="chat-send-btn chat-send-btn--queue"
             title="Queue this message — it sends automatically when the session finishes"
             :disabled="!!composerBlock"
-            @click="queueMessage"
+            @click="queueMessage(false)"
           >Queue</button>
           <button
             v-else
             class="chat-send-btn"
             :disabled="!!composerBlock || !hasContent"
-            @click="send"
+            @click="send(false)"
           >Send</button>
         </div>
 

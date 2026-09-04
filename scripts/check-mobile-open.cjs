@@ -224,6 +224,18 @@ const composerIsFocused = (page) =>
     });
     await page.goto(`http://127.0.0.1:${ports.vite}`, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.sf-root--mobile', { timeout: 60000 });
+    await delay(800);
+    const bootFocus = await page.evaluate(() => ({
+      hasComposer: !!document.querySelector('.chat-input'),
+      focused:
+        document.activeElement instanceof HTMLElement &&
+        document.activeElement.classList.contains('chat-input'),
+    }));
+    report(
+      'boot: the composer is not auto-focused on load',
+      !bootFocus.focused,
+      `composer=${bootFocus.hasComposer}`,
+    );
 
     const mobilePanel = page.locator('.sf-mobile-panel');
     const historyItems = page.locator('[data-sub-body="history"] .chat-list-item');
@@ -252,6 +264,7 @@ const composerIsFocused = (page) =>
     report('…and the panel closes at once', (await mobilePanel.count()) === 0);
     const label1 = String(await mobileBarLabel());
     report('…and the opened chat becomes the active tab', label1.includes('Mob-A'), `label=${label1}`);
+    report('mobile: opening a chat does not focus the composer', !(await composerIsFocused(page)));
 
     await page.locator('.chat-input:visible').fill('focus check from mobile');
     await page.locator('.chat-send-btn:visible').click();
@@ -272,9 +285,12 @@ const composerIsFocused = (page) =>
     await delay(500);
     report('tapping New Chat creates a chat window', String(await mobileBarLabel()).includes('New Chat'));
     report('…and the panel closes at once', (await mobilePanel.count()) === 0);
+    report('mobile: a fresh chat does not focus the composer', !(await composerIsFocused(page)));
 
     await page.setViewportSize({ width: 1440, height: 844 });
     await page.waitForSelector('.sf-menu-bar', { timeout: 15000 });
+    await delay(600);
+    report('desktop: switching shell mode does not focus the composer', !(await composerIsFocused(page)));
     await delay(400);
     const desktopItem = page.locator('[data-sub-body="history"] .chat-list-item:has-text("Mob-B")');
     await desktopItem.first().click();
@@ -284,11 +300,28 @@ const composerIsFocused = (page) =>
       (await page.locator('.sf-left-group').isVisible()) &&
         (await page.locator('[data-sub-body="history"]').isVisible()),
     );
+    report('desktop: opening a chat does not focus the composer', !(await composerIsFocused(page)));
 
     await page.locator('.chat-input:visible').fill('focus check from desktop');
     await page.locator('.chat-send-btn:visible').click();
     await delay(400);
-    report('desktop: clicking Send returns focus to the composer', await composerIsFocused(page));
+    report('desktop: clicking Send does not refocus the composer', !(await composerIsFocused(page)));
+    report(
+      '…and the sent message lands in the transcript',
+      await page.locator('.chat-user-bubble', { hasText: 'focus check from desktop' }).first().isVisible(),
+    );
+
+    await page.locator('.chat-input:visible').fill('enter focus check from desktop');
+    await page.locator('.chat-input:visible').press('Enter');
+    await delay(400);
+    report('desktop: sending via Enter keeps focus in the composer', await composerIsFocused(page));
+    report(
+      '…and the enter-sent message lands in the transcript',
+      await page
+        .locator('.chat-user-bubble', { hasText: 'enter focus check from desktop' })
+        .first()
+        .isVisible(),
+    );
 
     report('no console/page errors', errors.length === 0, errors.join('; '));
   } catch (e) {

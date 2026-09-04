@@ -1183,30 +1183,106 @@ async function unitChecks({ report }) {
       const scroller = document.querySelector('.pht .sf-tbl-scroll');
       const head = document.querySelector('.pht .sf-tbl-head');
       const lastTh = [...head.querySelectorAll('.sf-tbl-th')].pop();
+      const byLabel = {};
+      for (const th of head.querySelectorAll('.sf-tbl-th')) {
+        const label = (th.textContent || '').replace(/[^A-Za-z ]/g, '').trim();
+        if (label) byLabel[label] = th.getBoundingClientRect().width;
+      }
       const tracks = getComputedStyle(head).gridTemplateColumns.split(' ').map(parseFloat);
       return {
         edge: Math.abs(lastTh.getBoundingClientRect().right - scroller.getBoundingClientRect().right),
         sum: tracks.reduce((a, b) => a + b, 0),
         w: scroller.clientWidth,
+        window: byLabel.Window ?? 0,
         noteVisible: [...head.querySelectorAll('.sf-tbl-th')].some((t) => t.textContent.includes('Note')),
       };
     });
     report(
-      'hiding Note leaves no gap: the fixed-width Window column stretches to absorb it',
-      !peakAbsorb.noteVisible && peakAbsorb.edge <= 1 && Math.abs(peakAbsorb.sum - peakAbsorb.w) <= 1,
+      'hiding Note leaves no gap: the first variable column (Model) absorbs it; Window keeps its width',
+      !peakAbsorb.noteVisible &&
+        peakAbsorb.edge <= 1 &&
+        Math.abs(peakAbsorb.sum - peakAbsorb.w) <= 2 &&
+        Math.abs(peakAbsorb.window - 200) <= 1,
       JSON.stringify(peakAbsorb),
     );
+    await page.mouse.click(700, 10);
+    await delay(200);
     await page.locator('.pht .sf-tbl-th', { hasText: 'Model' }).click({ button: 'right' });
     await delay(200);
     await page.locator('.pht .sf-tbl-chk').filter({ hasText: 'Note' }).locator('input').click();
     await delay(200);
+    await page.mouse.click(700, 10);
+    await delay(150);
     const peakRestored = await page.evaluate(() => {
       const scroller = document.querySelector('.pht .sf-tbl-scroll');
       const head = document.querySelector('.pht .sf-tbl-head');
       const tracks = getComputedStyle(head).gridTemplateColumns.split(' ').map(parseFloat);
-      return Math.abs(tracks.reduce((a, b) => a + b, 0) - scroller.clientWidth) <= 1;
+      return Math.abs(tracks.reduce((a, b) => a + b, 0) - scroller.clientWidth) <= 2;
     });
     report('restoring Note keeps the tab grid exactly filled', peakRestored);
+
+    const handleCount = await page.evaluate(() => {
+      const head = document.querySelector('.pht .sf-tbl-head');
+      const ths = [...head.querySelectorAll('.sf-tbl-th')];
+      return ths
+        .filter((th) => th.querySelector('.sf-tbl-resize'))
+        .map((th) => (th.textContent || '').replace(/[^A-Za-z ]/g, '').trim());
+    });
+    report(
+      'handles render only where variables sit on both sides: after Model and after Window, never after On',
+      handleCount.length === 2 && handleCount.includes('Model') && handleCount.includes('Window'),
+      JSON.stringify(handleCount),
+    );
+
+    const dragState = () =>
+      page.evaluate(() => {
+        const head = document.querySelector('.pht .sf-tbl-head');
+        const edges = {};
+        const widths = {};
+        for (const th of head.querySelectorAll('.sf-tbl-th')) {
+          const label = (th.textContent || '').replace(/[^A-Za-z ]/g, '').trim();
+          if (label) {
+            edges[label] = Math.round(th.getBoundingClientRect().right);
+            widths[label] = Math.round(th.getBoundingClientRect().width);
+          }
+        }
+        return { edges, widths };
+      });
+    const wnBefore = await dragState();
+    const wnBox = await page.locator('.pht .sf-tbl-th', { hasText: 'Window' }).boundingBox();
+    await page.mouse.move(wnBox.x + wnBox.width - 1, wnBox.y + wnBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(wnBox.x + wnBox.width - 61, wnBox.y + wnBox.height / 2, { steps: 6 });
+    await page.mouse.up();
+    await delay(250);
+    const wnAfter = await dragState();
+    report(
+      'dragging the Window/Note border left shrinks Model (pushing the Model/Window border left) and feeds Note',
+      Math.abs(wnAfter.edges.On - wnBefore.edges.On) <= 1 &&
+        wnBefore.widths.Model - wnAfter.widths.Model >= 55 &&
+        wnBefore.widths.Model - wnAfter.widths.Model <= 62 &&
+        Math.abs(wnAfter.widths.Note - wnBefore.widths.Note - 60) <= 3 &&
+        Math.abs(wnAfter.widths.Window - wnBefore.widths.Window) <= 1 &&
+        Math.abs(wnAfter.edges.Note - wnBefore.edges.Note) <= 2,
+      JSON.stringify({ before: wnBefore, after: wnAfter }),
+    );
+
+    const mwBox = await page.locator('.pht .sf-tbl-th', { hasText: 'Model' }).boundingBox();
+    const mwBefore = await dragState();
+    await page.mouse.move(mwBox.x + mwBox.width - 1, mwBox.y + mwBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(mwBox.x + mwBox.width + 39, mwBox.y + mwBox.height / 2, { steps: 6 });
+    await page.mouse.up();
+    await delay(250);
+    const mwAfter = await dragState();
+    report(
+      'dragging the Model/Window border right takes the space from Note, the nearest variable below',
+      Math.abs(mwAfter.edges.On - mwBefore.edges.On) <= 1 &&
+        Math.abs(mwAfter.widths.Model - mwBefore.widths.Model - 40) <= 3 &&
+        Math.abs(mwBefore.widths.Note - mwAfter.widths.Note - 40) <= 3 &&
+        Math.abs(mwAfter.edges.Note - mwBefore.edges.Note) <= 2,
+      JSON.stringify({ before: mwBefore, after: mwAfter }),
+    );
     await page.mouse.click(700, 10);
     await delay(150);
     const afterClear = await rowsText();

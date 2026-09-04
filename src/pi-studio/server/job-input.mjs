@@ -22,6 +22,9 @@ export function normalizeJobInput(body) {
     out.runAt = Math.round(runAt);
   }
   if (body.cron !== undefined) {
+    if (body.scheduleType === 'nonpeak') {
+      return { error: 'off-peak jobs take no cron — the scheduler picks the time within off-peak hours' };
+    }
     const cron = String(body.cron).trim();
     const err = cronError(cron);
     if (err) return { error: `invalid cron expression: ${err}` };
@@ -67,10 +70,10 @@ export function validateJob(job) {
   } else if (job.scheduleType === 'cron') {
     if (!job.cron) return 'cron is required for cron jobs';
   } else if (job.scheduleType === 'nonpeak') {
-    if (!job.cron) return 'cron is required for non-peak jobs';
+    if (job.cron) return 'off-peak jobs take no cron — the scheduler picks the time within off-peak hours';
     const model = job.payload?.model;
     if (typeof model !== 'string' || !model.includes('/')) {
-      return 'non-peak jobs need a model override (provider/model) — peak windows are configured per model';
+      return 'off-peak jobs need a model override (provider/model) — peak windows are configured per model';
     }
   } else {
     return 'scheduleType is required';

@@ -1553,7 +1553,7 @@ const server = createServer(async (req, res) => {
       };
       const invalid = validateJob(job);
       if (invalid) return sendJson(res, 400, { error: invalid });
-      const nextDue = computeNextDue(job, now);
+      const nextDue = computeNextDue(job, now, peakGate);
       if (nextDue === null) return sendJson(res, 400, { error: 'schedule never matches within a year' });
       job.nextDue = nextDue;
       const stored = journal.insertJob(job);
@@ -1596,15 +1596,24 @@ const server = createServer(async (req, res) => {
         payload,
         missedPolicy: input.missedPolicy ?? existing.missedPolicy,
       };
+      if (job.scheduleType === 'nonpeak') {
+        if (input.cron !== undefined) {
+          return sendJson(res, 400, {
+            error: 'off-peak jobs take no cron — the scheduler picks the time within off-peak hours',
+          });
+        }
+        job.cron = null;
+      }
       const invalid = validateJob(job);
       if (invalid) return sendJson(res, 400, { error: invalid });
       const scheduleChanged =
         job.scheduleType !== existing.scheduleType ||
         job.runAt !== existing.runAt ||
         job.cron !== existing.cron ||
-        job.enabled !== existing.enabled;
+        job.enabled !== existing.enabled ||
+        (job.scheduleType === 'nonpeak' && job.payload?.model !== existing.payload?.model);
       if (scheduleChanged) {
-        const nextDue = computeNextDue(job, Date.now());
+        const nextDue = computeNextDue(job, Date.now(), peakGate);
         if (nextDue === null) return sendJson(res, 400, { error: 'schedule never matches within a year' });
         job.nextDue = nextDue;
       }
@@ -1915,6 +1924,10 @@ async function watchSessionFiles() {
 if (registry) setInterval(() => registry.scanStaleRuns(), WATCHDOG_INTERVAL_MS).unref();
 
 let scheduler = null;
+const peakGate = {
+  isPeakAt: (provider, model, at) => peakHours.isPeakAt(provider, model, at),
+  nextOpenAt: (provider, model, fromMs) => peakHours.nextNonPeakAt(provider, model, fromMs),
+};
 if (journal && registry) {
   scheduler = new Scheduler({
     journal,
@@ -1922,10 +1935,7 @@ if (journal && registry) {
     onEvent: ({ action, job, runId, error, sessionFile }) => {
       emit({ type: 'job_event', action, jobId: job?.id ?? '', runId: runId ?? null, error, sessionFile });
     },
-    peak: {
-      isPeakAt: (provider, model, at) => peakHours.isPeakAt(provider, model, at),
-      nextOpenAt: (provider, model, fromMs) => peakHours.nextNonPeakAt(provider, model, fromMs),
-    },
+    peak: peakGate,
     limits: SCHED_LIMITS,
   });
   scheduler.start();

@@ -240,11 +240,11 @@ studio [-i <instance>] <command> …        # auto-detects instance from CWD's p
   abort <agent-id>            wraps POST /api/abort
   jobs list                   scheduled jobs (id, schedule, target, next run, last status)
   jobs add <name> …           create a job: --at <time> (once) | --cron <expr> (periodic)
-                              | --cron <expr> --nonpeak (waits out the model's
-                              peak windows; needs --model),
+                              | --nonpeak (no fixed time — once a day in the
+                              model's off-peak hours; needs --model, no --cron),
                               -m/--message, --session <file> | --cwd <dir> [--mode new|reuse],
                               --model, --think, --missed coalesce|skip, --by, --disabled
-  jobs edit <id> …            update (--name/--message/--at/--cron/--session/--cwd/--model/--think/--missed)
+  jobs edit <id> …            update (--name/--message/--at/--cron/--nonpeak/--anytime/--session/--cwd/--model/--think/--missed)
   jobs rm <id>                delete job + run history
   jobs run <id>               fire now (manual run; schedule untouched)
   jobs enable|disable <id>    toggle without editing
@@ -437,8 +437,11 @@ SIGKILL restarts identically — same covenant as the prompt queue.
 
 - **Schedule types**: `once` (absolute `runAt` epoch-ms — e.g. "send this
   off-peak tonight"), `cron` (5-field, server-local time — e.g. nightly
-  maintenance) and `nonpeak` (cron cadence, but each occurrence waits until
-  the job's model is outside its peak windows — requires a `--model`).
+  maintenance) and `nonpeak` (no cron of its own: runs once a day, at the
+  first moment the job's model is outside its peak windows — requires a
+  `--model`; a new or re-enabled job fires at the next open moment). A due
+  occurrence that lands inside a peak window (catalog changed after
+  scheduling) defers to the next open moment.
   Hand-rolled parser, no new dependencies.
 - **Trigger**: 30s stateless tick + an armed `setTimeout` to the earliest
   `next_due` (`.unref()`'d) + boot catch-up. The tick re-derives everything

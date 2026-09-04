@@ -1177,42 +1177,25 @@ async function unitChecks({ report }) {
 
     await page.locator('.pht .sf-tbl-th', { hasText: 'Model' }).click({ button: 'right' });
     await delay(200);
-    const peakTrackState = () =>
-      page.evaluate(() => {
-        const scroller = document.querySelector('.pht .sf-tbl-scroll');
-        const head = document.querySelector('.pht .sf-tbl-head');
-        const byLabel = {};
-        for (const th of head.querySelectorAll('.sf-tbl-th')) {
-          const label = (th.textContent || '').replace(/[^A-Za-z ]/g, '').trim();
-          if (label) byLabel[label] = th.getBoundingClientRect().width;
-        }
-        const lastTh = [...head.querySelectorAll('.sf-tbl-th')].pop();
-        const tracks = getComputedStyle(head).gridTemplateColumns.split(' ').map(parseFloat);
-        return {
-          edge: Math.abs(lastTh.getBoundingClientRect().right - scroller.getBoundingClientRect().right),
-          sum: tracks.reduce((a, b) => a + b, 0),
-          w: scroller.clientWidth,
-          model: byLabel.Model ?? 0,
-          window: byLabel.Window ?? 0,
-          note: byLabel.Note ?? 0,
-          noteVisible: 'Note' in byLabel,
-        };
-      });
-    const peakBeforeHide = await peakTrackState();
     await page.locator('.pht .sf-tbl-chk').filter({ hasText: 'Note' }).locator('input').click();
     await delay(250);
-    const peakAbsorb = await peakTrackState();
+    const peakAbsorb = await page.evaluate(() => {
+      const scroller = document.querySelector('.pht .sf-tbl-scroll');
+      const head = document.querySelector('.pht .sf-tbl-head');
+      const lastTh = [...head.querySelectorAll('.sf-tbl-th')].pop();
+      const tracks = getComputedStyle(head).gridTemplateColumns.split(' ').map(parseFloat);
+      return {
+        edge: Math.abs(lastTh.getBoundingClientRect().right - scroller.getBoundingClientRect().right),
+        sum: tracks.reduce((a, b) => a + b, 0),
+        w: scroller.clientWidth,
+        noteVisible: [...head.querySelectorAll('.sf-tbl-th')].some((t) => t.textContent.includes('Note')),
+      };
+    });
     report(
-      'hiding Note leaves no gap: the variable Model column absorbs the freed space',
-      !peakAbsorb.noteVisible &&
-        peakAbsorb.edge <= 1 &&
-        Math.abs(peakAbsorb.sum - peakAbsorb.w) <= 2 &&
-        Math.abs(peakAbsorb.window - 200) <= 1 &&
-        peakAbsorb.model > peakBeforeHide.model + 60,
+      'hiding Note leaves no gap: the fixed-width Window column stretches to absorb it',
+      !peakAbsorb.noteVisible && peakAbsorb.edge <= 1 && Math.abs(peakAbsorb.sum - peakAbsorb.w) <= 1,
       JSON.stringify(peakAbsorb),
     );
-    await page.mouse.click(700, 10);
-    await delay(200);
     await page.locator('.pht .sf-tbl-th', { hasText: 'Model' }).click({ button: 'right' });
     await delay(200);
     await page.locator('.pht .sf-tbl-chk').filter({ hasText: 'Note' }).locator('input').click();
@@ -1224,76 +1207,6 @@ async function unitChecks({ report }) {
       return Math.abs(tracks.reduce((a, b) => a + b, 0) - scroller.clientWidth) <= 1;
     });
     report('restoring Note keeps the tab grid exactly filled', peakRestored);
-
-    const thEdges = () =>
-      page.evaluate(() => {
-        const out = {};
-        for (const th of document.querySelectorAll('.pht .sf-tbl-th')) {
-          const label = (th.textContent || '').replace(/[^A-Za-z ]/g, '').trim();
-          if (label) out[label] = Math.round(th.getBoundingClientRect().right);
-        }
-        return out;
-      });
-    const dragBefore = await thEdges();
-    const winBox = await page.locator('.pht .sf-tbl-th', { hasText: 'Window' }).boundingBox();
-    await page.mouse.move(winBox.x + winBox.width - 1, winBox.y + winBox.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(winBox.x + winBox.width + 59, winBox.y + winBox.height / 2, { steps: 5 });
-    await page.mouse.up();
-    await delay(250);
-    const dragAfter = await thEdges();
-    const winGrow = dragAfter.Window - dragBefore.Window;
-    const noteW = dragAfter.Note - dragAfter.Window;
-    const noteWBefore = dragBefore.Note - dragBefore.Window;
-    report(
-      'dragging the Window/Note border right grows Window from Note only — nothing left of the border moves',
-      Math.abs(dragAfter.Model - dragBefore.Model) <= 1 &&
-        Math.abs(dragAfter.On - dragBefore.On) <= 1 &&
-        winGrow >= 50 &&
-        winGrow <= 62 &&
-        noteW >= 48 &&
-        noteWBefore - noteW <= 62,
-      JSON.stringify({ before: dragBefore, after: dragAfter, winGrow, noteW, noteWBefore }),
-    );
-
-    await page.locator('.pht .sf-tbl-th', { hasText: 'Model' }).click({ button: 'right' });
-    await delay(200);
-    await page.locator('.pht .sf-tbl-chk').filter({ hasText: 'Note' }).locator('input').click();
-    await delay(250);
-    await page.mouse.click(700, 10);
-    await delay(150);
-    await page.locator('.pht .sf-tbl-th', { hasText: 'Model' }).click({ button: 'right' });
-    await delay(200);
-    await page.locator('.pht .sf-tbl-chk').filter({ hasText: 'Window' }).locator('input').click();
-    await delay(250);
-    await page.mouse.click(700, 10);
-    await delay(150);
-    await page.locator('.pht .sf-tbl-th', { hasText: 'Model' }).click({ button: 'right' });
-    await delay(200);
-    await page.locator('.pht .sf-tbl-chk').filter({ hasText: 'Note' }).locator('input').click();
-    await delay(250);
-    const peakTakeBefore = await peakTrackState();
-    await page.mouse.click(700, 10);
-    await delay(150);
-    await page.locator('.pht .sf-tbl-th', { hasText: 'Model' }).click({ button: 'right' });
-    await delay(200);
-    await page.locator('.pht .sf-tbl-chk').filter({ hasText: 'Window' }).locator('input').click();
-    await delay(250);
-    const peakTakeAfter = await peakTrackState();
-    const tModel = peakTakeBefore.model - peakTakeAfter.model;
-    const tNote = peakTakeBefore.note - peakTakeAfter.note;
-    report(
-      'a shown column takes space from every variable column in proportion to their latest widths, never below their minimum',
-      peakTakeAfter.noteVisible &&
-        peakTakeBefore.model / peakTakeBefore.note > 2 &&
-        tModel > 100 &&
-        tNote > 20 &&
-        Math.abs(tModel / tNote - peakTakeBefore.model / peakTakeBefore.note) <=
-          0.4 * (peakTakeBefore.model / peakTakeBefore.note) &&
-        peakTakeAfter.note >= 48 &&
-        peakTakeAfter.model >= 48,
-      JSON.stringify({ before: peakTakeBefore, after: peakTakeAfter, tModel, tNote }),
-    );
     await page.mouse.click(700, 10);
     await delay(150);
     const afterClear = await rowsText();

@@ -1175,6 +1175,14 @@ async function unitChecks({ report }) {
     await page.mouse.click(700, 10);
     await delay(150);
 
+    const peakPreHide = await page.evaluate(() => {
+      const head = document.querySelector('.pht .sf-tbl-head');
+      for (const th of head.querySelectorAll('.sf-tbl-th')) {
+        const label = (th.textContent || '').replace(/[^A-Za-z ]/g, '').trim();
+        if (label === 'Window') return Math.round(th.getBoundingClientRect().width);
+      }
+      return 0;
+    });
     await page.locator('.pht .sf-tbl-th', { hasText: 'Model' }).click({ button: 'right' });
     await delay(200);
     await page.locator('.pht .sf-tbl-chk').filter({ hasText: 'Note' }).locator('input').click();
@@ -1202,8 +1210,8 @@ async function unitChecks({ report }) {
       !peakAbsorb.noteVisible &&
         peakAbsorb.edge <= 1 &&
         Math.abs(peakAbsorb.sum - peakAbsorb.w) <= 2 &&
-        Math.abs(peakAbsorb.window - 200) <= 1,
-      JSON.stringify(peakAbsorb),
+        Math.abs(peakAbsorb.window - peakPreHide) <= 1,
+      JSON.stringify({ preHideWindow: peakPreHide, ...peakAbsorb }),
     );
     await page.mouse.click(700, 10);
     await delay(200);
@@ -1257,12 +1265,12 @@ async function unitChecks({ report }) {
     await delay(250);
     const wnAfter = await dragState();
     report(
-      'dragging the Window/Note border left shrinks Model (pushing the Model/Window border left) and feeds Note',
+      'dragging the Window/Note border left shrinks Window (a variable now) and feeds Note',
       Math.abs(wnAfter.edges.On - wnBefore.edges.On) <= 1 &&
-        wnBefore.widths.Model - wnAfter.widths.Model >= 55 &&
-        wnBefore.widths.Model - wnAfter.widths.Model <= 62 &&
+        Math.abs(wnAfter.widths.Model - wnBefore.widths.Model) <= 1 &&
+        wnBefore.widths.Window - wnAfter.widths.Window >= 55 &&
+        wnBefore.widths.Window - wnAfter.widths.Window <= 62 &&
         Math.abs(wnAfter.widths.Note - wnBefore.widths.Note - 60) <= 3 &&
-        Math.abs(wnAfter.widths.Window - wnBefore.widths.Window) <= 1 &&
         Math.abs(wnAfter.edges.Note - wnBefore.edges.Note) <= 2,
       JSON.stringify({ before: wnBefore, after: wnAfter }),
     );
@@ -1276,10 +1284,11 @@ async function unitChecks({ report }) {
     await delay(250);
     const mwAfter = await dragState();
     report(
-      'dragging the Model/Window border right takes the space from Note, the nearest variable below',
+      'dragging the Model/Window border right grows Model, squeezing Window — the nearest variable below',
       Math.abs(mwAfter.edges.On - mwBefore.edges.On) <= 1 &&
         Math.abs(mwAfter.widths.Model - mwBefore.widths.Model - 40) <= 3 &&
-        Math.abs(mwBefore.widths.Note - mwAfter.widths.Note - 40) <= 3 &&
+        Math.abs(mwBefore.widths.Window - mwAfter.widths.Window - 40) <= 3 &&
+        Math.abs(mwAfter.widths.Note - mwBefore.widths.Note) <= 1 &&
         Math.abs(mwAfter.edges.Note - mwBefore.edges.Note) <= 2,
       JSON.stringify({ before: mwBefore, after: mwAfter }),
     );

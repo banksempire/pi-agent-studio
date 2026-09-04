@@ -1174,6 +1174,41 @@ async function unitChecks({ report }) {
     await delay(200);
     await page.mouse.click(700, 10);
     await delay(150);
+
+    await page.locator('.pht .sf-tbl-th', { hasText: 'Model' }).click({ button: 'right' });
+    await delay(200);
+    await page.locator('.pht .sf-tbl-chk').filter({ hasText: 'Note' }).locator('input').click();
+    await delay(250);
+    const peakAbsorb = await page.evaluate(() => {
+      const scroller = document.querySelector('.pht .sf-tbl-scroll');
+      const head = document.querySelector('.pht .sf-tbl-head');
+      const lastTh = [...head.querySelectorAll('.sf-tbl-th')].pop();
+      const tracks = getComputedStyle(head).gridTemplateColumns.split(' ').map(parseFloat);
+      return {
+        edge: Math.abs(lastTh.getBoundingClientRect().right - scroller.getBoundingClientRect().right),
+        sum: tracks.reduce((a, b) => a + b, 0),
+        w: scroller.clientWidth,
+        noteVisible: [...head.querySelectorAll('.sf-tbl-th')].some((t) => t.textContent.includes('Note')),
+      };
+    });
+    report(
+      'hiding Note leaves no gap: the fixed-width Window column stretches to absorb it',
+      !peakAbsorb.noteVisible && peakAbsorb.edge <= 1 && Math.abs(peakAbsorb.sum - peakAbsorb.w) <= 1,
+      JSON.stringify(peakAbsorb),
+    );
+    await page.locator('.pht .sf-tbl-th', { hasText: 'Model' }).click({ button: 'right' });
+    await delay(200);
+    await page.locator('.pht .sf-tbl-chk').filter({ hasText: 'Note' }).locator('input').click();
+    await delay(200);
+    const peakRestored = await page.evaluate(() => {
+      const scroller = document.querySelector('.pht .sf-tbl-scroll');
+      const head = document.querySelector('.pht .sf-tbl-head');
+      const tracks = getComputedStyle(head).gridTemplateColumns.split(' ').map(parseFloat);
+      return Math.abs(tracks.reduce((a, b) => a + b, 0) - scroller.clientWidth) <= 1;
+    });
+    report('restoring Note keeps the tab grid exactly filled', peakRestored);
+    await page.mouse.click(700, 10);
+    await delay(150);
     const afterClear = await rowsText();
     report('clearing the filter restores the rows', afterClear.length === 2, `rows=${afterClear.length}`);
 

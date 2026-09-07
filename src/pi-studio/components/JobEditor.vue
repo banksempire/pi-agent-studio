@@ -19,18 +19,20 @@ const busy = ref(false);
 const initialized = ref(false);
 const sessionFilter = ref('');
 
-type SchedMode = 'once' | 'minutes' | 'hourly' | 'daily' | 'weekly' | 'monthly' | 'advanced';
+type SchedKind = 'once' | 'periodic' | 'advanced';
 type BuilderPattern = PeriodicPatternState['pattern'];
-const MODE_OPTIONS: Array<{ id: SchedMode; title: string; hint: string }> = [
-  { id: 'once', title: 'Once', hint: 'run a single time' },
-  { id: 'minutes', title: 'Minutes', hint: 'every N minutes, all day' },
-  { id: 'hourly', title: 'Hourly', hint: 'once every hour, at a set minute' },
-  { id: 'daily', title: 'Daily', hint: 'once a day, at a set time' },
-  { id: 'weekly', title: 'Weekly', hint: 'on chosen weekdays, at a set time' },
-  { id: 'monthly', title: 'Monthly', hint: 'on a day of the month, at a set time' },
-  { id: 'advanced', title: 'Advanced', hint: 'raw cron expression, or scheduler-picked off-peak runs' },
+const SCHED_KIND_PILL = [
+  { value: 'once', label: 'Once', title: 'run a single time' },
+  { value: 'periodic', label: 'Periodic', title: 'on a repeating cadence' },
+  { value: 'advanced', label: 'Advanced', title: 'raw cron expression, or scheduler-picked off-peak runs' },
 ];
-const MODE_PILL = MODE_OPTIONS.map((m) => ({ value: m.id, label: m.title, title: m.hint }));
+const PERIODIC_PILL = [
+  { value: 'minutes', label: 'Minutes', title: 'every N minutes, all day' },
+  { value: 'hourly', label: 'Hourly', title: 'once every hour, at a set minute' },
+  { value: 'daily', label: 'Daily', title: 'once a day, at a set time' },
+  { value: 'weekly', label: 'Weekly', title: 'on chosen weekdays, at a set time' },
+  { value: 'monthly', label: 'Monthly', title: 'on a day of the month, at a set time' },
+];
 const ADVANCED_KIND_PILL = [
   { value: 'cron', label: 'cron', title: 'Fire at the times this expression matches' },
   {
@@ -54,7 +56,11 @@ const HOURLY_MINUTE_OPTIONS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
 const TARGET_OPTIONS: Array<{ mode: 'file' | 'new' | 'reuse'; title: string; desc: string }> = [
   { mode: 'file', title: 'Existing session', desc: 'Deliver into a session you pick' },
   { mode: 'new', title: 'Fresh per run', desc: 'A brand-new session for every run' },
-  { mode: 'reuse', title: 'One per cwd', desc: 'This job keeps one persistent session per working directory' },
+  {
+    mode: 'reuse',
+    title: 'One per cwd',
+    desc: 'This job keeps one persistent session per working directory',
+  },
 ];
 
 const form = reactive({
@@ -70,7 +76,8 @@ const form = reactive({
   missedPolicy: 'coalesce' as 'coalesce' | 'skip',
 });
 
-const mode = ref<SchedMode>('once');
+const schedKind = ref<SchedKind>('once');
+const pattern = ref<BuilderPattern>('daily');
 const advancedKind = ref<'cron' | 'offpeak'>('cron');
 const modelCatalog = ref<ModelCatalogView | null>(null);
 const modelError = ref('');
@@ -115,13 +122,13 @@ function toLocalInput(ms: number): string {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
-function setMode(m: SchedMode) {
-  if (m === mode.value) return;
-  if (m === 'advanced' && mode.value !== 'once') {
-    const expr = patternToCron({ ...periodic, pattern: mode.value as BuilderPattern });
+function setKind(k: SchedKind) {
+  if (k === schedKind.value) return;
+  if (k === 'advanced' && schedKind.value === 'periodic') {
+    const expr = patternToCron({ ...periodic, pattern: pattern.value });
     if (expr) form.cron = expr;
   }
-  mode.value = m;
+  schedKind.value = k;
 }
 
 function initForm(j: JobInfo | null) {
@@ -138,18 +145,19 @@ function initForm(j: JobInfo | null) {
     form.missedPolicy = j.missedPolicy;
     advancedKind.value = 'cron';
     if (j.scheduleType === 'once') {
-      mode.value = 'once';
+      schedKind.value = 'once';
     } else if (j.scheduleType === 'nonpeak') {
-      mode.value = 'advanced';
+      schedKind.value = 'advanced';
       advancedKind.value = 'offpeak';
     } else {
       const p = cronToPattern(j.cron ?? '');
       if (p) {
         const { pattern: _pattern, ...fields } = p;
         Object.assign(periodic, fields);
-        mode.value = p.pattern;
+        pattern.value = p.pattern;
+        schedKind.value = 'periodic';
       } else {
-        mode.value = 'advanced';
+        schedKind.value = 'advanced';
       }
     }
   } else {
@@ -164,7 +172,8 @@ function initForm(j: JobInfo | null) {
     form.thinkLevel = '';
     form.missedPolicy = 'coalesce';
     advancedKind.value = 'cron';
-    mode.value = 'once';
+    pattern.value = 'daily';
+    schedKind.value = 'once';
   }
   initialized.value = true;
 }
@@ -255,12 +264,12 @@ const everyPill = computed(() => everyMinutesOptions.value.map((m) => ({ value: 
 const hourlyPill = computed(() => hourlyMinuteOptions.value.map((m) => ({ value: m, label: pad2(m) })));
 
 const currentCron = computed(() => {
-  if (mode.value === 'advanced') return advancedKind.value === 'cron' ? form.cron.trim() : '';
-  if (mode.value === 'once') return '';
-  return patternToCron({ ...periodic, pattern: mode.value as BuilderPattern });
+  if (schedKind.value === 'advanced') return advancedKind.value === 'cron' ? form.cron.trim() : '';
+  if (schedKind.value === 'once') return '';
+  return patternToCron({ ...periodic, pattern: pattern.value });
 });
 
-const offpeak = computed(() => mode.value === 'advanced' && advancedKind.value === 'offpeak');
+const offpeak = computed(() => schedKind.value === 'advanced' && advancedKind.value === 'offpeak');
 
 const modelNote = computed(() => {
   if (form.targetMode === 'new') return 'applied to each run\u2019s fresh session';
@@ -286,10 +295,11 @@ const runAtPast = computed(() => {
 const problems = computed<string[]>(() => {
   const list: string[] = [];
   if (!form.name.trim()) list.push('name');
-  if (mode.value === 'once' && !runAtValid.value) list.push('run-at time');
-  if (mode.value === 'advanced' && advancedKind.value === 'cron' && !cronOk.value)
+  if (schedKind.value === 'once' && !runAtValid.value) list.push('run-at time');
+  if (schedKind.value === 'advanced' && advancedKind.value === 'cron' && !cronOk.value)
     list.push('a valid cron expression');
-  if (mode.value === 'weekly' && periodic.days.length === 0) list.push('at least one weekday');
+  if (schedKind.value === 'periodic' && pattern.value === 'weekly' && periodic.days.length === 0)
+    list.push('at least one weekday');
   if (offpeak.value && !form.model.trim())
     list.push('a model (off-peak waits on that model\u2019s peak windows)');
   if (form.targetMode === 'file' && !form.sessionFile) list.push('target session');
@@ -303,7 +313,7 @@ const saveHint = computed(() => (problems.value.length === 0 ? '' : `missing: ${
 function buildInput() {
   const input: Record<string, unknown> = {
     name: form.name,
-    scheduleType: mode.value === 'once' ? 'once' : offpeak.value ? 'nonpeak' : 'cron',
+    scheduleType: schedKind.value === 'once' ? 'once' : offpeak.value ? 'nonpeak' : 'cron',
     missedPolicy: form.missedPolicy,
     message: form.message,
     targetMode: form.targetMode,
@@ -311,7 +321,7 @@ function buildInput() {
     thinkLevel: form.thinkLevel || null,
     createdBy: 'web',
   };
-  if (mode.value === 'once') {
+  if (schedKind.value === 'once') {
     if (!runAtValid.value) throw new Error('pick a valid run-at time');
     input.runAt = runAtTs.value;
   } else if (currentCron.value) {
@@ -457,12 +467,17 @@ function fmtRel(ms: number | null): string {
             <h3 class="je-section-title">Schedule</h3>
             <PillSelector
               class="je-sched-seg"
-              :options="MODE_PILL"
-              :model-value="mode"
-              @update:model-value="(v) => setMode(v as SchedMode)"
+              :options="SCHED_KIND_PILL"
+              :model-value="schedKind"
+              @update:model-value="(v) => setKind(v as SchedKind)"
             />
 
-            <div v-if="mode === 'once'" class="job-editor-field">
+            <div v-if="schedKind === 'periodic'" class="je-ctrl">
+              <span class="je-ctrl-label">Repeat</span>
+              <PillSelector class="je-periodic-seg" :options="PERIODIC_PILL" v-model="pattern" />
+            </div>
+
+            <div v-if="schedKind === 'once'" class="job-editor-field">
               <label>Run at</label>
               <input
                 v-model="form.runAtLocal"
@@ -474,7 +489,7 @@ function fmtRel(ms: number | null): string {
               <span v-if="runAtPast" class="je-hint je-hint--warn">this time is in the past — it will run immediately</span>
             </div>
 
-            <template v-else-if="mode === 'advanced'">
+            <template v-else-if="schedKind === 'advanced'">
               <div class="je-adv-kind">
                 <PillSelector class="je-adv-seg" :options="ADVANCED_KIND_PILL" v-model="advancedKind" />
               </div>
@@ -502,7 +517,7 @@ function fmtRel(ms: number | null): string {
             </template>
 
             <template v-else>
-              <div v-if="mode === 'minutes'" class="je-ctrl">
+              <div v-if="pattern === 'minutes'" class="je-ctrl">
                 <span class="je-ctrl-label">Run every</span>
                 <div class="je-ctrl-inline">
                   <PillSelector
@@ -515,7 +530,7 @@ function fmtRel(ms: number | null): string {
                 </div>
               </div>
 
-              <div v-else-if="mode === 'hourly'" class="je-ctrl">
+              <div v-else-if="pattern === 'hourly'" class="je-ctrl">
                 <span class="je-ctrl-label">At minute past the hour</span>
                 <PillSelector
                   class="je-atmin-seg"
@@ -526,14 +541,14 @@ function fmtRel(ms: number | null): string {
               </div>
 
               <template v-else>
-                <div v-if="mode === 'weekly'" class="je-ctrl">
+                <div v-if="pattern === 'weekly'" class="je-ctrl">
                   <span class="je-ctrl-label">On days</span>
                   <MultiSelectGroup :options="DOW_OPTIONS" :model-value="periodic.days" @update:model-value="setDays" />
                   <span v-if="periodic.days.length === 0" class="je-hint je-hint--warn">pick at least one day</span>
                 </div>
 
                 <div class="je-ctrl je-ctrl-row">
-                  <template v-if="mode === 'monthly'">
+                  <template v-if="pattern === 'monthly'">
                     <span class="je-ctrl-label">On day</span>
                     <select v-model.number="periodic.monthDay" class="job-editor-input je-select je-time">
                       <option v-for="d in 31" :key="d" :value="d">{{ d }}</option>
@@ -548,14 +563,14 @@ function fmtRel(ms: number | null): string {
                     <option v-for="m in 60" :key="m" :value="m - 1">{{ pad2(m - 1) }}</option>
                   </select>
                 </div>
-                <span v-if="mode === 'monthly' && periodic.monthDay > 28" class="je-hint">
+                <span v-if="pattern === 'monthly' && periodic.monthDay > 28" class="je-hint">
                   months without day {{ periodic.monthDay }} skip that run
                 </span>
               </template>
             </template>
 
             <div
-              v-if="mode !== 'once' && currentCron !== ''"
+              v-if="schedKind !== 'once' && currentCron !== ''"
               class="je-cron-preview"
               :class="{ 'je-cron-preview--bad': !cronOk }"
             >
@@ -579,7 +594,7 @@ function fmtRel(ms: number | null): string {
               <span v-else class="je-cron-error">{{ cronErrorText }}</span>
             </div>
 
-            <div v-if="mode !== 'once'" class="job-editor-field">
+            <div v-if="schedKind !== 'once'" class="job-editor-field">
               <label>If a run was missed while the backend was down</label>
               <PillSelector :options="MISSED_POLICY_PILL" v-model="form.missedPolicy" />
             </div>

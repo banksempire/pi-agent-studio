@@ -21,12 +21,6 @@ function onAction(e: FrameworkAction) {
     case 'new-chat':
       store.newChat();
       break;
-    case 'close-chat':
-      if (store.activeChatId) store.closeChatView(store.activeChatId);
-      break;
-    case 'stop-chat':
-      if (store.activeChatId) store.stopSession(store.activeChatId);
-      break;
     case 'open-model-catalog':
       store.openModelCatalog();
       break;

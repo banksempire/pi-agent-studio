@@ -41,19 +41,6 @@
           "label": "Refresh Catalog",
           "accelerator": "Ctrl+Alt+R",
           "action": "refresh-model-catalog"
-        },
-        {
-          "separator": true
-        },
-        {
-          "id": "close-chat",
-          "label": "Close Chat Window",
-          "action": "close-chat"
-        },
-        {
-          "id": "stop-chat",
-          "label": "Stop Chat",
-          "action": "stop-chat"
         }
       ]
     },

@@ -61,7 +61,7 @@ const modelChoices = computed<PeakHourModelChoice[]>(() => {
 const catalogModelKeys = computed(() => new Set(modelChoices.value.map((c) => c.key)));
 
 const columns: TableColumn[] = [
-  { key: 'enabled', label: 'On', width: 46, mobile: 'lead' },
+  { key: 'enabled', label: 'On', fixedWidth: 46, mobile: 'lead' },
   { key: 'key', label: 'Model', sortable: true, filter: true, mobile: 'title' },
   { key: 'window', label: 'Window', sortable: true, mobile: 'sub' },
   { key: 'weekdays', label: 'Weekdays', filter: true },

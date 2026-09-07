@@ -297,6 +297,19 @@ function writeSessionFile(name) {
     await page.waitForSelector('.job-editor', { timeout: 20000 });
     report('job editor opens in a workspace window', true);
 
+    const sectionOrder = await page.evaluate(() =>
+      [...document.querySelectorAll('.job-editor-body > .je-section')].map((sec) => {
+        const h = sec.querySelector('.je-section-title');
+        const l = sec.querySelector('label');
+        return (h?.firstChild?.textContent ?? h?.textContent ?? l?.textContent ?? '').trim().split(/\s+/)[0];
+      }),
+    );
+    report(
+      'sections run Name, Schedule, Model, Session, Message top to bottom',
+      JSON.stringify(sectionOrder) === JSON.stringify(['Job', 'Schedule', 'Model', 'Session', 'Message']),
+      JSON.stringify(sectionOrder),
+    );
+
     const modeBtn = (t) => page.locator('.je-sched-seg .sf-pill-item', { hasText: t });
 
     const onceDefaults = await page.evaluate(() => {
@@ -844,7 +857,7 @@ function writeSessionFile(name) {
       boxHint: await page.evaluate(() =>
         [...document.querySelectorAll('.je-hint')]
           .map((h) => h.textContent ?? '')
-          .some((t) => t.includes('pick the model under Agent')),
+          .some((t) => t.includes('pick the model in the Model section')),
       ),
     };
     report(

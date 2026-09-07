@@ -490,7 +490,7 @@ function fmtRel(ms: number | null): string {
                 <span class="je-hint">{{
                   form.model
                     ? `runs at the first moment ${modelButtonText} is outside its peak windows — no fixed time, the scheduler decides`
-                    : 'pick the model under Agent → Model override below — peak windows are configured per model'
+                    : 'pick the model in the Model section below — peak windows are configured per model'
                 }}</span>
               </div>
             </template>
@@ -580,7 +580,44 @@ function fmtRel(ms: number | null): string {
           </section>
 
           <section class="je-section">
-            <h3 class="je-section-title">Target</h3>
+            <h3 class="je-section-title">Model <span class="je-section-note">applies to newly created sessions</span></h3>
+            <div class="job-editor-field">
+              <label>Model override</label>
+              <div class="je-model-row">
+                <Menu
+                  :items="modelMenuItems"
+                  :open="modelMenuOpen"
+                  title="Change Model"
+                  @update:open="(v) => (modelMenuOpen = v)"
+                  @select="onModelSelect"
+                >
+                  <template #trigger="{ toggle }">
+                    <button
+                      class="je-model-btn"
+                      type="button"
+                      :disabled="!modelCatalog"
+                      :title="modelError || 'Pick the model and thinking level for sessions this job creates'"
+                      @click="toggle"
+                    >
+                      <span class="je-model-btn-text">{{
+                        modelCatalog ? modelButtonText : modelError ? 'model list unavailable' : 'loading models…'
+                      }}</span>
+                    </button>
+                  </template>
+                </Menu>
+                <button
+                  v-if="form.model"
+                  class="je-btn je-model-clear"
+                  title="Back to session default"
+                  @click="clearModel"
+                >✕</button>
+              </div>
+              <span v-if="modelError" class="je-hint je-hint--warn">{{ modelError }}</span>
+            </div>
+          </section>
+
+          <section class="je-section">
+            <h3 class="je-section-title">Session</h3>
             <div class="je-cards">
               <button
                 v-for="opt in TARGET_OPTIONS"
@@ -625,42 +662,6 @@ function fmtRel(ms: number | null): string {
             </div>
           </section>
 
-          <section class="je-section">
-            <h3 class="je-section-title">Agent <span class="je-section-note">applies to newly created sessions</span></h3>
-            <div class="job-editor-field">
-              <label>Model override</label>
-              <div class="je-model-row">
-                <Menu
-                  :items="modelMenuItems"
-                  :open="modelMenuOpen"
-                  title="Change Model"
-                  @update:open="(v) => (modelMenuOpen = v)"
-                  @select="onModelSelect"
-                >
-                  <template #trigger="{ toggle }">
-                    <button
-                      class="je-model-btn"
-                      type="button"
-                      :disabled="!modelCatalog"
-                      :title="modelError || 'Pick the model and thinking level for sessions this job creates'"
-                      @click="toggle"
-                    >
-                      <span class="je-model-btn-text">{{
-                        modelCatalog ? modelButtonText : modelError ? 'model list unavailable' : 'loading models…'
-                      }}</span>
-                    </button>
-                  </template>
-                </Menu>
-                <button
-                  v-if="form.model"
-                  class="je-btn je-model-clear"
-                  title="Back to session default"
-                  @click="clearModel"
-                >✕</button>
-              </div>
-              <span v-if="modelError" class="je-hint je-hint--warn">{{ modelError }}</span>
-            </div>
-          </section>
         </div>
       </div>
 

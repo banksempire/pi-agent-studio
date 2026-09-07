@@ -64,7 +64,7 @@ const columns: TableColumn[] = [
   { key: 'enabled', label: 'On', width: 46, mobile: 'lead' },
   { key: 'key', label: 'Model', sortable: true, filter: true, mobile: 'title' },
   { key: 'window', label: 'Window', sortable: true, mobile: 'sub' },
-  { key: 'weekdays', label: 'Weekdays', width: 100, filter: true },
+  { key: 'weekdays', label: 'Weekdays', filter: true },
   { key: 'note', label: 'Note', filter: true },
 ];
 

@@ -781,6 +781,15 @@ function writeSessionFile(name) {
       hourlyOptions.length === 12 && hourlyOptions[0] === '00' && hourlyOptions[11] === '55',
       JSON.stringify(hourlyOptions),
     );
+    const hourlySegBox = await page.evaluate(() => {
+      const r = document.querySelector('.je-atmin-seg')?.getBoundingClientRect();
+      return { w: Math.round(r?.width ?? 0), h: Math.round(r?.height ?? 0) };
+    });
+    report(
+      'hourly minute selector fills the row instead of collapsing',
+      hourlySegBox.w > 240 && hourlySegBox.h >= 30,
+      JSON.stringify(hourlySegBox),
+    );
     await page.locator('.je-atmin-seg .sf-pill-item', { hasText: '15' }).click();
     await delay(150);
     cronRef = await page.locator('.je-cron-ref code').textContent();
@@ -921,6 +930,19 @@ function writeSessionFile(name) {
         advDefaults.cronInputVisible &&
         !advDefaults.offpeakBox,
       JSON.stringify(advDefaults),
+    );
+
+    const missedSegBox = await page.evaluate(() => {
+      const seg = [...document.querySelectorAll('.sf-pill')].find((p) =>
+        [...p.querySelectorAll('.sf-pill-item')].some((b) => b.textContent === 'run once'),
+      );
+      const r = seg?.getBoundingClientRect();
+      return { w: Math.round(r?.width ?? 0), h: Math.round(r?.height ?? 0) };
+    });
+    report(
+      'missed-policy selector renders at full width',
+      missedSegBox.w > 120 && missedSegBox.h >= 30,
+      JSON.stringify(missedSegBox),
     );
 
     await page.locator('.je-adv-seg .sf-pill-item', { hasText: 'off peak' }).click();

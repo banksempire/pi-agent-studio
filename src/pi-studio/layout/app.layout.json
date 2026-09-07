@@ -96,6 +96,19 @@
             "label": "Chat",
             "subSections": [
               {
+                "id": "pinned",
+                "label": "Pinned",
+                "height": "variable",
+                "minHeight": 60,
+                "components": [
+                  {
+                    "type": "component",
+                    "key": "chat-history",
+                    "props": { "pinned": true }
+                  }
+                ]
+              },
+              {
                 "id": "history",
                 "label": "Chat History",
                 "height": "variable",

@@ -7,10 +7,25 @@ import { computed, inject, nextTick, ref } from 'vue';
 import { type ChatSession, endExternalDrag, startSessionDrag, timeAgo, useChatStore } from '../store/chat';
 import SessionStatusDot from './SessionStatusDot.vue';
 
+const props = defineProps<{ pinned?: boolean }>();
+
 const store = useChatStore();
 const dismissMobilePanel = inject<(() => void) | null>(kMobilePanelDismiss, null);
 
-const sessions = computed(() => [...store.filteredSessions].sort((a, b) => b.lastActivity - a.lastActivity));
+const sessions = computed(() =>
+  [...store.filteredSessions]
+    .filter((s) => store.isPinned(s.id) === !!props.pinned)
+    .sort((a, b) => b.lastActivity - a.lastActivity),
+);
+
+const emptyMessage = computed(() => {
+  if (store.filteredSessions.length === 0) {
+    return store.selectedDirs.size > 0
+      ? 'No chats in this directory.'
+      : 'No chats yet — press Ctrl+N or click New Chat above to start one.';
+  }
+  return props.pinned ? 'No pinned chats — right-click one below to pin it.' : 'All chats are pinned.';
+});
 
 function open(s: ChatSession) {
   store.openChat(s.id);
@@ -22,8 +37,12 @@ function preview(s: ChatSession): string {
   return t.length > 56 ? `${t.slice(0, 56)}…` : t;
 }
 
-function menuItems(_s: ChatSession): SingleMenuOption[] {
+function menuItems(s: ChatSession): SingleMenuOption[] {
+  const pinItem: SingleMenuOption = store.isPinned(s.id)
+    ? { id: 'unpin', label: 'Unpin', icon: 'unpin' }
+    : { id: 'pin', label: 'Pin', icon: 'pin' };
   return [
+    pinItem,
     { id: 'rename', label: 'Rename', icon: '✎' },
     { id: 'delete', label: 'Delete', icon: '🗑', danger: true },
   ];
@@ -52,19 +71,15 @@ async function confirmDialog() {
 }
 
 function onMenuSelect(s: ChatSession, item: SingleMenuOption) {
-  if (item.id === 'rename') openRename(s);
+  if (item.id === 'pin' || item.id === 'unpin') store.togglePinned(s.id);
+  else if (item.id === 'rename') openRename(s);
   else if (item.id === 'delete') void store.deleteSession(s.id);
 }
 </script>
 
 <template>
   <div class="chat-list">
-    <div v-if="store.selectedDirs.size > 0 && sessions.length === 0" class="chat-list-empty">
-      No chats in this directory.
-    </div>
-    <div v-else-if="sessions.length === 0" class="chat-list-empty">
-      No chats yet — press Ctrl+N or click New Chat above to start one.
-    </div>
+    <div v-if="sessions.length === 0" class="chat-list-empty">{{ emptyMessage }}</div>
     <SingleMenu
       :items="sessions"
       :options="menuItems"

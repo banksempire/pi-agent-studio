@@ -64,6 +64,7 @@ const columns: TableColumn[] = [
   { key: 'enabled', label: 'On', width: 46, mobile: 'lead' },
   { key: 'key', label: 'Model', sortable: true, filter: true, mobile: 'title' },
   { key: 'window', label: 'Window', sortable: true, mobile: 'sub' },
+  { key: 'weekdays', label: 'Weekdays', width: 100, filter: true },
   { key: 'note', label: 'Note', filter: true },
 ];
 
@@ -74,18 +75,13 @@ const displayRows = computed(() =>
       id: e.id,
       key: e.key,
       enabled: e.enabled,
-      window: windowText(e),
+      window: windowLabel(e.start, e.end, e.utcOffset),
+      weekdays: weekdaysLabel(e.weekdays),
       note: e.note ?? '',
       wraps: e.wrapsMidnightUtc,
       entry: e,
     })),
 );
-
-function windowText(e: PeakHourEntry): string {
-  const days = weekdaysLabel(e.weekdays);
-  const base = windowLabel(e.start, e.end, e.utcOffset);
-  return days && days !== 'daily' ? `${base} · ${days}` : base;
-}
 
 function rowClass(row: Record<string, unknown>): Record<string, boolean> {
   return {
@@ -200,6 +196,9 @@ async function remove(row: Record<string, unknown>) {
             class="pht-muted pht-window-text"
             :title="row.wraps ? `${row.window} · crosses midnight UTC` : String(row.window)"
           >{{ row.window }}</span>
+        </template>
+        <template #cell-weekdays="{ row }">
+          <span class="pht-muted" :title="row.weekdays ? String(row.weekdays) : undefined">{{ row.weekdays }}</span>
         </template>
         <template #cell-note="{ row }">
           <span class="pht-muted" :title="row.note ? String(row.note) : undefined">{{ row.note }}</span>

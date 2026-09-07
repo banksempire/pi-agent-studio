@@ -19,22 +19,6 @@
           "separator": true
         },
         {
-          "id": "close-chat",
-          "label": "Close Chat Window",
-          "action": "close-chat"
-        },
-        {
-          "id": "stop-chat",
-          "label": "Stop Chat",
-          "action": "stop-chat"
-        }
-      ]
-    },
-    {
-      "id": "model",
-      "label": "Model",
-      "items": [
-        {
           "id": "model-catalog",
           "label": "Model Catalog…",
           "action": "open-model-catalog"
@@ -45,6 +29,11 @@
           "action": "open-peak-hours"
         },
         {
+          "id": "open-jobs",
+          "label": "Scheduled Jobs…",
+          "action": "open-jobs"
+        },
+        {
           "separator": true
         },
         {
@@ -52,17 +41,19 @@
           "label": "Refresh Catalog",
           "accelerator": "Ctrl+Alt+R",
           "action": "refresh-model-catalog"
-        }
-      ]
-    },
-    {
-      "id": "scheduler",
-      "label": "Scheduler",
-      "items": [
+        },
         {
-          "id": "open-jobs",
-          "label": "Scheduled Jobs…",
-          "action": "open-jobs"
+          "separator": true
+        },
+        {
+          "id": "close-chat",
+          "label": "Close Chat Window",
+          "action": "close-chat"
+        },
+        {
+          "id": "stop-chat",
+          "label": "Stop Chat",
+          "action": "stop-chat"
         }
       ]
     },

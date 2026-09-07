@@ -353,12 +353,12 @@ function writeSessionFile(name) {
 
     const noDialog = () => page.evaluate(() => !document.querySelector('.sf-dialog'));
 
-    await page.locator('.sf-menu-item', { hasText: 'Scheduler' }).click();
+    await page.locator('.sf-menu-item', { hasText: 'Chat' }).click();
     await page.locator('.sf-menu-row', { hasText: 'Scheduled Jobs…' }).waitFor({ timeout: 5000 });
     await page.locator('.sf-menu-row', { hasText: 'Scheduled Jobs…' }).click();
     await page.locator('.sf-tab-label', { hasText: 'Scheduler' }).waitFor({ timeout: 10000 });
     await page.locator('.jobs-tab').waitFor({ timeout: 10000 });
-    report('the Scheduler menu item opens a Scheduler workspace tab', true);
+    report('the Chat menu Scheduled Jobs… item opens a Scheduler workspace tab', true);
 
     const rows = page.locator('.jobs-tab .sf-tbl-row');
     await rows.first().waitFor({ timeout: 10000 });

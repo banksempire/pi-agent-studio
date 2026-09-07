@@ -538,7 +538,7 @@ async function unitChecks({ report }) {
     await page.locator(itemSel).first().click({ force: true });
     await page.waitForSelector('.chat-msg', { timeout: 20000 });
 
-    await page.locator('.sf-menu-item', { hasText: 'Model' }).click();
+    await page.locator('.sf-menu-item', { hasText: 'Chat' }).click();
     await page.locator('.sf-menu-row', { hasText: 'Model Catalog…' }).waitFor({ timeout: 5000 });
     await page.locator('.sf-menu-row', { hasText: 'Model Catalog…' }).click();
     await page.waitForSelector('.model-catalog', { timeout: 10000 });
@@ -1029,7 +1029,7 @@ async function unitChecks({ report }) {
 
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.sf-docker', { timeout: 60000 });
-    await page.locator('.sf-menu-item', { hasText: 'Model' }).click();
+    await page.locator('.sf-menu-item', { hasText: 'Chat' }).click();
     await page.locator('.sf-menu-row', { hasText: 'Model Catalog…' }).waitFor({ timeout: 5000 });
     await page.locator('.sf-menu-row', { hasText: 'Model Catalog…' }).click();
     await page.waitForSelector('.model-catalog-row', { timeout: 10000 });
@@ -1044,7 +1044,7 @@ async function unitChecks({ report }) {
       `rows=${scopedRows} ghostRows=${scopedGhostRows}`,
     );
 
-    await page.locator('.sf-menu-item', { hasText: 'Model' }).click();
+    await page.locator('.sf-menu-item', { hasText: 'Chat' }).click();
     await page.locator('.sf-menu-row', { hasText: 'Peak Hours…' }).waitFor({ timeout: 5000 });
     await page.locator('.sf-menu-row', { hasText: 'Peak Hours…' }).click();
     await page.waitForSelector('.pht', { timeout: 10000 });
@@ -1330,12 +1330,13 @@ async function unitChecks({ report }) {
     await delay(250);
     const wnAfter = await dragState();
     report(
-      'dragging the Window/Note border left shrinks Window (a variable now) and feeds Note',
+      'dragging the Window/Weekdays border left shrinks Window and feeds Weekdays — the nearest variable across the border',
       Math.abs(wnAfter.edges.On - wnBefore.edges.On) <= 1 &&
         Math.abs(wnAfter.widths.Model - wnBefore.widths.Model) <= 1 &&
         wnBefore.widths.Window - wnAfter.widths.Window >= 55 &&
         wnBefore.widths.Window - wnAfter.widths.Window <= 62 &&
-        Math.abs(wnAfter.widths.Note - wnBefore.widths.Note - 60) <= 3 &&
+        Math.abs(wnAfter.widths.Weekdays - wnBefore.widths.Weekdays - 60) <= 3 &&
+        Math.abs(wnAfter.widths.Note - wnBefore.widths.Note) <= 1 &&
         Math.abs(wnAfter.edges.Note - wnBefore.edges.Note) <= 2,
       JSON.stringify({ before: wnBefore, after: wnAfter }),
     );
@@ -1596,7 +1597,7 @@ async function unitChecks({ report }) {
     }
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.sf-docker', { timeout: 60000 });
-    await page.locator('.sf-menu-item', { hasText: 'Model' }).click();
+    await page.locator('.sf-menu-item', { hasText: 'Chat' }).click();
     await page.locator('.sf-menu-row', { hasText: 'Peak Hours…' }).waitFor({ timeout: 5000 });
     await page.locator('.sf-menu-row', { hasText: 'Peak Hours…' }).click();
     await page.waitForSelector('.pht', { timeout: 10000 });

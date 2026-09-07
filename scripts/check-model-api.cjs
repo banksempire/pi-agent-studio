@@ -362,7 +362,7 @@ const STUB_MODELS = [
       });
     });
 
-    await page.locator('.sf-menu-item', { hasText: 'Model' }).click();
+    await page.locator('.sf-menu-item', { hasText: 'Chat' }).click();
     await page.locator('.sf-menu-row', { hasText: 'Refresh Catalog' }).waitFor({ timeout: 5000 });
     await page.locator('.sf-menu-row', { hasText: 'Refresh Catalog' }).click();
     await delay(800);
@@ -372,7 +372,7 @@ const STUB_MODELS = [
       `refreshCalls=${refreshCalls}`,
     );
 
-    await page.locator('.sf-menu-item', { hasText: 'Model' }).click();
+    await page.locator('.sf-menu-item', { hasText: 'Chat' }).click();
     await page.locator('.sf-menu-row', { hasText: 'Model Catalog…' }).waitFor({ timeout: 5000 });
     await page.locator('.sf-menu-row', { hasText: 'Model Catalog…' }).click();
     await page.waitForSelector('.model-catalog', { timeout: 10000 });
@@ -750,10 +750,10 @@ const STUB_MODELS = [
 
     await page.locator('.sf-tab-label', { hasText: 'model-api-check' }).first().click({ force: true });
     await delay(400);
-    await page.locator('.sf-menu-item', { hasText: 'Model' }).click();
+    await page.locator('.sf-menu-item', { hasText: 'Chat' }).click();
     await delay(300);
     const changeModelRows = await page.locator('.sf-menu-row', { hasText: 'Change Model' }).count();
-    report('the Model menu no longer offers Change Model…', changeModelRows === 0, `rows=${changeModelRows}`);
+    report('the Chat menu no longer offers Change Model…', changeModelRows === 0, `rows=${changeModelRows}`);
     await page.keyboard.press('Escape');
     await delay(300);
     await page.locator('.model-menu-btn').click();

@@ -948,6 +948,10 @@ function fmtRel(ms: number | null): string {
   font-size: 16px;
   opacity: 0.6;
 }
+.je-every-seg {
+  flex: 1 1 auto;
+  min-width: 0;
+}
 .je-time {
   width: auto;
   min-width: 84px;

@@ -750,6 +750,17 @@ function writeSessionFile(name) {
         JSON.stringify(['1', '2', '3', '4', '5', '10', '15', '20', '30', '40', '50']),
       JSON.stringify(minutesOptions),
     );
+    const everySegBox = await page.evaluate(() => {
+      const seg = document.querySelector('.je-every-seg');
+      const r = seg?.getBoundingClientRect();
+      const pills = seg ? [...seg.querySelectorAll('.sf-pill-item')].map((b) => Math.round(b.getBoundingClientRect().top)) : [];
+      return { w: Math.round(r?.width ?? 0), h: Math.round(r?.height ?? 0), pillRows: new Set(pills).size };
+    });
+    report(
+      'minutes interval selector fills the row instead of collapsing',
+      everySegBox.w > 240 && everySegBox.h >= 30 && everySegBox.pillRows === 1,
+      JSON.stringify(everySegBox),
+    );
     await page.locator('.je-every-seg .sf-pill-item', { hasText: '30' }).click();
     await delay(150);
     cronRef = await page.locator('.je-cron-ref code').textContent();

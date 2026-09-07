@@ -241,7 +241,8 @@ export class Scheduler {
     if (target.mode === 'file') {
       file = target.sessionFile;
     } else if (target.mode === 'reuse') {
-      file = (await this.#registry.reuseOrCreateSession(target.cwd)).file;
+      const prev = this.#journal?.lastRunSessionFor(job.id, target.cwd);
+      file = prev ?? (await this.#registry.reuseOrCreateSession(target.cwd)).file;
     } else {
       file = (await this.#registry.createSession(target.cwd)).file;
     }

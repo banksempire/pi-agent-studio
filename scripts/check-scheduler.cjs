@@ -80,7 +80,7 @@ async function cronTests() {
   report('daily chain all midnight local (1y)', t !== null);
 }
 
-function fakeRegistry({ failPrompt = false } = {}) {
+function fakeRegistry({ failPrompt = false, journal = null, tag = 'sess' } = {}) {
   const prompts = [];
   const prefs = [];
   let seq = 0;
@@ -88,15 +88,17 @@ function fakeRegistry({ failPrompt = false } = {}) {
   return {
     prompts,
     prefs,
-    createSession(_cwd) {
-      const file = path.join(TMP, `sess-${++seq}.jsonl`);
+    createSession(cwd) {
+      const file = path.join(TMP, `${tag}-${++seq}.jsonl`);
       fs.writeFileSync(file, '');
+      journal?.ensureSession(file, cwd);
       return { file };
     },
     reuseOrCreateSession(cwd) {
       if (!byCwd.has(cwd)) {
-        const file = path.join(TMP, `reuse-${byCwd.size + 1}.jsonl`);
+        const file = path.join(TMP, `reuse-${tag}-${byCwd.size + 1}.jsonl`);
         fs.writeFileSync(file, '');
+        journal?.ensureSession(file, cwd);
         byCwd.set(cwd, file);
       }
       return { file: byCwd.get(cwd) };
@@ -764,6 +766,74 @@ async function concurrencyTests() {
   }
 }
 
+async function reuseTests() {
+  console.log('reuse target');
+
+  {
+    const jr = makeJournal('reuse-keeps');
+    const job = jr.insertJob(
+      cronJob('* * * * *', { payload: { message: 'hello job', target: { mode: 'reuse', cwd: TMP } } }),
+    );
+    const s1 = new Scheduler({ journal: jr, registry: fakeRegistry({ journal: jr, tag: 'r1' }) });
+    await s1.runNow(job.id);
+    s1.stop();
+    const s2 = new Scheduler({ journal: jr, registry: fakeRegistry({ journal: jr, tag: 'r2' }) });
+    await s2.runNow(job.id);
+    s2.stop();
+    const runs = jr.listRuns(job.id);
+    report(
+      'reuse target: runs keep one session per job+cwd, across a registry restart',
+      runs.length === 2 &&
+        runs[0].sessionFile !== '' &&
+        runs[0].sessionFile === runs[1].sessionFile,
+      JSON.stringify(runs.map((r) => r.sessionFile)),
+    );
+  }
+
+  {
+    const jr = makeJournal('reuse-fresh');
+    const reg = fakeRegistry({ journal: jr });
+    const s = new Scheduler({ journal: jr, registry: reg });
+    const job = jr.insertJob(cronJob('* * * * *'));
+    await s.runNow(job.id);
+    await s.runNow(job.id);
+    const runs = jr.listRuns(job.id);
+    report(
+      'fresh-per-run target: each run gets its own session',
+      runs.length === 2 && runs[0].sessionFile !== runs[1].sessionFile,
+      JSON.stringify(runs.map((r) => r.sessionFile)),
+    );
+    s.stop();
+  }
+
+  {
+    const jr = makeJournal('reuse-lookup');
+    jr.ensureSession('/elsewhere/sess.jsonl', '/elsewhere');
+    const job = jr.insertJob(cronJob('* * * * *'));
+    const stale = jr.insertRun(job.id);
+    jr.markRunStarted(stale, {
+      startedAt: Date.now(),
+      sessionFile: '/elsewhere/sess.jsonl',
+      queueItemId: null,
+    });
+    jr.finishRun(stale, 'ok', '');
+    report(
+      'reuse lookup: returns the last run session when the cwd matches',
+      jr.lastRunSessionFor(job.id, TMP) === null,
+      `got ${jr.lastRunSessionFor(job.id, TMP)}`,
+    );
+    jr.ensureSession(TMP, TMP);
+    const ok = jr.insertRun(job.id);
+    jr.markRunStarted(ok, { startedAt: Date.now(), sessionFile: TMP, queueItemId: null });
+    report(
+      'reuse lookup: cwd mismatch is rejected, match is returned, no runs is null',
+      jr.lastRunSessionFor(job.id, TMP) === TMP &&
+        jr.lastRunSessionFor(job.id, '/other') === null &&
+        jr.lastRunSessionFor('nope', TMP) === null,
+    );
+  }
+}
+
 async function restartTests() {
   console.log('restart durability');
 
@@ -819,6 +889,7 @@ async function main() {
   await schedulerTests();
   await nonPeakTests();
   await concurrencyTests();
+  await reuseTests();
   await restartTests();
 
   try {

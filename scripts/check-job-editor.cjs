@@ -311,6 +311,7 @@ function writeSessionFile(name) {
     );
 
     const modeBtn = (t) => page.locator('.je-sched-seg .sf-pill-item', { hasText: t });
+    const periodicBtn = (t) => page.locator('.je-periodic-seg .sf-pill-item', { hasText: t });
 
     const onceDefaults = await page.evaluate(() => {
       const seg = document.querySelector('.je-sched-seg');
@@ -318,15 +319,17 @@ function writeSessionFile(name) {
       return {
         modes: seg?.querySelectorAll('.sf-pill-item').length ?? 0,
         selected: on?.textContent ?? '',
+        periodicSeg: !!document.querySelector('.je-periodic-seg'),
         previewVisible: !!document.querySelector('.je-cron-preview'),
         rawInputVisible: !!document.querySelector('input[placeholder="0 9 * * *"]'),
         runAtVisible: !!document.querySelector('input[type="datetime-local"]'),
       };
     });
     report(
-      'schedule selector opens on Once with all seven modes and no cron UI',
-      onceDefaults.modes === 7 &&
+      'schedule selector opens on Once with Once/Periodic/Advanced and no periodic picker',
+      onceDefaults.modes === 3 &&
         onceDefaults.selected === 'Once' &&
+        !onceDefaults.periodicSeg &&
         !onceDefaults.previewVisible &&
         !onceDefaults.rawInputVisible &&
         onceDefaults.runAtVisible,
@@ -488,11 +491,27 @@ function writeSessionFile(name) {
       );
     await delay(150);
 
-    await modeBtn('Daily').click();
+    await modeBtn('Periodic').click();
     await delay(150);
+    const periodicDefaults = await page.evaluate(() => {
+      const seg = document.querySelector('.je-periodic-seg');
+      return {
+        visible: !!seg,
+        options: seg ? [...seg.querySelectorAll('.sf-pill-item')].map((b) => b.textContent) : [],
+        selected: seg?.querySelector('.sf-pill-item--on')?.textContent ?? '',
+      };
+    });
+    report(
+      'Periodic reveals the cadence selector with the five builders, Daily first',
+      periodicDefaults.visible &&
+        JSON.stringify(periodicDefaults.options) ===
+          JSON.stringify(['Minutes', 'Hourly', 'Daily', 'Weekly', 'Monthly']) &&
+        periodicDefaults.selected === 'Daily',
+      JSON.stringify(periodicDefaults),
+    );
     const builderHasAdvSeg = await page.locator('.je-adv-seg').count();
     report(
-      'builder modes carry no schedule sub-type — off-peak lives under Advanced only',
+      'periodic cadences carry no schedule sub-type — off-peak lives under Advanced only',
       builderHasAdvSeg === 0,
       `advSeg=${builderHasAdvSeg}`,
     );
@@ -504,7 +523,7 @@ function writeSessionFile(name) {
       `${cronRef} | ${wdDesc}`,
     );
 
-    await modeBtn('Weekly').click();
+    await periodicBtn('Weekly').click();
     await delay(150);
     cronRef = await page.locator('.je-cron-ref code').textContent();
     wdDesc = await page.locator('.je-cron-desc').textContent();
@@ -720,7 +739,7 @@ function writeSessionFile(name) {
       );
     }
 
-    await modeBtn('Minutes').click();
+    await periodicBtn('Minutes').click();
     await delay(150);
     const minutesOptions = await page.evaluate(() =>
       [...document.querySelectorAll('.je-every-seg .sf-pill-item')].map((b) => b.textContent),
@@ -741,7 +760,7 @@ function writeSessionFile(name) {
       `${cronRef} | ${wdDesc}`,
     );
 
-    await modeBtn('Hourly').click();
+    await periodicBtn('Hourly').click();
     await delay(150);
     const hourlyOptions = await page.evaluate(() =>
       [...document.querySelectorAll('.je-atmin-seg .sf-pill-item')].map((b) => b.textContent),
@@ -971,18 +990,18 @@ function writeSessionFile(name) {
     report(
       'unrepresentable cron opens in Advanced with the expression preserved',
       customState.created &&
-        customState.patterns === 7 &&
+        customState.patterns === 3 &&
         customState.selected === 'Advanced' &&
         customState.ref === '15 9,17 * * mon-fri',
       JSON.stringify(customState),
     );
 
-    await modeBtn('Daily').click();
+    await modeBtn('Periodic').click();
     await delay(150);
     const rebuilt = await page.evaluate(() => {
       const editors = [...document.querySelectorAll('.job-editor')];
       const ed = editors.find((e) => e.textContent?.includes('custom-cron job')) ?? null;
-      const seg = ed?.querySelector('.je-sched-seg');
+      const seg = ed?.querySelector('.je-periodic-seg');
       return {
         patterns: seg?.querySelectorAll('.sf-pill-item').length ?? 0,
         selected: seg?.querySelector('.sf-pill-item--on')?.textContent ?? '',
@@ -990,8 +1009,8 @@ function writeSessionFile(name) {
       };
     });
     report(
-      'picking a builder mode from Advanced rewrites the expression',
-      rebuilt.patterns === 7 && rebuilt.selected === 'Daily' && /^0 \d{1,2} \* \* \*$/.test(rebuilt.ref),
+      'switching Advanced to Periodic rebuilds the expression from the cadence picker',
+      rebuilt.patterns === 5 && rebuilt.selected === 'Daily' && /^0 \d{1,2} \* \* \*$/.test(rebuilt.ref),
       JSON.stringify(rebuilt),
     );
 
@@ -1056,19 +1075,37 @@ function writeSessionFile(name) {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(600);
     const segSingleLine = await page.evaluate(() => {
-      const seg = document.querySelector('.je-sched-seg');
+      const measure = (sel) => {
+        const seg = document.querySelector(sel);
+        if (!seg) return null;
+        const pills = [...seg.querySelectorAll('.sf-pill-item')];
+        const rows = new Set(pills.map((b) => Math.round(b.getBoundingClientRect().top)));
+        return { pills: pills.length, rows: rows.size };
+      };
+      return { kind: measure('.je-sched-seg'), cadence: measure('.je-periodic-seg') };
+    });
+    report(
+      'mobile: schedule selector stays on a single line',
+      segSingleLine?.kind?.pills === 3 && segSingleLine.kind.rows === 1,
+      JSON.stringify(segSingleLine),
+    );
+
+    await modeBtn('Periodic').click();
+    await delay(400);
+    const cadenceSingleLine = await page.evaluate(() => {
+      const seg = document.querySelector('.je-periodic-seg');
       if (!seg) return null;
       const pills = [...seg.querySelectorAll('.sf-pill-item')];
       const rows = new Set(pills.map((b) => Math.round(b.getBoundingClientRect().top)));
       return { pills: pills.length, rows: rows.size };
     });
     report(
-      'mobile: schedule selector stays on a single line',
-      segSingleLine?.pills === 7 && segSingleLine.rows === 1,
-      JSON.stringify(segSingleLine),
+      'mobile: cadence selector stays on a single line',
+      cadenceSingleLine?.pills === 5 && cadenceSingleLine.rows === 1,
+      JSON.stringify(cadenceSingleLine),
     );
 
-    await page.locator('.je-sched-seg .sf-pill-item', { hasText: 'Weekly' }).click();
+    await periodicBtn('Weekly').click();
     await delay(400);
     const msSingleLine = await page.evaluate(() => {
       const track = document.querySelector('.sf-ms-track');

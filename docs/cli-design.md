@@ -470,8 +470,9 @@ SIGKILL restarts identically — same covenant as the prompt queue.
 - **Boot sweep**: run rows stuck `queued` from a previous boot are marked
   `interrupted` (their prompt may still have been replayed by journal
   recovery via the queue item).
-- **Surfaces**: `studio jobs …` CLI (humans + agents), the Scheduler docker
-  app in the web UI (JobsPanel: CRUD, enable toggle, run-now, history), SSE
+- **Surfaces**: `studio jobs …` CLI (humans + agents), the Scheduler workspace
+  tab in the web UI (JobsTab table: enable toggle, run-now, history, edit;
+  JobDialog popup for CRUD), SSE
   `job_event` for live updates, REST under `/api/jobs`.
 
 Check suite: `npm run check:scheduler` (cron math, fire/advance, missed

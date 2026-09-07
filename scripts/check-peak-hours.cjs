@@ -823,6 +823,72 @@ async function unitChecks({ report }) {
     const mobileDayBtns = await page.locator('.aph-days .sf-ms-item').count();
     report('mobile dialog shows the weekday selector', mobileDayBtns === 7, `buttons=${mobileDayBtns}`);
 
+    const noPan = await page.evaluate(() => {
+      const card = document.querySelector('.sf-dialog');
+      const body = card.querySelector('.sf-dialog-body');
+      const wide = document.createElement('div');
+      wide.style.width = '9999px';
+      wide.style.height = '2px';
+      body.appendChild(wide);
+      const r = body.getBoundingClientRect();
+      const track = card.querySelector('.sf-ms-track');
+      let trackAfter = null;
+      let trackSw = null;
+      let trackCw = null;
+      let trackOx = null;
+      if (track) {
+        trackOx = getComputedStyle(track).overflowX;
+        trackSw = track.scrollWidth;
+        trackCw = track.clientWidth;
+        track.scrollLeft = 40;
+        trackAfter = track.scrollLeft;
+        track.scrollLeft = 0;
+      }
+      const fonts = [
+        ...new Set(
+          [...card.querySelectorAll('input, select, textarea')].map((i) => getComputedStyle(i).fontSize),
+        ),
+      ];
+      return {
+        ox: getComputedStyle(body).overflowX,
+        overflowReal: body.scrollWidth > body.clientWidth + 1,
+        wheelX: Math.round(r.left + Math.min(140, r.width / 2)),
+        wheelY: Math.round(r.top + r.height / 2),
+        trackSw,
+        trackCw,
+        trackOx,
+        trackAfter,
+        fonts,
+      };
+    });
+    await page.mouse.move(noPan.wheelX, noPan.wheelY);
+    await page.mouse.wheel(180, 0);
+    await delay(200);
+    const bodyAfter = await page.evaluate(() => {
+      const body = document.querySelector('.sf-dialog-body');
+      const v = body.scrollLeft;
+      body.querySelector('div[style*="9999px"]')?.remove();
+      return v;
+    });
+    report(
+      'mobile: the peak form dialog never pans horizontally, even with overflowing content',
+      noPan.ox === 'hidden' && noPan.overflowReal && bodyAfter === 0,
+      JSON.stringify({ ...noPan, bodyAfter }),
+    );
+    report(
+      'mobile: the weekday track shrinks in place — no hidden swipe scroller',
+      noPan.trackAfter === 0 &&
+        noPan.trackOx === 'hidden' &&
+        noPan.trackSw !== null &&
+        noPan.trackSw <= noPan.trackCw + 1,
+      JSON.stringify(noPan),
+    );
+    report(
+      'mobile: every peak-form input renders at 16px so iOS never zooms on focus',
+      noPan.fonts.length === 1 && noPan.fonts[0] === '16px',
+      JSON.stringify(noPan),
+    );
+
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.waitForSelector('.sf-root:not(.sf-root--mobile)', { timeout: 5000 });
     await delay(400);

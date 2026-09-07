@@ -933,7 +933,7 @@ function fmtRel(ms: number | null): string {
 
 .je-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
   gap: 8px;
 }
 .je-card {

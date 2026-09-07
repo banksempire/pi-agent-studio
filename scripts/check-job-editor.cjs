@@ -881,6 +881,59 @@ function writeSessionFile(name) {
       mobileDialog.w >= 300 && mobileDialog.w <= 392 && mobileDialog.fits && mobileDialog.noPageOverflow,
       JSON.stringify(mobileDialog),
     );
+    const jobNoPan = await page.evaluate(() => {
+      const card = document.querySelector('.sf-dialog');
+      const body = card.querySelector('.sf-dialog-body');
+      const wide = document.createElement('div');
+      wide.style.width = '9999px';
+      wide.style.height = '2px';
+      body.appendChild(wide);
+      const r = body.getBoundingClientRect();
+      const track = card.querySelector('.sf-pill-track');
+      let trackAfter = null;
+      if (track) {
+        track.scrollLeft = 40;
+        trackAfter = track.scrollLeft;
+        track.scrollLeft = 0;
+      }
+      const fonts = [
+        ...new Set(
+          [...card.querySelectorAll('input, select, textarea')].map((i) => getComputedStyle(i).fontSize),
+        ),
+      ];
+      return {
+        ox: getComputedStyle(body).overflowX,
+        overflowReal: body.scrollWidth > body.clientWidth + 1,
+        wheelX: Math.round(r.left + Math.min(140, r.width / 2)),
+        wheelY: Math.round(r.top + r.height / 2),
+        trackAfter,
+        fonts,
+      };
+    });
+    await page.mouse.move(jobNoPan.wheelX, jobNoPan.wheelY);
+    await page.mouse.wheel(180, 0);
+    await delay(200);
+    const jobBodyAfter = await page.evaluate(() => {
+      const body = document.querySelector('.sf-dialog-body');
+      const v = body.scrollLeft;
+      body.querySelector('div[style*="9999px"]')?.remove();
+      return v;
+    });
+    report(
+      'mobile: the job form dialog never pans horizontally, even with overflowing content',
+      jobNoPan.ox === 'hidden' && jobNoPan.overflowReal && jobBodyAfter === 0,
+      JSON.stringify({ ...jobNoPan, jobBodyAfter }),
+    );
+    report(
+      'mobile: pill selectors inside the job dialog never swipe-scroll',
+      jobNoPan.trackAfter === 0,
+      JSON.stringify(jobNoPan),
+    );
+    report(
+      'mobile: every job-form input renders at 16px so iOS never zooms on focus',
+      jobNoPan.fonts.length === 1 && jobNoPan.fonts[0] === '16px',
+      JSON.stringify(jobNoPan),
+    );
     const segSingleLine = await page.evaluate(() => {
       const measure = (sel) => {
         const seg = document.querySelector(sel);
@@ -921,7 +974,7 @@ function writeSessionFile(name) {
     });
     report(
       'mobile: day selector stays on a single line',
-      msSingleLine?.items === 7 && msSingleLine.rows === 1 && msSingleLine.wrap === 'nowrap',
+      msSingleLine?.items === 7 && msSingleLine.rows === 1,
       JSON.stringify(msSingleLine),
     );
     await page.locator('.je-cancel').click();

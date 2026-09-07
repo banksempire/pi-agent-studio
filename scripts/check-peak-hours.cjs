@@ -1070,12 +1070,32 @@ async function unitChecks({ report }) {
       `row=${miniRowText}`,
     );
 
-    const proRowText =
-      (await page.locator('.pht .sf-tbl-row', { hasText: 'stub/stub-pro' }).textContent()) ?? '';
+    const proRow = page.locator('.pht .sf-tbl-row', { hasText: 'stub/stub-pro' });
+    const proWinText = (await proRow.locator('[data-col="window"]').textContent({ timeout: 5000 })) ?? '';
+    const proDaysText = (await proRow.locator('[data-col="weekdays"]').textContent({ timeout: 5000 })) ?? '';
+    const miniDaysText =
+      (await page
+        .locator('.pht .sf-tbl-row', { hasText: 'stub/stub-mini' })
+        .locator('[data-col="weekdays"]')
+        .textContent({ timeout: 5000 })) ?? '';
+    const ghostDaysText =
+      (await page
+        .locator('.pht .sf-tbl-row', { hasText: 'ghost/ghost-model' })
+        .locator('[data-col="weekdays"]')
+        .textContent({ timeout: 5000 })) ?? '';
+    const peakHeadText = (await page.locator('.pht .sf-tbl-head').textContent()) ?? '';
     report(
-      'tab window text carries the weekday label only when not daily',
-      proRowText.includes('Mon–Fri') && !miniRowText.includes('·') && !ghostRow.includes('·'),
-      `pro=${proRowText} mini=${miniRowText} ghost=${ghostRow}`,
+      'a Weekdays column carries the day label; Window shows the time window only',
+      peakHeadText.includes('Weekdays') &&
+        proWinText.includes('(UTC) 07:00-15:00') &&
+        !proWinText.includes('Mon–Fri') &&
+        !proWinText.includes('·') &&
+        !miniRowText.includes('·') &&
+        !ghostRow.includes('·') &&
+        proDaysText.includes('Mon–Fri') &&
+        miniDaysText.includes('daily') &&
+        ghostDaysText.includes('daily'),
+      `win=${proWinText} days=${proDaysText} mini=${miniDaysText} ghost=${ghostDaysText}`,
     );
 
     await page.locator('.pht .sf-tbl-row', { hasText: 'stub/stub-pro' }).click();
@@ -1237,8 +1257,12 @@ async function unitChecks({ report }) {
         .map((th) => (th.textContent || '').replace(/[^A-Za-z ]/g, '').trim());
     });
     report(
-      'handles render only where variables sit on both sides: after Model and after Window, never after On',
-      handleCount.length === 2 && handleCount.includes('Model') && handleCount.includes('Window'),
+      'handles render only where variables sit on both sides: after Model, Window and Weekdays, never after On',
+      handleCount.length === 3 &&
+        handleCount.includes('Model') &&
+        handleCount.includes('Window') &&
+        handleCount.includes('Weekdays') &&
+        !handleCount.includes('On'),
       JSON.stringify(handleCount),
     );
 

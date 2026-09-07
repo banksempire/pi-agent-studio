@@ -543,6 +543,13 @@ async function unitChecks({ report }) {
     await page.locator('.sf-menu-row', { hasText: 'Model Catalog…' }).click();
     await page.waitForSelector('.model-catalog', { timeout: 10000 });
     await page.locator('.model-catalog-row', { hasText: 'Stub Pro' }).first().waitFor({ timeout: 5000 });
+    const catalogIconSvg = await page.evaluate(() => {
+      const tab = [...document.querySelectorAll('.sf-tab')].find((t) =>
+        t.textContent?.includes('Model Catalog'),
+      );
+      return !!tab?.querySelector('.sf-icon--svg');
+    });
+    report('the Model Catalog tab renders an SVG icon (no emoji fallback)', catalogIconSvg);
 
     const peakLabel = await page.locator('.sf-subsection-label', { hasText: 'Peak Hours' }).count();
     report(
@@ -1051,6 +1058,13 @@ async function unitChecks({ report }) {
     await page.locator('.pht .sf-tbl-row').first().waitFor({ timeout: 10000 });
     const peakTab = await page.locator('.sf-tab-label', { hasText: 'Peak Hours' }).count();
     report('the Model menu Peak Hours… item opens a workspace tab', peakTab === 1, `tab=${peakTab}`);
+    const peakIconSvg = await page.evaluate(() => {
+      const tab = [...document.querySelectorAll('.sf-tab')].find((t) =>
+        t.textContent?.includes('Peak Hours'),
+      );
+      return !!tab?.querySelector('.sf-icon--svg');
+    });
+    report('the Peak Hours tab renders an SVG icon (no emoji fallback)', peakIconSvg);
 
     await page.locator('.pht .sf-tbl-row', { hasText: 'ghost/ghost-model' }).waitFor({ timeout: 5000 });
     const ghostRow = await page.locator('.pht .sf-tbl-row', { hasText: 'ghost/ghost-model' }).textContent();

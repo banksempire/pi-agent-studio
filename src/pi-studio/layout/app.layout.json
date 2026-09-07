@@ -56,6 +56,17 @@
       ]
     },
     {
+      "id": "scheduler",
+      "label": "Scheduler",
+      "items": [
+        {
+          "id": "open-jobs",
+          "label": "Scheduled Jobs…",
+          "action": "open-jobs"
+        }
+      ]
+    },
+    {
       "id": "view",
       "label": "View",
       "items": [
@@ -191,48 +202,6 @@
                   {
                     "type": "component",
                     "key": "workspace-panel"
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "id": "jobs",
-      "displayName": "Scheduler",
-      "icon": "⏰",
-      "panel": {
-        "title": "Scheduler",
-        "sections": [
-          {
-            "id": "jobs",
-            "label": "Jobs",
-            "subSections": [
-              {
-                "id": "jobs",
-                "label": "Scheduled Jobs",
-                "height": "variable",
-                "minHeight": 120,
-                "components": [
-                  {
-                    "type": "component",
-                    "key": "jobs-panel"
-                  }
-                ],
-                "utilities": [
-                  {
-                    "id": "jobs-sort",
-                    "icon": "sort",
-                    "tooltip": "Sort jobs"
-                  },
-                  {
-                    "id": "new-job",
-                    "icon": "➕",
-                    "label": "New Job",
-                    "tooltip": "New Job",
-                    "closeMobilePanel": true
                   }
                 ]
               }

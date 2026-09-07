@@ -161,27 +161,12 @@ export interface JobInput {
   createdBy?: string;
 }
 
-export type JobsSort = 'created' | 'next' | 'name';
-
-const JOB_EDITOR_CONTENT = 'job-editor';
-const JOB_TAB_PREFIX = 'job-editor:';
+const JOBS_TAB_ID = 'jobs';
+const JOBS_CONTENT = 'jobs';
 const MODEL_CATALOG_TAB_ID = 'model-catalog';
 const MODEL_CATALOG_CONTENT = 'model-catalog';
 const PEAK_HOURS_TAB_ID = 'peak-hours';
 const PEAK_HOURS_CONTENT = 'peak-hours';
-
-function jobEditorTabId(jobId: string | null): string {
-  return JOB_TAB_PREFIX + (jobId ?? 'new');
-}
-
-function loadJobsSort(): JobsSort {
-  const v = readUiValue('app.chat.jobsSort');
-  return v === 'next' || v === 'name' ? v : 'created';
-}
-
-function saveJobsSort() {
-  writeUiValue('app.chat.jobsSort', state.jobsSort);
-}
 
 interface ChatState {
   sessions: ChatSession[];
@@ -207,7 +192,6 @@ interface ChatState {
   };
   jobs: JobInfo[];
   jobsLoaded: boolean;
-  jobsSort: JobsSort;
   scheduler: SchedulerInfo | null;
 }
 
@@ -505,7 +489,6 @@ const state = reactive<ChatState>({
   sessions: [],
   jobs: [],
   jobsLoaded: false,
-  jobsSort: loadJobsSort(),
   scheduler: null,
   activeChatId: null,
   openViewTabIds: new Set(),
@@ -529,7 +512,6 @@ const state = reactive<ChatState>({
 watch(uiEpoch, () => {
   state.stateFilter = loadStateFilter();
   state.prefs = loadPrefs();
-  state.jobsSort = loadJobsSort();
   state.pinnedIds = loadPinned();
 });
 
@@ -806,18 +788,7 @@ async function refreshJobs() {
     state.jobs = jobs;
     state.scheduler = scheduler;
     state.jobsLoaded = true;
-    syncJobEditorTabLabels();
   } catch {}
-}
-
-function syncJobEditorTabLabels() {
-  if (!ws) return;
-  for (const [tabId, tab] of Object.entries(ws.tabDefs)) {
-    if (!tabId.startsWith(JOB_TAB_PREFIX)) continue;
-    const jobId = tabId.slice(JOB_TAB_PREFIX.length);
-    const label = jobId === 'new' ? 'New Job' : state.jobs.find((j) => j.id === jobId)?.name;
-    if (label && tab.label !== label) tab.label = label;
-  }
 }
 
 function scheduleJobsRefresh() {
@@ -863,28 +834,21 @@ async function fetchJobRuns(id: string): Promise<JobRunInfo[]> {
   return runs;
 }
 
-function setJobsSort(sort: JobsSort) {
-  state.jobsSort = sort;
-  saveJobsSort();
-}
-
-function openJobEditor(jobId: string | null) {
+function openJobs() {
   if (!ws) return;
-  const tabId = jobEditorTabId(jobId);
-  const existing = ws.findTabGlobal(tabId);
+  const existing = ws.findTabGlobal(JOBS_TAB_ID);
   if (existing) {
-    ws.ops.activateTab(existing.id, tabId);
+    ws.ops.activateTab(existing.id, JOBS_TAB_ID);
     return;
   }
   const tileId = targetTileId();
   if (!tileId) return;
-  const job = jobId ? state.jobs.find((j) => j.id === jobId) : null;
   ws.ops.openTab(tileId, {
-    id: tabId,
-    label: job ? job.name : 'New Job',
+    id: JOBS_TAB_ID,
+    label: 'Scheduler',
     icon: '⏰',
-    content: JOB_EDITOR_CONTENT,
-    props: { jobId },
+    content: JOBS_CONTENT,
+    props: {},
   });
 }
 
@@ -922,16 +886,6 @@ function openPeakHours() {
     content: PEAK_HOURS_CONTENT,
     props: {},
   });
-}
-
-function closeJobEditor(jobId: string | null) {
-  ws?.ops.closeTab(jobEditorTabId(jobId));
-}
-
-function renameJobEditorTab(jobId: string, name: string) {
-  if (!ws) return;
-  const tab = ws.tabDefs[jobEditorTabId(jobId)];
-  if (tab) tab.label = name;
 }
 
 async function fetchList() {
@@ -2400,16 +2354,13 @@ export const store = {
   deleteJob,
   runJobNow,
   fetchJobRuns,
-  setJobsSort,
-  openJobEditor,
+  openJobs,
   openModelCatalog,
   openPeakHours,
   refreshPeakHours,
   requestModelDetail,
   applyModelDefault,
   syncModelDefault,
-  closeJobEditor,
-  renameJobEditorTab,
   compactSession,
   stopSession,
   closeChatView,
@@ -2428,9 +2379,6 @@ export const store = {
   },
   get jobsLoaded() {
     return state.jobsLoaded;
-  },
-  get jobsSort() {
-    return state.jobsSort;
   },
   get modelDetail() {
     return modelDetail.value;

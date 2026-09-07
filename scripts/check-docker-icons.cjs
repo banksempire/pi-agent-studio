@@ -167,7 +167,7 @@ function waitHttp(url, label, tries = 40) {
           };
         }),
       );
-      report(`${tag} docker renders all 3 apps`, apps.length === 3, apps.map((a) => a.title).join(','));
+      report(`${tag} docker renders all 2 apps`, apps.length === 2, apps.map((a) => a.title).join(','));
       report(
         `${tag} every docker app icon renders an SVG (no emoji-text fallback)`,
         apps.length > 0 && apps.every((a) => a.svg && !a.textFallback),
@@ -181,37 +181,10 @@ function waitHttp(url, label, tries = 40) {
       );
 
       if (vp.name === 'desktop') {
-        const clock = await page.evaluate(() => {
-          const app = document.querySelector('.sf-docker-app[title="Scheduler"]');
-          const paths = app ? Array.from(app.querySelectorAll('svg.sf-icon--svg path')) : [];
-          if (!paths.length) return null;
-          let minX = 24;
-          let minY = 24;
-          let maxX = 0;
-          let maxY = 0;
-          for (const p of paths) {
-            const b = p.getBBox();
-            minX = Math.min(minX, b.x);
-            minY = Math.min(minY, b.y);
-            maxX = Math.max(maxX, b.x + b.width);
-            maxY = Math.max(maxY, b.y + b.height);
-          }
-          return {
-            w: +(maxX - minX).toFixed(1),
-            h: +(maxY - minY).toFixed(1),
-            cx: +((minX + maxX) / 2).toFixed(1),
-            cy: +((minY + maxY) / 2).toFixed(1),
-          };
-        });
         report(
-          'scheduler clock icon fills the viewBox (>= 18x18 units)',
-          !!clock && clock.w >= 18 && clock.h >= 18,
-          clock ? `${clock.w}x${clock.h}` : 'svg paths not found',
-        );
-        report(
-          'scheduler clock icon roughly centered in the viewBox',
-          !!clock && Math.abs(clock.cx - 12) <= 1.5 && Math.abs(clock.cy - 12) <= 1.5,
-          clock ? `center (${clock.cx}, ${clock.cy})` : 'svg paths not found',
+          'the scheduler app is gone from the docker',
+          !apps.some((a) => a.title === 'Scheduler'),
+          apps.map((a) => a.title).join(','),
         );
       }
 

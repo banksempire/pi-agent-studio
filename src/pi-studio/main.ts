@@ -9,8 +9,7 @@ import ChatHistory from './components/ChatHistory.vue';
 import ChatSessions from './components/ChatSessions.vue';
 import ChatWindow from './components/ChatWindow.vue';
 import DirectoryTree from './components/DirectoryTree.vue';
-import JobEditor from './components/JobEditor.vue';
-import JobsPanel from './components/JobsPanel.vue';
+import JobsTab from './components/JobsTab.vue';
 import ModelCatalog from './components/ModelCatalog.vue';
 import ModelDetail from './components/ModelDetail.vue';
 import ModelPicker from './components/ModelPicker.vue';
@@ -24,7 +23,7 @@ import StudioShell from './shell/StudioShell.vue';
 
 registerTabContent('welcome', WelcomeContent);
 registerTabContent('chat-window', ChatWindow);
-registerTabContent('job-editor', JobEditor);
+registerTabContent('jobs', JobsTab);
 registerTabContent('model-catalog', ModelCatalog);
 registerTabContent('peak-hours', PeakHoursTab);
 
@@ -38,7 +37,6 @@ registerPanelComponent('model-detail', ModelDetail);
 registerPanelComponent('model-preference', ModelPreference);
 registerPanelComponent('peak-hours', PeakHoursPanel);
 registerPanelComponent('prefs', PrefsPanel);
-registerPanelComponent('jobs-panel', JobsPanel);
 
 registerPanelComponent('workspace-panel', WorkspacePanel);
 

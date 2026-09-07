@@ -783,9 +783,7 @@ async function reuseTests() {
     const runs = jr.listRuns(job.id);
     report(
       'reuse target: runs keep one session per job+cwd, across a registry restart',
-      runs.length === 2 &&
-        runs[0].sessionFile !== '' &&
-        runs[0].sessionFile === runs[1].sessionFile,
+      runs.length === 2 && runs[0].sessionFile !== '' && runs[0].sessionFile === runs[1].sessionFile,
       JSON.stringify(runs.map((r) => r.sessionFile)),
     );
   }

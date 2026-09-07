@@ -3,15 +3,9 @@ import Framework, { type FrameworkAction } from '@sf/Framework.vue';
 import { registerUtilityMenu } from '@sf/registry';
 import { layout } from '../layout/loadLayout';
 import { refreshModelCatalog } from '../modelInfo';
-import { type JobsSort, type SessionSyncState, SYNC_STATES, useChatStore } from '../store/chat';
+import { type SessionSyncState, SYNC_STATES, useChatStore } from '../store/chat';
 
 const store = useChatStore();
-
-const JOBS_SORTS: Array<{ id: JobsSort; label: string }> = [
-  { id: 'created', label: 'Create time' },
-  { id: 'next', label: 'Next run time' },
-  { id: 'name', label: 'Name' },
-];
 
 registerUtilityMenu('session-filter', () =>
   SYNC_STATES.map((s) => ({
@@ -19,15 +13,6 @@ registerUtilityMenu('session-filter', () =>
     label: s,
     iconKind: 'check' as const,
     selected: store.stateFilter[s],
-  })),
-);
-
-registerUtilityMenu('jobs-sort', () =>
-  JOBS_SORTS.map((s) => ({
-    id: s.id,
-    label: s.label,
-    iconKind: 'check' as const,
-    selected: store.jobsSort === s.id,
   })),
 );
 
@@ -48,19 +33,14 @@ function onAction(e: FrameworkAction) {
     case 'open-peak-hours':
       store.openPeakHours();
       break;
+    case 'open-jobs':
+      store.openJobs();
+      break;
     case 'refresh-model-catalog':
       void refreshModelCatalog().catch(() => {});
       break;
     case 'session-filter':
       if (typeof e.payload === 'string') store.toggleStateFilter(e.payload as SessionSyncState);
-      break;
-    case 'new-job':
-      store.openJobEditor(null);
-      break;
-    case 'jobs-sort':
-      if (e.payload === 'created' || e.payload === 'next' || e.payload === 'name') {
-        store.setJobsSort(e.payload);
-      }
       break;
   }
 }

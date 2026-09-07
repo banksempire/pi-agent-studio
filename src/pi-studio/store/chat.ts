@@ -185,6 +185,7 @@ interface ChatState {
   selectedDirs: Set<string>;
   tree: DirNode | null;
   treeCollapsed: Set<string>;
+  pinnedIds: Set<string>;
   backend: BackendStatus;
   backendPing: number | null;
   backendLost: boolean;
@@ -206,6 +207,7 @@ interface ChatState {
 const PREFS_KEY = 'sf-chat:prefs';
 const STATE_FILTER_KEY = 'sf-chat:stateFilter';
 const DRAFTS_KEY = 'sf-chat:drafts';
+const PINNED_KEY = 'sf-chat:pinned';
 
 function readPersistedObject(uiKey: string, legacyKey: string): Record<string, unknown> | null {
   const v = readUiValue(uiKey);
@@ -240,6 +242,36 @@ function loadStateFilter(): StateFilter {
 
 function saveStateFilter() {
   writePersistedObject('app.chat.stateFilter', STATE_FILTER_KEY, state.stateFilter);
+}
+
+function loadPinned(): Set<string> {
+  const out = new Set<string>();
+  const j = readPersistedObject('app.chat.pinned', PINNED_KEY);
+  if (j) {
+    for (const [id, v] of Object.entries(j)) {
+      if (id && v === true) out.add(id);
+    }
+  }
+  return out;
+}
+
+function pinnedRecord(): Record<string, boolean> {
+  const rec: Record<string, boolean> = {};
+  for (const id of state.pinnedIds) rec[id] = true;
+  return rec;
+}
+
+function savePinned() {
+  writePersistedObject('app.chat.pinned', PINNED_KEY, pinnedRecord());
+}
+
+function isPinned(sessionId: string): boolean {
+  return state.pinnedIds.has(sessionId);
+}
+
+function togglePinned(sessionId: string) {
+  if (!state.pinnedIds.delete(sessionId)) state.pinnedIds.add(sessionId);
+  savePinned();
 }
 
 const modelDetail = ref<{ model: ModelInfo; isDefault: boolean } | null>(null);
@@ -473,6 +505,7 @@ const state = reactive<ChatState>({
   selectedDirs: new Set(),
   tree: null,
   treeCollapsed: new Set(),
+  pinnedIds: loadPinned(),
   backend: 'connecting',
   backendPing: null,
   backendLost: false,
@@ -489,11 +522,13 @@ watch(uiEpoch, () => {
   state.stateFilter = loadStateFilter();
   state.prefs = loadPrefs();
   state.jobsSort = loadJobsSort();
+  state.pinnedIds = loadPinned();
 });
 
 if (readUiValue('app.chat.stateFilter') === undefined)
   writeUiValue('app.chat.stateFilter', state.stateFilter);
 if (readUiValue('app.chat.prefs') === undefined) writeUiValue('app.chat.prefs', state.prefs);
+if (readUiValue('app.chat.pinned') === undefined) writeUiValue('app.chat.pinned', pinnedRecord());
 
 try {
   localStorage.removeItem('sf-chat:pending');
@@ -2079,6 +2114,7 @@ export async function renameSession(sessionId: string, name: string): Promise<bo
 
 function forgetSessionUi(s: ChatSession) {
   forgetVisit(s.file);
+  if (state.pinnedIds.delete(s.id)) savePinned();
   delete state.drafts[s.id];
   delete windowUi[s.id];
   delete state.sessionErrors[s.id];
@@ -2370,6 +2406,8 @@ export const store = {
   closeChatView,
   renameSession,
   deleteSession,
+  isPinned,
+  togglePinned,
   get prefs() {
     return state.prefs;
   },

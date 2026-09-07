@@ -46,6 +46,7 @@ Run as `npm run studio -- …` from this repo or `node pi-agent-studio/bin/studi
 | chat composer: send/stop/queue buttons, drafts | `check:queue`, `check:send-stop`, `check:drafts` |
 | chat windows, tabs, cross-window behavior | `check:crosswin` |
 | session list, sync, states | `check:sync`, `check:states` |
+| chat pinning (Pinned sub-section, pin/unpin context menus, persistence) | `check:pinned` |
 | streaming + scroll behavior | `check:stream-scroll` |
 | mobile shell | `check:mobile` |
 | SSE robustness | `check:sse` |

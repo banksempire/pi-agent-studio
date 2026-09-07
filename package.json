@@ -23,6 +23,7 @@
     "check:sse": "node scripts/check-sse-flood.cjs",
     "check:states": "node scripts/check-session-states.cjs",
     "check:sync": "node scripts/check-session-sync.cjs",
+    "check:pinned": "node scripts/check-pinned.cjs",
     "check:restart": "node scripts/check-gateway-restart.cjs",
     "check:cli": "node scripts/check-cli.cjs",
     "check:registry": "node scripts/check-registry-drain.cjs",

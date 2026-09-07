@@ -54,7 +54,7 @@ const HOURLY_MINUTE_OPTIONS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
 const TARGET_OPTIONS: Array<{ mode: 'file' | 'new' | 'reuse'; title: string; desc: string }> = [
   { mode: 'file', title: 'Existing session', desc: 'Deliver into a session you pick' },
   { mode: 'new', title: 'Fresh per run', desc: 'A brand-new session for every run' },
-  { mode: 'reuse', title: 'One per cwd', desc: 'One persistent session per working directory' },
+  { mode: 'reuse', title: 'One per cwd', desc: 'This job keeps one persistent session per working directory' },
 ];
 
 const form = reactive({
@@ -262,6 +262,12 @@ const currentCron = computed(() => {
 
 const offpeak = computed(() => mode.value === 'advanced' && advancedKind.value === 'offpeak');
 
+const modelNote = computed(() => {
+  if (form.targetMode === 'new') return 'applied to each run\u2019s fresh session';
+  if (form.targetMode === 'reuse') return 'applied when this job\u2019s per-cwd session is first created';
+  return 'not applied \u2014 an existing session keeps its own model';
+});
+
 const cronOk = computed(() => checkCron(currentCron.value).ok);
 const cronErrorText = computed(() => {
   const r = checkCron(currentCron.value);
@@ -465,7 +471,7 @@ function fmtRel(ms: number | null): string {
                 @click="openPicker"
               />
               <span v-if="runAtValid" class="je-hint">{{ fmtAbs(runAtTs) }} · {{ fmtRel(runAtTs) }}</span>
-              <span v-if="runAtPast" class="je-hint je-hint--warn">this time is in the past</span>
+              <span v-if="runAtPast" class="je-hint je-hint--warn">this time is in the past — it will run immediately</span>
             </div>
 
             <template v-else-if="mode === 'advanced'">
@@ -580,7 +586,7 @@ function fmtRel(ms: number | null): string {
           </section>
 
           <section class="je-section">
-            <h3 class="je-section-title">Model <span class="je-section-note">applies to newly created sessions</span></h3>
+            <h3 class="je-section-title">Model <span class="je-section-note">{{ modelNote }}</span></h3>
             <div class="job-editor-field">
               <label>Model override</label>
               <div class="je-model-row">
@@ -596,7 +602,7 @@ function fmtRel(ms: number | null): string {
                       class="je-model-btn"
                       type="button"
                       :disabled="!modelCatalog"
-                      :title="modelError || 'Pick the model and thinking level for sessions this job creates'"
+                      :title="modelError || modelNote"
                       @click="toggle"
                     >
                       <span class="je-model-btn-text">{{

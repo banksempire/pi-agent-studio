@@ -203,6 +203,10 @@ export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null 
     lastRunByJob: db.prepare(
       'SELECT * FROM job_runs WHERE id = (SELECT MAX(id) FROM job_runs WHERE job_id = ?)',
     ),
+    lastRunSession: db.prepare(
+      "SELECT session_file FROM job_runs WHERE job_id = ? AND session_file <> '' ORDER BY id DESC LIMIT 1",
+    ),
+    sessionCwd: db.prepare('SELECT cwd FROM sessions WHERE file = ?'),
   };
 
   function importSpill() {
@@ -527,6 +531,21 @@ export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null 
         return r ? rowToRun(r) : null;
       } catch (e) {
         warn('lastRun', e);
+        return null;
+      }
+    },
+    lastRunSessionFor(jobId, cwd) {
+      try {
+        const run = stmt.lastRunSession.get(jobId);
+        if (!run?.session_file) return null;
+        const sess = stmt.sessionCwd.get(run.session_file);
+        try {
+          return sess && path.resolve(sess.cwd ?? '') === path.resolve(cwd) ? run.session_file : null;
+        } catch {
+          return null;
+        }
+      } catch (e) {
+        warn('lastRunSessionFor', e);
         return null;
       }
     },

@@ -471,6 +471,23 @@ function writeSessionFile(name) {
       JSON.stringify({ pickerStyle, callsAfterText, callsAfterIcon }),
     );
 
+    await page.locator('input[type="datetime-local"]').fill('2020-01-01T00:00');
+    await delay(150);
+    const pastHint = await page.evaluate(() =>
+      [...document.querySelectorAll('.je-hint--warn')].some((h) =>
+        (h.textContent ?? '').includes('run immediately'),
+      ),
+    );
+    report('a past run-at warns and says the job fires immediately', pastHint);
+    const soon = new Date(Date.now() + 3600_000);
+    const pad = (n) => String(n).padStart(2, '0');
+    await page
+      .locator('input[type="datetime-local"]')
+      .fill(
+        `${soon.getFullYear()}-${pad(soon.getMonth() + 1)}-${pad(soon.getDate())}T${pad(soon.getHours())}:${pad(soon.getMinutes())}`,
+      );
+    await delay(150);
+
     await modeBtn('Daily').click();
     await delay(150);
     const builderHasAdvSeg = await page.locator('.je-adv-seg').count();
@@ -811,6 +828,32 @@ function writeSessionFile(name) {
       'target cards switch modes and reveal the session picker',
       targetState.cards === 3 && targetState.selected === 1 && targetState.sessionSelectVisible,
       JSON.stringify(targetState),
+    );
+
+    const modelNoteFor = () =>
+      page.evaluate(() => {
+        const h = [...document.querySelectorAll('.je-section-title')].find(
+          (t) => t.firstChild?.textContent?.trim() === 'Model',
+        );
+        return h?.querySelector('.je-section-note')?.textContent ?? '';
+      });
+    await page.locator('.je-card', { hasText: 'Fresh per run' }).click();
+    await delay(120);
+    const noteNew = await modelNoteFor();
+    await page.locator('.je-card', { hasText: 'Existing session' }).click();
+    await delay(120);
+    const noteFile = await modelNoteFor();
+    await page.locator('.je-card', { hasText: 'One per cwd' }).click();
+    await delay(120);
+    const noteReuse = await modelNoteFor();
+    await page.locator('.je-card', { hasText: 'Existing session' }).click();
+    await delay(120);
+    report(
+      'model section states exactly when the override applies, per target mode',
+      noteNew.includes('fresh session') &&
+        noteFile.includes('not applied') &&
+        noteReuse.includes('first created'),
+      `${noteNew} | ${noteFile} | ${noteReuse}`,
     );
 
     const saveBtn = page.locator('.job-editor-save');

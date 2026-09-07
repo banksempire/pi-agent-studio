@@ -1360,6 +1360,43 @@ async function unitChecks({ report }) {
     );
     await page.mouse.click(700, 10);
     await delay(150);
+    const panProbe = async (label, squeeze) => {
+      if (squeeze) {
+        await page.evaluate(() => {
+          const s = document.createElement('style');
+          s.id = 'pht-narrow';
+          s.textContent = '.pht .sf-tbl-wrap { max-width: 360px !important; }';
+          document.head.appendChild(s);
+        });
+        await delay(300);
+      }
+      const st = await page.evaluate(() => {
+        const s = document.querySelector('.pht .sf-tbl-scroll');
+        const r = s.getBoundingClientRect();
+        s.scrollTop = 0;
+        return {
+          ox: getComputedStyle(s).overflowX,
+          cw: s.clientWidth,
+          sw: s.scrollWidth,
+          x: Math.round(r.left + Math.min(140, r.width / 2)),
+          y: Math.round(r.top + r.height / 2),
+        };
+      });
+      await page.mouse.move(st.x, st.y);
+      await page.mouse.wheel(180, 0);
+      await delay(150);
+      const x = await page.evaluate(() => document.querySelector('.pht .sf-tbl-scroll').scrollLeft);
+      if (squeeze) await page.evaluate(() => document.getElementById('pht-narrow')?.remove());
+      await delay(200);
+      report(
+        `the peak-hours table never pans horizontally (${label})`,
+        st.ox === 'hidden' && st.cw < st.sw && x === 0,
+        JSON.stringify({ ...st, x }),
+      );
+    };
+    await panProbe('natural width', false);
+    await panProbe('squeezed below the column floors', true);
+
     const afterClear = await rowsText();
     report('clearing the filter restores the rows', afterClear.length === 2, `rows=${afterClear.length}`);
 

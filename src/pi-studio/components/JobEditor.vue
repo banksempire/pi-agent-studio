@@ -490,7 +490,8 @@ function fmtRel(ms: number | null): string {
             </div>
 
             <template v-else-if="schedKind === 'advanced'">
-              <div class="je-adv-kind">
+              <div class="je-ctrl">
+                <span class="je-ctrl-label">Type</span>
                 <PillSelector class="je-adv-seg" :options="ADVANCED_KIND_PILL" v-model="advancedKind" />
               </div>
               <div v-if="advancedKind === 'cron'" class="job-editor-field">
@@ -1015,12 +1016,6 @@ function fmtRel(ms: number | null): string {
   color: var(--sf-danger);
 }
 
-.je-adv-kind {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
-}
 .je-offpeak-box {
   display: flex;
   flex-direction: column;

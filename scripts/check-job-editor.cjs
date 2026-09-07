@@ -891,8 +891,10 @@ function writeSessionFile(name) {
     await delay(150);
     const advDefaults = await page.evaluate(() => {
       const seg = document.querySelector('.je-adv-seg');
+      const label = seg?.closest('.je-ctrl')?.querySelector('.je-ctrl-label')?.textContent ?? '';
       return {
         visible: !!seg,
+        label,
         selected: seg?.querySelector('.sf-pill-item--on')?.textContent ?? '',
         options: seg ? [...seg.querySelectorAll('.sf-pill-item')].map((b) => b.textContent) : [],
         cronInputVisible: !!document.querySelector('input[placeholder="0 9 * * *"]'),
@@ -900,8 +902,9 @@ function writeSessionFile(name) {
       };
     });
     report(
-      'advanced opens with cron and off peak sub-types, cron selected',
+      'advanced opens with a labeled cron/off-peak sub-type, cron selected',
       advDefaults.visible &&
+        advDefaults.label === 'Type' &&
         advDefaults.selected === 'cron' &&
         JSON.stringify(advDefaults.options) === JSON.stringify(['cron', 'off peak']) &&
         advDefaults.cronInputVisible &&

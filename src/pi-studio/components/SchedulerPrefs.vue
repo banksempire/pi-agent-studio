@@ -298,7 +298,7 @@ async function save() {
   color: var(--sf-text);
   font-size: 16px;
   font-family: var(--sf-mono, monospace);
-  text-align: right;
+  text-align: center;
   outline: none;
   appearance: textfield;
   -moz-appearance: textfield;

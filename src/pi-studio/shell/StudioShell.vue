@@ -31,7 +31,7 @@ function onAction(e: FrameworkAction) {
       store.openJobs();
       break;
     case 'edit-job':
-      if (typeof e.payload === 'string') store.openJobEditor(e.payload);
+      if (store.selectedJob) store.openJobEditor(store.selectedJob.id);
       break;
     case 'refresh-model-catalog':
       void refreshModelCatalog().catch(() => {});

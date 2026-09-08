@@ -412,25 +412,10 @@ function writeSessionFile(name) {
       JSON.stringify(jobRuns),
     );
 
-    await page
-      .locator('.jobs-tab .sf-tbl-row', { hasText: 'custom-cron job' })
-      .first()
-      .locator('.sf-tbl-btn[title="Run history"]')
-      .click();
-    await page
-      .locator('.sf-dialog-title', { hasText: 'Run history — custom-cron job' })
-      .waitFor({ timeout: 5000 });
-    await delay(200);
-    const historyRows = await page.locator('.jobs-run').count();
-    const historyErr = await page.locator('.jobs-run-error').first().textContent();
     report(
-      'the history popup lists past runs with status and errors',
-      historyRows === 2 && (historyErr ?? '').includes('provider exploded'),
-      `rows=${historyRows}`,
+      'the run history button is removed from the table actions',
+      (await page.locator('.jobs-tab .sf-tbl-btn[title="Run history"]').count()) === 0,
     );
-    await page.locator('.sf-dialog-close').click();
-    await delay(200);
-    report('the history popup closes', await noDialog());
 
     await page.locator('.jobs-add').click();
     await page.locator('.sf-dialog-title', { hasText: 'New job' }).waitFor({ timeout: 10000 });
@@ -774,20 +759,40 @@ function writeSessionFile(name) {
     report('clicking a row selects it without opening any popup', await noDialog());
     const detailState = await page.evaluate(() => {
       const panel = document.querySelector('.job-detail');
-      const vals = [...(panel?.querySelectorAll('.jd-val') ?? [])].map((el) => el.textContent ?? '');
       return {
-        name: panel?.querySelector('.jd-name')?.textContent ?? '',
+        text: panel?.textContent ?? '',
         rowSelected: !!document.querySelector('.sf-tbl-row.jobs-row--sel'),
-        vals,
       };
     });
     report(
-      'the detail panel shows the selected job with its cron expression',
+      'the SCHEDULER panel Detail subsection shows the selected job via KeyValueList',
       detailState.rowSelected &&
-        detailState.name === 'custom-cron job' &&
-        detailState.vals.some((t) => t.includes('15 9,17 * * mon-fri')),
-      JSON.stringify(detailState),
+        detailState.text.includes('custom-cron job') &&
+        detailState.text.includes('cron 15 9,17 * * mon-fri'),
+      JSON.stringify(detailState).slice(0, 220),
     );
+
+    await page.locator('.jobs-run').first().waitFor({ timeout: 5000 });
+    const historyRows = await page.locator('.jobs-run').count();
+    const historyErr = await page.locator('.jobs-run-error').first().textContent();
+    report(
+      'the History subsection lists the selected job runs with status and errors',
+      historyRows === 2 && (historyErr ?? '').includes('provider exploded'),
+      `rows=${historyRows}`,
+    );
+
+    await page.locator('.sf-panel-tab', { hasText: 'Preference' }).click();
+    await delay(200);
+    const prefsText = await page.locator('.scheduler-prefs').textContent();
+    report(
+      'the Preference section hosts the scheduler config readout',
+      (prefsText ?? '').includes('2 global') &&
+        (prefsText ?? '').includes('per provider') &&
+        (prefsText ?? '').includes('per model'),
+      String(prefsText).slice(0, 160),
+    );
+    await page.locator('.sf-panel-tab', { hasText: 'Detail' }).click();
+    await delay(200);
 
     await page
       .locator('.jobs-tab .sf-tbl-row', { hasText: 'custom-cron job' })
@@ -795,10 +800,11 @@ function writeSessionFile(name) {
       .locator('.jobs-name')
       .click();
     await delay(200);
-    await page.locator('.jd-empty').waitFor({ timeout: 5000 });
+    await page.locator('.job-detail-empty').waitFor({ timeout: 5000 });
     report(
       'clicking the selected row again deselects it back to the empty hint',
-      (await page.locator('.jd-empty').count()) === 1 && (await page.locator('.jd-name').count()) === 0,
+      (await page.locator('.job-detail-empty').count()) === 1 &&
+        (await page.locator('.job-detail').count()) === 0,
     );
     await page
       .locator('.jobs-tab .sf-tbl-row', { hasText: 'custom-cron job' })
@@ -853,7 +859,8 @@ function writeSessionFile(name) {
     await delay(200);
     report(
       'cancel closes the edit popup, the selection and detail panel persist',
-      (await noDialog()) && (await page.locator('.job-detail .jd-name').textContent()) === 'custom-cron job',
+      (await noDialog()) &&
+        ((await page.locator('.job-detail').textContent()) ?? '').includes('custom-cron job'),
     );
 
     await page
@@ -864,9 +871,10 @@ function writeSessionFile(name) {
     await delay(300);
     report(
       'selecting another row retargets the panel with no popup',
-      (await noDialog()) && (await page.locator('.job-detail .jd-name').textContent()) === 'off-peak job',
+      (await noDialog()) &&
+        ((await page.locator('.job-detail').textContent()) ?? '').includes('off-peak job'),
     );
-    await page.locator('.job-detail .jd-edit').click();
+    await page.locator('.sf-subsection-util[title="Edit job"]').click();
     await page
       .locator('.sf-dialog-title', { hasText: 'Edit job — off-peak job' })
       .waitFor({ timeout: 10000 });
@@ -910,10 +918,11 @@ function writeSessionFile(name) {
       jobDeletes.length === 1 && jobDeletes[0] === 'deadbeef',
       JSON.stringify(jobDeletes),
     );
-    await page.locator('.jd-empty').waitFor({ timeout: 5000 });
+    await page.locator('.job-detail-empty').waitFor({ timeout: 5000 });
     report(
       'deleting the selected job clears the selection back to the empty hint',
-      (await page.locator('.jd-empty').count()) === 1 && (await page.locator('.jd-name').count()) === 0,
+      (await page.locator('.job-detail-empty').count()) === 1 &&
+        (await page.locator('.job-detail').count()) === 0,
     );
 
     await page.reload({ waitUntil: 'domcontentloaded' });

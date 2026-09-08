@@ -191,21 +191,58 @@
   ],
   "rightPanels": {
     "jobs": {
-      "title": "Job Detail",
+      "title": "SCHEDULER",
       "sections": [
         {
-          "id": "job-detail",
-          "label": "Job Detail",
+          "id": "detail",
+          "label": "Detail",
           "subSections": [
             {
               "id": "job-detail",
-              "label": "Job Detail",
+              "label": "Detail",
               "height": "variable",
               "minHeight": 80,
+              "utilities": [
+                {
+                  "id": "edit-job",
+                  "icon": "✎",
+                  "label": "Edit",
+                  "tooltip": "Edit job"
+                }
+              ],
               "components": [
                 {
                   "type": "component",
                   "key": "job-detail"
+                }
+              ]
+            },
+            {
+              "id": "job-history",
+              "label": "History",
+              "height": "variable",
+              "minHeight": 60,
+              "components": [
+                {
+                  "type": "component",
+                  "key": "job-history"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "preference",
+          "label": "Preference",
+          "subSections": [
+            {
+              "id": "scheduler-prefs",
+              "label": "Preference",
+              "height": "fixed",
+              "components": [
+                {
+                  "type": "component",
+                  "key": "scheduler-prefs"
                 }
               ]
             }

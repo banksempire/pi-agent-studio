@@ -1,23 +1,16 @@
 <script setup lang="ts">
-import Dialog from '@sf/components/Dialog.vue';
 import SvgIcon from '@sf/components/SvgIcon.vue';
 import Table from '@sf/components/Table.vue';
 import type { TableColumn } from '@sf/types/table';
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { fmtRelative, fmtTime, scheduleText, targetText } from '../jobText';
-import type { JobInfo, JobRunInfo } from '../store/chat';
+import type { JobInfo } from '../store/chat';
 import { useChatStore } from '../store/chat';
 import JobDialog from './JobDialog.vue';
 
 const store = useChatStore();
 
 const actionError = ref('');
-const history = reactive<{ open: boolean; job: JobInfo | null; runs: JobRunInfo[]; busy: boolean }>({
-  open: false,
-  job: null,
-  runs: [],
-  busy: false,
-});
 
 const columns: TableColumn[] = [
   { key: 'enabled', label: 'On', fixedWidth: 46, mobile: 'lead' },
@@ -120,31 +113,9 @@ async function remove(row: Record<string, unknown>) {
     await store.deleteJob(job.id);
     if (store.selectedJob?.id === job.id) store.selectJob(null);
     if (store.jobEditor.open && store.jobEditor.jobId === job.id) store.closeJobEditor();
-    if (history.job?.id === job.id) closeHistory();
   } catch (err) {
     if (!(err instanceof TypeError)) actionError.value = String((err as Error)?.message ?? err);
   }
-}
-
-async function openHistory(row: Record<string, unknown>) {
-  const job = row.job as JobInfo;
-  history.open = true;
-  history.job = job;
-  history.busy = true;
-  history.runs = [];
-  try {
-    history.runs = await store.fetchJobRuns(job.id);
-  } catch (err) {
-    if (!(err instanceof TypeError)) actionError.value = String((err as Error)?.message ?? err);
-  } finally {
-    history.busy = false;
-  }
-}
-
-function closeHistory() {
-  history.open = false;
-  history.job = null;
-  history.runs = [];
 }
 
 onMounted(() => {
@@ -210,9 +181,6 @@ onMounted(() => {
           <button class="sf-tbl-btn" type="button" title="Run now (schedule untouched)" @click.stop="runNow(row)">
             <SvgIcon name="▶" />
           </button>
-          <button class="sf-tbl-btn" type="button" title="Run history" @click.stop="openHistory(row)">
-            <SvgIcon name="⏳" />
-          </button>
           <button class="sf-tbl-btn" type="button" title="Edit job" @click.stop="openEdit(row)">
             <SvgIcon name="✎" />
           </button>
@@ -232,22 +200,6 @@ onMounted(() => {
     </div>
 
     <JobDialog v-if="store.jobEditor.open" :job="editorJob" @close="closeDialog" @saved="onSaved" />
-
-    <Dialog :open="history.open" :title="history.job ? `Run history — ${history.job.name}` : 'Run history'" @close="closeHistory">
-      <div v-if="history.busy" class="jobs-runs-empty">loading…</div>
-      <div v-else-if="history.runs.length === 0" class="jobs-runs-empty">no runs yet</div>
-      <template v-else>
-        <div v-for="run in history.runs" :key="run.id" class="jobs-run">
-          <span class="jobs-run-dot" :class="'jobs-run-dot--' + run.status" />
-          <span class="jobs-run-status" :class="'jobs-status--' + run.status">{{ run.status }}</span>
-          <span class="jobs-run-time">{{ fmtTime(run.queuedAt) }}</span>
-          <span class="jobs-run-session" :title="run.sessionFile">{{
-            run.sessionFile ? run.sessionFile.split('/').pop() : '—'
-          }}</span>
-          <span v-if="run.error" class="jobs-run-error" :title="run.error">{{ run.error.slice(0, 80) }}</span>
-        </div>
-      </template>
-    </Dialog>
   </div>
 </template>
 
@@ -377,61 +329,6 @@ onMounted(() => {
 .jobs-status--skipped,
 .jobs-status--interrupted {
   opacity: 0.6;
-}
-
-.jobs-runs-empty {
-  font-size: 13px;
-  color: var(--sf-text-muted);
-  padding: 4px 0;
-}
-
-.jobs-run {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  min-width: 0;
-}
-
-.jobs-run-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: rgba(128, 128, 128, 0.5);
-  flex-shrink: 0;
-}
-
-.jobs-run-dot--ok {
-  background: #7bd88f;
-}
-
-.jobs-run-dot--error {
-  background: #ff6d6d;
-}
-
-.jobs-run-status {
-  min-width: 64px;
-}
-
-.jobs-run-time {
-  opacity: 0.65;
-  white-space: nowrap;
-}
-
-.jobs-run-session {
-  font-family: var(--sf-mono, monospace);
-  opacity: 0.6;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.jobs-run-error {
-  color: #ff6d6d;
-  opacity: 0.85;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .sf-root--mobile .jobs-tab :deep(.sf-tbl-row) {

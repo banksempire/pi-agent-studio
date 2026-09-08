@@ -1318,11 +1318,14 @@ async function unitChecks({ report }) {
 
     const peakPreHide = await page.evaluate(() => {
       const head = document.querySelector('.pht .sf-tbl-head');
+      const out = {};
       for (const th of head.querySelectorAll('.sf-tbl-th')) {
         const label = (th.textContent || '').replace(/[^A-Za-z ]/g, '').trim();
-        if (label === 'Window') return Math.round(th.getBoundingClientRect().width);
+        if (label === 'Model' || label === 'Window' || label === 'Note') {
+          out[label] = Math.round(th.getBoundingClientRect().width);
+        }
       }
-      return 0;
+      return out;
     });
     await page.locator('.pht .sf-tbl-th', { hasText: 'Model' }).click({ button: 'right' });
     await delay(200);
@@ -1342,17 +1345,21 @@ async function unitChecks({ report }) {
         edge: Math.abs(lastTh.getBoundingClientRect().right - scroller.getBoundingClientRect().right),
         sum: tracks.reduce((a, b) => a + b, 0),
         w: scroller.clientWidth,
+        model: byLabel.Model ?? 0,
         window: byLabel.Window ?? 0,
         noteVisible: [...head.querySelectorAll('.sf-tbl-th')].some((t) => t.textContent.includes('Note')),
       };
     });
+    const modelGain = peakAbsorb.model - peakPreHide.Model;
+    const windowGain = peakAbsorb.window - peakPreHide.Window;
     report(
-      'hiding Note leaves no gap: the first variable column (Model) absorbs it; Window keeps its width',
+      'hiding Note leaves no gap: Model and Window share the freed space evenly',
       !peakAbsorb.noteVisible &&
         peakAbsorb.edge <= 1 &&
         Math.abs(peakAbsorb.sum - peakAbsorb.w) <= 2 &&
-        Math.abs(peakAbsorb.window - peakPreHide) <= 1,
-      JSON.stringify({ preHideWindow: peakPreHide, ...peakAbsorb }),
+        modelGain > 0 &&
+        Math.abs(modelGain - windowGain) <= 2,
+      JSON.stringify({ preHide: peakPreHide, ...peakAbsorb, modelGain, windowGain }),
     );
     await page.mouse.click(700, 10);
     await delay(200);

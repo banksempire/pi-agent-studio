@@ -84,7 +84,7 @@ const rows = computed<KeyValueItem[]>(() => {
 <style scoped>
 .job-detail {
   box-sizing: border-box;
-  height: 320px;
+  max-height: 320px;
   overflow-y: auto;
   padding: 4px 0;
 }

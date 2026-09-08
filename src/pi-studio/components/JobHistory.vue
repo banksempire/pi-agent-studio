@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import Table from '@sf/components/Table.vue';
+import type { TableColumn } from '@sf/types/table';
+import { computed, ref, watch } from 'vue';
 import { fmtRelative, fmtTime } from '../jobText';
 import type { JobRunInfo } from '../store/chat';
 import { useChatStore } from '../store/chat';
@@ -9,6 +11,25 @@ const store = useChatStore();
 const runs = ref<JobRunInfo[]>([]);
 const busy = ref(false);
 const error = ref('');
+
+const columns: TableColumn[] = [
+  { key: 'status', label: 'Status', fixedWidth: 68 },
+  { key: 'time', label: 'Queued', fixedWidth: 84 },
+  { key: 'session', label: 'Session', min: 70 },
+  { key: 'error', label: 'Error', min: 70 },
+];
+
+const displayRows = computed(() =>
+  runs.value.map((r) => ({
+    id: r.id,
+    status: r.status,
+    time: fmtRelative(r.queuedAt),
+    timeAbs: fmtTime(r.queuedAt),
+    session: r.sessionFile ? r.sessionFile.split('/').pop() : '—',
+    sessionFile: r.sessionFile,
+    error: r.error,
+  })),
+);
 
 async function load() {
   const job = store.selectedJob;
@@ -40,6 +61,10 @@ watch(
   },
   { immediate: true },
 );
+
+function rowClass(row: Record<string, unknown>): Record<string, boolean> {
+  return { [`job-history-row--${String(row.status)}`]: true };
+}
 </script>
 
 <template>
@@ -47,26 +72,33 @@ watch(
     <div v-if="!store.selectedJob" class="job-history-empty">Select a job to see its run history.</div>
     <div v-else-if="busy" class="job-history-empty">loading…</div>
     <div v-else-if="error" class="job-history-empty job-history-err">{{ error }}</div>
-    <div v-else-if="runs.length === 0" class="job-history-empty">no runs yet</div>
-    <template v-else>
-      <div v-for="run in runs" :key="run.id" class="jobs-run" :title="fmtTime(run.queuedAt)">
-        <span class="jobs-run-dot" :class="'jobs-run-dot--' + run.status" />
-        <span class="jobs-run-status" :class="'jobs-status--' + run.status">{{ run.status }}</span>
-        <span class="jobs-run-time">{{ fmtRelative(run.queuedAt) }}</span>
-        <span class="jobs-run-session" :title="run.sessionFile">{{
-          run.sessionFile ? run.sessionFile.split('/').pop() : '—'
-        }}</span>
-        <span v-if="run.error" class="jobs-run-error" :title="run.error">{{ run.error.slice(0, 80) }}</span>
-      </div>
-    </template>
+    <Table
+      v-else
+      :columns="columns"
+      :rows="displayRows"
+      row-key="id"
+      :row-class="rowClass"
+      empty-text="no runs yet"
+    >
+      <template #cell-status="{ row }">
+        <span class="job-history-status" :class="'job-history-status--' + row.status">{{ row.status }}</span>
+      </template>
+      <template #cell-time="{ row }">
+        <span class="job-history-time" :title="String(row.timeAbs)">{{ row.time }}</span>
+      </template>
+      <template #cell-session="{ row }">
+        <span class="job-history-session" :title="String(row.sessionFile)">{{ row.session }}</span>
+      </template>
+      <template #cell-error="{ row }">
+        <span v-if="row.error" class="job-history-error" :title="String(row.error)">{{ row.error }}</span>
+        <span v-else>—</span>
+      </template>
+    </Table>
   </div>
 </template>
 
 <style scoped>
 .job-history {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
   padding: 4px 0;
 }
 
@@ -80,52 +112,43 @@ watch(
   color: var(--sf-danger);
 }
 
-.jobs-run {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.job-history-status {
   font-size: 13px;
-  min-width: 0;
 }
 
-.jobs-run-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: rgba(128, 128, 128, 0.5);
-  flex-shrink: 0;
+.job-history-status--ok {
+  color: #7bd88f;
 }
 
-.jobs-run-dot--ok {
-  background: #7bd88f;
+.job-history-status--error {
+  color: #ff6d6d;
 }
 
-.jobs-run-dot--error {
-  background: #ff6d6d;
+.job-history-status--skipped,
+.job-history-status--interrupted {
+  opacity: 0.6;
 }
 
-.jobs-run-status {
-  min-width: 56px;
-}
-
-.jobs-run-time {
+.job-history-time {
   opacity: 0.65;
   white-space: nowrap;
 }
 
-.jobs-run-session {
+.job-history-session {
   font-family: var(--sf-mono, monospace);
+  font-size: 13px;
   opacity: 0.6;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.jobs-run-error {
+.job-history-error {
   color: #ff6d6d;
   opacity: 0.85;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-size: 13px;
 }
 </style>

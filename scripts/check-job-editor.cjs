@@ -793,26 +793,38 @@ function writeSessionFile(name) {
     const heightProbe = await page.evaluate(() => {
       const detail = document.querySelector('.job-detail');
       const subBody = document.querySelector('[data-sub-body="job-detail"]');
+      const style = detail ? getComputedStyle(detail) : null;
       return {
-        h: detail ? getComputedStyle(detail).height : null,
-        oy: detail ? getComputedStyle(detail).overflowY : null,
+        maxH: style ? style.maxHeight : null,
+        oy: style ? style.overflowY : null,
+        h: style ? parseFloat(style.height ?? '') : null,
         sub: subBody ? subBody.style.height : null,
-        cls: detail ? detail.className : null,
       };
     });
     report(
-      'the Detail subsection is fixed at a constant height with inner scroll',
-      heightProbe.h === '320px' && heightProbe.oy === 'auto' && heightProbe.sub === '',
+      'the Detail subsection caps at 320px with inner scroll and no dead space',
+      heightProbe.maxH === '320px' &&
+        heightProbe.oy === 'auto' &&
+        heightProbe.h !== null &&
+        heightProbe.h <= 320 &&
+        heightProbe.sub === '',
       JSON.stringify(heightProbe),
     );
 
-    await page.locator('.jobs-run').first().waitFor({ timeout: 5000 });
-    const historyRows = await page.locator('.jobs-run').count();
-    const historyErr = await page.locator('.jobs-run-error').first().textContent();
+    await page.locator('.job-history .sf-tbl-row').first().waitFor({ timeout: 5000 });
+    const historyRows = await page.locator('.job-history .sf-tbl-row').count();
+    const historyErr = await page.locator('.job-history .job-history-error').first().textContent();
+    const historyChrome = await page.evaluate(() => ({
+      search: !!document.querySelector('.job-history .sf-tbl-search'),
+      head: document.querySelector('.job-history .sf-tbl-head')?.textContent ?? '',
+    }));
     report(
-      'the History subsection lists the selected job runs with status and errors',
-      historyRows === 2 && (historyErr ?? '').includes('provider exploded'),
-      `rows=${historyRows}`,
+      'the History subsection lists runs in a simple table (header, no sorting/filter)',
+      historyRows === 2 &&
+        (historyErr ?? '').includes('provider exploded') &&
+        !historyChrome.search &&
+        historyChrome.head === 'StatusQueuedSessionError',
+      `rows=${historyRows} | err=${historyErr} | ${JSON.stringify(historyChrome)}`,
     );
 
     await page.locator('.sf-panel-tab', { hasText: 'Preference' }).click();

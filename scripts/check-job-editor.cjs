@@ -844,6 +844,49 @@ function writeSessionFile(name) {
       `rows=${historyRows} | ${JSON.stringify(historyChrome)}`,
     );
 
+    const dragPanel = async (dx) => {
+      const box = await page.locator('.sf-panel--right .sf-panel-resize-handle--left').boundingBox();
+      await page.mouse.move(box.x + box.width / 2, box.y + 240);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width / 2 + dx, box.y + 240, { steps: 8 });
+      await page.mouse.up();
+      await delay(500);
+    };
+    const fitProbe = () =>
+      page.evaluate(() => {
+        const head = document.querySelector('.job-history .sf-tbl-head');
+        const scroll = head ? head.closest('.sf-tbl-scroll') : null;
+        if (!head || !scroll) return null;
+        const ths = [...head.querySelectorAll('.sf-tbl-th')];
+        const last = ths[ths.length - 1];
+        return {
+          panel: Math.round(document.querySelector('.sf-panel--right').getBoundingClientRect().width),
+          noHScroll: scroll.scrollWidth <= scroll.clientWidth + 1,
+          lastRight: Math.round(last.getBoundingClientRect().right),
+          boxRight: Math.round(scroll.getBoundingClientRect().right),
+        };
+      });
+    await dragPanel(80);
+    const narrowFit = await fitProbe();
+    report(
+      'the History table re-fits when the panel is narrowed below the column floors',
+      !!narrowFit &&
+        narrowFit.panel < 224 &&
+        narrowFit.noHScroll &&
+        Math.abs(narrowFit.lastRight - narrowFit.boxRight) <= 2,
+      JSON.stringify(narrowFit),
+    );
+    await dragPanel(-80);
+    const wideFit = await fitProbe();
+    report(
+      'the History table re-fits when the panel is widened again',
+      !!wideFit &&
+        wideFit.panel >= 260 &&
+        wideFit.noHScroll &&
+        Math.abs(wideFit.lastRight - wideFit.boxRight) <= 2,
+      JSON.stringify(wideFit),
+    );
+
     await page.locator('.sf-panel-tab', { hasText: 'Preference' }).click();
     await delay(200);
     const capVals = await page.evaluate(() => ({

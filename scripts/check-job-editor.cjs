@@ -887,6 +887,28 @@ function writeSessionFile(name) {
       JSON.stringify(wideFit),
     );
 
+    await page.locator('.jobs-tab .sf-tbl-row', { hasText: 'custom-cron job' }).first().click();
+    await delay(300);
+    await page.locator('.sf-tab-panel-toggle').first().click();
+    await delay(300);
+    await page.locator('.jobs-tab .sf-tbl-row', { hasText: 'custom-cron job' }).first().click();
+    await delay(600);
+    const hiddenMounted = await page.evaluate(() => {
+      const p = document.querySelector('.sf-panel--right');
+      return !!p && getComputedStyle(p).display === 'none' && !!p.querySelector('.job-history .sf-tbl-head');
+    });
+    await page.locator('.sf-tab-panel-toggle').first().click();
+    await delay(800);
+    const hiddenFit = await fitProbe();
+    report(
+      'the History table fits when it mounted while the panel was hidden',
+      hiddenMounted &&
+        !!hiddenFit &&
+        hiddenFit.noHScroll &&
+        Math.abs(hiddenFit.lastRight - hiddenFit.boxRight) <= 2,
+      `hiddenMounted=${hiddenMounted} | ${JSON.stringify(hiddenFit)}`,
+    );
+
     await page.locator('.sf-panel-tab', { hasText: 'Preference' }).click();
     await delay(200);
     const capVals = await page.evaluate(() => ({

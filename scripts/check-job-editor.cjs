@@ -820,20 +820,23 @@ function writeSessionFile(name) {
     const capVals = await page.evaluate(() => ({
       steppers: document.querySelectorAll('.scheduler-prefs .sf-stepper-input').length,
       btns: document.querySelectorAll('.scheduler-prefs .sf-stepper-input-btn').length,
+      saveButtons: document.querySelectorAll('.scheduler-prefs .sp-save').length,
       text: document.querySelector('.scheduler-prefs')?.textContent ?? '',
+      subTitle: [...document.querySelectorAll('.sf-subsection-label')].map((el) => el.textContent ?? ''),
     }));
     report(
-      'the Preference section hosts framework stepper inputs with clear wording',
+      'the Preference section hosts framework stepper inputs with clear wording and no save button',
       capVals.steppers === 3 &&
         capVals.btns === 6 &&
-        capVals.text.includes('Max concurrent runs') &&
-        capVals.text.includes('Max runs per provider') &&
-        capVals.text.includes('Max runs per model'),
-      JSON.stringify(capVals).slice(0, 180),
+        capVals.saveButtons === 0 &&
+        capVals.subTitle.includes('Concurrent job run') &&
+        capVals.text.includes('Global') &&
+        capVals.text.includes('Per Provider') &&
+        capVals.text.includes('Per model'),
+      JSON.stringify(capVals).slice(0, 200),
     );
-    report('save is greyed out while nothing changed', await page.locator('.sp-save').isDisabled());
     await page.locator('.sf-stepper-input-btn').first().click();
-    await delay(120);
+    await delay(1200);
     const stepped = await page.evaluate(() =>
       [...document.querySelectorAll('.scheduler-prefs input[type="number"]')].map((i) => i.value),
     );
@@ -842,18 +845,16 @@ function writeSessionFile(name) {
       JSON.stringify(stepped) === JSON.stringify(['3', '2', '1']),
       JSON.stringify(stepped),
     );
-    report('save enables once a cap changes', !(await page.locator('.sp-save').isDisabled()));
-    await page.locator('.scheduler-prefs input[type="number"]').first().fill('4');
-    await page.locator('.sp-save').click();
-    await delay(400);
     report(
-      'saving the caps PATCHes the scheduler config endpoint',
+      'cap changes save in real time without a save button',
       jobConfigPatches.length === 1 &&
-        jobConfigPatches[0].globalMax === 4 &&
+        jobConfigPatches[0].globalMax === 3 &&
         jobConfigPatches[0].providerMax === 2 &&
         jobConfigPatches[0].modelMax === 1,
       JSON.stringify(jobConfigPatches),
     );
+    await page.locator('.scheduler-prefs input[type="number"]').first().fill('4');
+    await delay(1200);
     const capAfter = await page.evaluate(() =>
       [...document.querySelectorAll('.scheduler-prefs input[type="number"]')].map((i) => i.value),
     );
@@ -862,7 +863,14 @@ function writeSessionFile(name) {
       JSON.stringify(capAfter) === JSON.stringify(['4', '2', '1']),
       JSON.stringify(capAfter),
     );
-    report('save greys out again after the caps are saved', await page.locator('.sp-save').isDisabled());
+    report(
+      'further edits patch again with the debounced autosave',
+      jobConfigPatches.length === 2 &&
+        jobConfigPatches[1].globalMax === 4 &&
+        jobConfigPatches[1].providerMax === 2 &&
+        jobConfigPatches[1].modelMax === 1,
+      JSON.stringify(jobConfigPatches),
+    );
     await page.locator('.sf-panel-tab', { hasText: 'Detail' }).click();
     await delay(200);
 

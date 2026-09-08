@@ -237,7 +237,7 @@
           "subSections": [
             {
               "id": "scheduler-prefs",
-              "label": "Preference",
+              "label": "Concurrent job run",
               "height": "fixed",
               "components": [
                 {

@@ -817,14 +817,31 @@ function writeSessionFile(name) {
     const historyChrome = await page.evaluate(() => ({
       search: !!document.querySelector('.job-history .sf-tbl-search'),
       head: document.querySelector('.job-history .sf-tbl-head')?.textContent ?? '',
+      resizers: document.querySelectorAll('.job-history .sf-tbl-resize').length,
+      fit: (() => {
+        const head = document.querySelector('.job-history .sf-tbl-head');
+        const scroll = head ? head.closest('.sf-tbl-scroll') : null;
+        if (!head || !scroll) return null;
+        const ths = [...head.querySelectorAll('.sf-tbl-th')];
+        const last = ths[ths.length - 1];
+        return {
+          noHScroll: scroll.scrollWidth <= scroll.clientWidth + 1,
+          lastThRight: last ? Math.round(last.getBoundingClientRect().right) : null,
+          boxRight: Math.round(scroll.getBoundingClientRect().right),
+        };
+      })(),
     }));
     report(
-      'the History subsection lists runs in a simple table (header, no sorting/filter)',
+      'the History subsection lists runs in a simple table (header only, fits the panel, no user resize)',
       historyRows === 2 &&
         (historyErr ?? '').includes('provider exploded') &&
         !historyChrome.search &&
-        historyChrome.head === 'StatusQueuedSessionError',
-      `rows=${historyRows} | err=${historyErr} | ${JSON.stringify(historyChrome)}`,
+        historyChrome.head === 'StatusQueuedSessionError' &&
+        historyChrome.resizers === 0 &&
+        !!historyChrome.fit &&
+        historyChrome.fit.noHScroll &&
+        Math.abs((historyChrome.fit.lastThRight ?? 0) - historyChrome.fit.boxRight) <= 2,
+      `rows=${historyRows} | ${JSON.stringify(historyChrome)}`,
     );
 
     await page.locator('.sf-panel-tab', { hasText: 'Preference' }).click();

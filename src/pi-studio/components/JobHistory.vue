@@ -13,10 +13,10 @@ const busy = ref(false);
 const error = ref('');
 
 const columns: TableColumn[] = [
-  { key: 'status', label: 'Status', fixedWidth: 68 },
-  { key: 'time', label: 'Queued', fixedWidth: 84 },
-  { key: 'session', label: 'Session', min: 70 },
-  { key: 'error', label: 'Error', min: 70 },
+  { key: 'status', label: 'Status', min: 48, mobile: 'lead' },
+  { key: 'time', label: 'Queued', min: 56, mobile: 'sub' },
+  { key: 'session', label: 'Session', min: 60, mobile: 'title' },
+  { key: 'error', label: 'Error', min: 60 },
 ];
 
 const displayRows = computed(() =>
@@ -78,6 +78,7 @@ function rowClass(row: Record<string, unknown>): Record<string, boolean> {
       :rows="displayRows"
       row-key="id"
       :row-class="rowClass"
+      :resizable="false"
       empty-text="no runs yet"
     >
       <template #cell-status="{ row }">

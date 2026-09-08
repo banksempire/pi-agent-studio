@@ -818,21 +818,21 @@ function writeSessionFile(name) {
     await page.locator('.sf-panel-tab', { hasText: 'Preference' }).click();
     await delay(200);
     const capVals = await page.evaluate(() => ({
-      nums: [...document.querySelectorAll('.scheduler-prefs input[type="number"]')].map((i) => i.value),
-      sliders: document.querySelectorAll('.scheduler-prefs input[type="range"]').length,
+      steppers: document.querySelectorAll('.scheduler-prefs .sf-stepper-input').length,
+      btns: document.querySelectorAll('.scheduler-prefs .sf-stepper-input-btn').length,
       text: document.querySelector('.scheduler-prefs')?.textContent ?? '',
     }));
     report(
-      'the Preference section hosts slider+input cap controls with clear wording',
-      JSON.stringify(capVals.nums) === JSON.stringify(['2', '2', '1']) &&
-        capVals.sliders === 3 &&
+      'the Preference section hosts framework stepper inputs with clear wording',
+      capVals.steppers === 3 &&
+        capVals.btns === 6 &&
         capVals.text.includes('Max concurrent runs') &&
         capVals.text.includes('Max runs per provider') &&
         capVals.text.includes('Max runs per model'),
       JSON.stringify(capVals).slice(0, 180),
     );
-    report('each cap has themed up/down spinner buttons', (await page.locator('.sp-spin-btn').count()) === 6);
-    await page.locator('.sp-spin-btn').first().click();
+    report('save is greyed out while nothing changed', await page.locator('.sp-save').isDisabled());
+    await page.locator('.sf-stepper-input-btn').first().click();
     await delay(120);
     const stepped = await page.evaluate(() =>
       [...document.querySelectorAll('.scheduler-prefs input[type="number"]')].map((i) => i.value),
@@ -842,6 +842,7 @@ function writeSessionFile(name) {
       JSON.stringify(stepped) === JSON.stringify(['3', '2', '1']),
       JSON.stringify(stepped),
     );
+    report('save enables once a cap changes', !(await page.locator('.sp-save').isDisabled()));
     await page.locator('.scheduler-prefs input[type="number"]').first().fill('4');
     await page.locator('.sp-save').click();
     await delay(400);
@@ -861,6 +862,7 @@ function writeSessionFile(name) {
       JSON.stringify(capAfter) === JSON.stringify(['4', '2', '1']),
       JSON.stringify(capAfter),
     );
+    report('save greys out again after the caps are saved', await page.locator('.sp-save').isDisabled());
     await page.locator('.sf-panel-tab', { hasText: 'Detail' }).click();
     await delay(200);
 

@@ -817,13 +817,19 @@ function writeSessionFile(name) {
 
     await page.locator('.sf-panel-tab', { hasText: 'Preference' }).click();
     await delay(200);
-    const capVals = await page.evaluate(() =>
-      [...document.querySelectorAll('.scheduler-prefs input[type="number"]')].map((i) => i.value),
-    );
+    const capVals = await page.evaluate(() => ({
+      nums: [...document.querySelectorAll('.scheduler-prefs input[type="number"]')].map((i) => i.value),
+      sliders: document.querySelectorAll('.scheduler-prefs input[type="range"]').length,
+      text: document.querySelector('.scheduler-prefs')?.textContent ?? '',
+    }));
     report(
-      'the Preference section hosts the concurrency cap config from the scheduler state',
-      JSON.stringify(capVals) === JSON.stringify(['2', '2', '1']),
-      JSON.stringify(capVals),
+      'the Preference section hosts slider+input cap controls with clear wording',
+      JSON.stringify(capVals.nums) === JSON.stringify(['2', '2', '1']) &&
+        capVals.sliders === 3 &&
+        capVals.text.includes('Max concurrent runs') &&
+        capVals.text.includes('Max runs per provider') &&
+        capVals.text.includes('Max runs per model'),
+      JSON.stringify(capVals).slice(0, 180),
     );
     await page.locator('.scheduler-prefs input[type="number"]').first().fill('4');
     await page.locator('.sp-save').click();

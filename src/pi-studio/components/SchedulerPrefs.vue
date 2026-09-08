@@ -9,6 +9,9 @@ const busy = ref(false);
 const error = ref('');
 const saved = ref('');
 
+type CapKey = 'globalMax' | 'providerMax' | 'modelMax';
+const CAP_MAX = 10;
+
 function valid(n: number): boolean {
   return Number.isInteger(n) && n >= 1;
 }
@@ -27,6 +30,11 @@ watch(
   },
   { immediate: true },
 );
+
+function clamp(key: CapKey) {
+  const n = Math.round(Number(form[key]));
+  form[key] = Math.min(CAP_MAX, Math.max(1, Number.isFinite(n) ? n : 1));
+}
 
 async function save() {
   if (!canSave.value) return;
@@ -51,16 +59,70 @@ async function save() {
 <template>
   <div class="scheduler-prefs">
     <div class="sp-row">
-      <span class="sp-key">Max runs — global</span>
-      <input v-model.number="form.globalMax" class="sp-input" type="number" min="1" step="1" />
+      <span class="sp-key">Max concurrent runs</span>
+      <div class="sp-ctrl">
+        <input
+          v-model.number="form.globalMax"
+          class="sp-range"
+          type="range"
+          min="1"
+          :max="CAP_MAX"
+          step="1"
+        />
+        <input
+          v-model.number="form.globalMax"
+          class="sp-input"
+          type="number"
+          min="1"
+          :max="CAP_MAX"
+          step="1"
+          @change="clamp('globalMax')"
+        />
+      </div>
     </div>
     <div class="sp-row">
-      <span class="sp-key">Per provider</span>
-      <input v-model.number="form.providerMax" class="sp-input" type="number" min="1" step="1" />
+      <span class="sp-key">Max runs per provider</span>
+      <div class="sp-ctrl">
+        <input
+          v-model.number="form.providerMax"
+          class="sp-range"
+          type="range"
+          min="1"
+          :max="CAP_MAX"
+          step="1"
+        />
+        <input
+          v-model.number="form.providerMax"
+          class="sp-input"
+          type="number"
+          min="1"
+          :max="CAP_MAX"
+          step="1"
+          @change="clamp('providerMax')"
+        />
+      </div>
     </div>
     <div class="sp-row">
-      <span class="sp-key">Per model</span>
-      <input v-model.number="form.modelMax" class="sp-input" type="number" min="1" step="1" />
+      <span class="sp-key">Max runs per model</span>
+      <div class="sp-ctrl">
+        <input
+          v-model.number="form.modelMax"
+          class="sp-range"
+          type="range"
+          min="1"
+          :max="CAP_MAX"
+          step="1"
+        />
+        <input
+          v-model.number="form.modelMax"
+          class="sp-input"
+          type="number"
+          min="1"
+          :max="CAP_MAX"
+          step="1"
+          @change="clamp('modelMax')"
+        />
+      </div>
     </div>
     <div class="sp-actions">
       <button class="sp-save" type="button" :disabled="!canSave" title="Save concurrency caps" @click="save">
@@ -68,8 +130,8 @@ async function save() {
       </button>
     </div>
     <div v-if="error" class="sp-note sp-note--err">{{ error }}</div>
-    <div v-else-if="saved" class="sp-note">Saved — caps apply immediately and survive restarts.</div>
-    <div v-else class="sp-note">Caps apply immediately and survive restarts.</div>
+    <div v-else-if="saved" class="sp-note">Saved — caps apply immediately and persist across restarts.</div>
+    <div v-else class="sp-note">Caps apply immediately and persist across restarts.</div>
   </div>
 </template>
 
@@ -83,7 +145,7 @@ async function save() {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  padding: 3px 0;
+  padding: 4px 0;
   font-size: 16px;
 }
 
@@ -92,9 +154,21 @@ async function save() {
   flex-shrink: 0;
 }
 
+.sp-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sp-range {
+  width: 110px;
+  accent-color: var(--sf-accent);
+  cursor: pointer;
+}
+
 .sp-input {
   box-sizing: border-box;
-  width: 76px;
+  width: 56px;
   padding: 4px 8px;
   border-radius: var(--sf-radius-sm);
   border: 1px solid var(--sf-border);
@@ -113,7 +187,7 @@ async function save() {
 .sp-actions {
   display: flex;
   justify-content: flex-end;
-  padding-top: 6px;
+  padding-top: 8px;
 }
 
 .sp-save {

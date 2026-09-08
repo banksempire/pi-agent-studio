@@ -94,7 +94,7 @@ async function save() {
               title="Increase"
               @click="step('globalMax', 1)"
             >
-              <SvgIcon name="↑" />
+              <SvgIcon name="⌃" />
             </button>
             <button
               class="sp-spin-btn"
@@ -103,7 +103,7 @@ async function save() {
               title="Decrease"
               @click="step('globalMax', -1)"
             >
-              <SvgIcon name="↓" />
+              <SvgIcon name="⌄" />
             </button>
           </div>
         </div>
@@ -138,7 +138,7 @@ async function save() {
               title="Increase"
               @click="step('providerMax', 1)"
             >
-              <SvgIcon name="↑" />
+              <SvgIcon name="⌃" />
             </button>
             <button
               class="sp-spin-btn"
@@ -147,7 +147,7 @@ async function save() {
               title="Decrease"
               @click="step('providerMax', -1)"
             >
-              <SvgIcon name="↓" />
+              <SvgIcon name="⌄" />
             </button>
           </div>
         </div>
@@ -182,7 +182,7 @@ async function save() {
               title="Increase"
               @click="step('modelMax', 1)"
             >
-              <SvgIcon name="↑" />
+              <SvgIcon name="⌃" />
             </button>
             <button
               class="sp-spin-btn"
@@ -191,7 +191,7 @@ async function save() {
               title="Decrease"
               @click="step('modelMax', -1)"
             >
-              <SvgIcon name="↓" />
+              <SvgIcon name="⌄" />
             </button>
           </div>
         </div>

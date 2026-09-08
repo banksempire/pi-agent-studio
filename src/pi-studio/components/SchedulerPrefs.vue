@@ -178,6 +178,18 @@ async function save() {
   font-family: var(--sf-mono, monospace);
   text-align: right;
   outline: none;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.sp-input::-webkit-outer-spin-button,
+.sp-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.sp-input:hover {
+  border-color: var(--sf-accent);
 }
 
 .sp-input:focus-visible {

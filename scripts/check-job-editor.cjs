@@ -831,6 +831,17 @@ function writeSessionFile(name) {
         capVals.text.includes('Max runs per model'),
       JSON.stringify(capVals).slice(0, 180),
     );
+    report('each cap has themed up/down spinner buttons', (await page.locator('.sp-spin-btn').count()) === 6);
+    await page.locator('.sp-spin-btn').first().click();
+    await delay(120);
+    const stepped = await page.evaluate(() =>
+      [...document.querySelectorAll('.scheduler-prefs input[type="number"]')].map((i) => i.value),
+    );
+    report(
+      'the spinner buttons step the cap value within bounds',
+      JSON.stringify(stepped) === JSON.stringify(['3', '2', '1']),
+      JSON.stringify(stepped),
+    );
     await page.locator('.scheduler-prefs input[type="number"]').first().fill('4');
     await page.locator('.sp-save').click();
     await delay(400);

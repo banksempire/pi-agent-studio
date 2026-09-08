@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SvgIcon from '@sf/components/SvgIcon.vue';
 import { computed, reactive, ref, watch } from 'vue';
 import { useChatStore } from '../store/chat';
 
@@ -36,6 +37,12 @@ function clamp(key: CapKey) {
   form[key] = Math.min(CAP_MAX, Math.max(1, Number.isFinite(n) ? n : 1));
 }
 
+function step(key: CapKey, dir: number) {
+  const base = Number(form[key]);
+  const n = (Number.isFinite(base) ? base : 1) + dir;
+  form[key] = Math.min(CAP_MAX, Math.max(1, n));
+}
+
 async function save() {
   if (!canSave.value) return;
   busy.value = true;
@@ -69,15 +76,37 @@ async function save() {
           :max="CAP_MAX"
           step="1"
         />
-        <input
-          v-model.number="form.globalMax"
-          class="sp-input"
-          type="number"
-          min="1"
-          :max="CAP_MAX"
-          step="1"
-          @change="clamp('globalMax')"
-        />
+        <div class="sp-spin">
+          <input
+            v-model.number="form.globalMax"
+            class="sp-input"
+            type="number"
+            min="1"
+            :max="CAP_MAX"
+            step="1"
+            @change="clamp('globalMax')"
+          />
+          <div class="sp-spin-btns">
+            <button
+              class="sp-spin-btn"
+              type="button"
+              tabindex="-1"
+              title="Increase"
+              @click="step('globalMax', 1)"
+            >
+              <SvgIcon name="↑" />
+            </button>
+            <button
+              class="sp-spin-btn"
+              type="button"
+              tabindex="-1"
+              title="Decrease"
+              @click="step('globalMax', -1)"
+            >
+              <SvgIcon name="↓" />
+            </button>
+          </div>
+        </div>
       </div>
     </div>
     <div class="sp-row">
@@ -91,15 +120,37 @@ async function save() {
           :max="CAP_MAX"
           step="1"
         />
-        <input
-          v-model.number="form.providerMax"
-          class="sp-input"
-          type="number"
-          min="1"
-          :max="CAP_MAX"
-          step="1"
-          @change="clamp('providerMax')"
-        />
+        <div class="sp-spin">
+          <input
+            v-model.number="form.providerMax"
+            class="sp-input"
+            type="number"
+            min="1"
+            :max="CAP_MAX"
+            step="1"
+            @change="clamp('providerMax')"
+          />
+          <div class="sp-spin-btns">
+            <button
+              class="sp-spin-btn"
+              type="button"
+              tabindex="-1"
+              title="Increase"
+              @click="step('providerMax', 1)"
+            >
+              <SvgIcon name="↑" />
+            </button>
+            <button
+              class="sp-spin-btn"
+              type="button"
+              tabindex="-1"
+              title="Decrease"
+              @click="step('providerMax', -1)"
+            >
+              <SvgIcon name="↓" />
+            </button>
+          </div>
+        </div>
       </div>
     </div>
     <div class="sp-row">
@@ -113,15 +164,37 @@ async function save() {
           :max="CAP_MAX"
           step="1"
         />
-        <input
-          v-model.number="form.modelMax"
-          class="sp-input"
-          type="number"
-          min="1"
-          :max="CAP_MAX"
-          step="1"
-          @change="clamp('modelMax')"
-        />
+        <div class="sp-spin">
+          <input
+            v-model.number="form.modelMax"
+            class="sp-input"
+            type="number"
+            min="1"
+            :max="CAP_MAX"
+            step="1"
+            @change="clamp('modelMax')"
+          />
+          <div class="sp-spin-btns">
+            <button
+              class="sp-spin-btn"
+              type="button"
+              tabindex="-1"
+              title="Increase"
+              @click="step('modelMax', 1)"
+            >
+              <SvgIcon name="↑" />
+            </button>
+            <button
+              class="sp-spin-btn"
+              type="button"
+              tabindex="-1"
+              title="Decrease"
+              @click="step('modelMax', -1)"
+            >
+              <SvgIcon name="↓" />
+            </button>
+          </div>
+        </div>
       </div>
     </div>
     <div class="sp-actions">
@@ -164,6 +237,55 @@ async function save() {
   width: 110px;
   accent-color: var(--sf-accent);
   cursor: pointer;
+}
+
+.sp-spin {
+  display: flex;
+  align-items: stretch;
+}
+
+.sp-spin .sp-input {
+  width: 52px;
+  border-radius: var(--sf-radius-sm) 0 0 var(--sf-radius-sm);
+}
+
+.sp-spin-btns {
+  display: flex;
+  flex-direction: column;
+  width: 20px;
+}
+
+.sp-spin-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--sf-border);
+  border-left: none;
+  background: var(--sf-bg-lighter);
+  color: var(--sf-text-muted);
+  cursor: pointer;
+}
+
+.sp-spin-btn:first-child {
+  border-radius: 0 var(--sf-radius-sm) 0 0;
+  border-bottom: none;
+}
+
+.sp-spin-btn:last-child {
+  border-radius: 0 0 var(--sf-radius-sm) 0;
+}
+
+@media (hover: hover) {
+  .sp-spin-btn:hover {
+    color: var(--sf-text-bright);
+    box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
+  }
+}
+
+.sp-spin-btn:active {
+  color: var(--sf-accent);
 }
 
 .sp-input {

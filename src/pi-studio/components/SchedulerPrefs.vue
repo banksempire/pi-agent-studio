@@ -50,21 +50,23 @@ async function save() {
 
 <template>
   <div class="scheduler-prefs">
-    <label class="sp-field">
-      <span class="sp-label">Max concurrent runs — global</span>
+    <div class="sp-row">
+      <span class="sp-key">Max runs — global</span>
       <input v-model.number="form.globalMax" class="sp-input" type="number" min="1" step="1" />
-    </label>
-    <label class="sp-field">
-      <span class="sp-label">Per provider</span>
+    </div>
+    <div class="sp-row">
+      <span class="sp-key">Per provider</span>
       <input v-model.number="form.providerMax" class="sp-input" type="number" min="1" step="1" />
-    </label>
-    <label class="sp-field">
-      <span class="sp-label">Per model</span>
+    </div>
+    <div class="sp-row">
+      <span class="sp-key">Per model</span>
       <input v-model.number="form.modelMax" class="sp-input" type="number" min="1" step="1" />
-    </label>
-    <button class="sp-save" type="button" :disabled="!canSave" title="Save concurrency caps" @click="save">
-      {{ busy ? 'Saving…' : 'Save' }}
-    </button>
+    </div>
+    <div class="sp-actions">
+      <button class="sp-save" type="button" :disabled="!canSave" title="Save concurrency caps" @click="save">
+        {{ busy ? 'Saving…' : 'Save' }}
+      </button>
+    </div>
     <div v-if="error" class="sp-note sp-note--err">{{ error }}</div>
     <div v-else-if="saved" class="sp-note">Saved — caps apply immediately and survive restarts.</div>
     <div v-else class="sp-note">Caps apply immediately and survive restarts.</div>
@@ -73,33 +75,34 @@ async function save() {
 
 <style scoped>
 .scheduler-prefs {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
   padding: 4px 0;
 }
 
-.sp-field {
+.sp-row {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 3px 0;
+  font-size: 16px;
 }
 
-.sp-label {
+.sp-key {
   color: var(--sf-text-muted);
-  font-size: 16px;
+  flex-shrink: 0;
 }
 
 .sp-input {
   box-sizing: border-box;
-  width: 110px;
-  padding: 6px 10px;
+  width: 76px;
+  padding: 4px 8px;
   border-radius: var(--sf-radius-sm);
   border: 1px solid var(--sf-border);
   background: rgba(0, 0, 0, 0.15);
   color: var(--sf-text);
   font-size: 16px;
-  font-family: var(--sf-font);
+  font-family: var(--sf-mono, monospace);
+  text-align: right;
   outline: none;
 }
 
@@ -107,15 +110,20 @@ async function save() {
   border-color: var(--sf-accent);
 }
 
+.sp-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 6px;
+}
+
 .sp-save {
-  align-self: flex-start;
   background: var(--sf-accent);
   border: 1px solid var(--sf-accent);
   border-radius: 4px;
   color: var(--sf-text-on-accent);
   font-family: var(--sf-font);
   font-size: 16px;
-  padding: 5px 14px;
+  padding: 4px 16px;
   cursor: pointer;
 }
 
@@ -131,6 +139,7 @@ async function save() {
 }
 
 .sp-note {
+  padding-top: 6px;
   color: var(--sf-text-muted);
   font-size: 16px;
 }

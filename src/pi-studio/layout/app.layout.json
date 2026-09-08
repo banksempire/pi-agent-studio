@@ -200,7 +200,7 @@
             {
               "id": "job-detail",
               "label": "Detail",
-              "height": "variable",
+              "height": "fixed",
               "minHeight": 80,
               "utilities": [
                 {

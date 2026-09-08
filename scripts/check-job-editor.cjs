@@ -776,6 +776,7 @@ function writeSessionFile(name) {
       const panel = document.querySelector('.job-detail');
       return {
         text: panel?.textContent ?? '',
+        msgBlock: !!document.querySelector('.job-detail-msg'),
         rowSelected: !!document.querySelector('.sf-tbl-row.jobs-row--sel'),
       };
     });
@@ -784,18 +785,25 @@ function writeSessionFile(name) {
       detailState.rowSelected &&
         detailState.text.includes('custom-cron job') &&
         detailState.text.includes('15 9,17 * * mon-fri') &&
+        detailState.text.includes('Messageprobe') &&
+        !detailState.msgBlock &&
         !detailState.text.includes('Status'),
       JSON.stringify(detailState).slice(0, 220),
     );
+    const heightProbe = await page.evaluate(() => {
+      const detail = document.querySelector('.job-detail');
+      const subBody = document.querySelector('[data-sub-body="job-detail"]');
+      return {
+        h: detail ? getComputedStyle(detail).height : null,
+        oy: detail ? getComputedStyle(detail).overflowY : null,
+        sub: subBody ? subBody.style.height : null,
+        cls: detail ? detail.className : null,
+      };
+    });
     report(
-      'the Detail subsection is fixed-height and the History subsection is variable',
-      await page.evaluate(() => {
-        const detail = document.querySelector('[data-sub-body="job-detail"]');
-        const history = document.querySelector('[data-sub-body="job-history"]');
-        return (
-          !!detail && detail.style.height === '' && !!history && /^\d+(\.\d+)?px$/.test(history.style.height)
-        );
-      }),
+      'the Detail subsection is fixed at a constant height with inner scroll',
+      heightProbe.h === '320px' && heightProbe.oy === 'auto' && heightProbe.sub === '',
+      JSON.stringify(heightProbe),
     );
 
     await page.locator('.jobs-run').first().waitFor({ timeout: 5000 });

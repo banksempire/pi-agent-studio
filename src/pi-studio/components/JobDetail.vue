@@ -69,6 +69,7 @@ const rows = computed<KeyValueItem[]>(() => {
           ? `Fresh per run — ${t.cwd ?? ''}`
           : `One per cwd — ${t.cwd ?? ''}`,
   });
+  list.push({ key: 'Message', value: j.payload.message });
   return list;
 });
 </script>
@@ -77,42 +78,20 @@ const rows = computed<KeyValueItem[]>(() => {
   <div v-if="!job" class="job-detail-empty">Select a job in the table to see its details.</div>
   <div v-else class="job-detail">
     <KeyValueList :items="rows" />
-    <div class="job-detail-msg">
-      <span class="job-detail-msg-label">Message</span>
-      <p class="job-detail-msg-text">{{ job.payload.message }}</p>
-    </div>
   </div>
 </template>
 
 <style scoped>
 .job-detail {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  box-sizing: border-box;
+  height: 320px;
+  overflow-y: auto;
   padding: 4px 0;
 }
 
 .job-detail-empty {
   padding: 6px 8px;
   color: var(--sf-text-muted);
-  font-size: 16px;
-}
-
-.job-detail-msg {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.job-detail-msg-label {
-  color: var(--sf-text-muted);
-  font-size: 16px;
-}
-
-.job-detail-msg-text {
-  margin: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
   font-size: 16px;
 }
 </style>

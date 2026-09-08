@@ -85,7 +85,7 @@ async function save() {
       <StepperInput v-model="form.providerMax" :min="1" :max="CAP_MAX" :step="1" title="Concurrent job runs per provider" />
     </div>
     <div class="sp-row">
-      <span class="sp-key">Per model</span>
+      <span class="sp-key">Per Model</span>
       <StepperInput v-model="form.modelMax" :min="1" :max="CAP_MAX" :step="1" title="Concurrent job runs per model" />
     </div>
     <div v-if="error" class="sp-note sp-note--err">{{ error }}</div>

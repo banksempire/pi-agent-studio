@@ -829,10 +829,10 @@ function writeSessionFile(name) {
       capVals.steppers === 3 &&
         capVals.btns === 6 &&
         capVals.saveButtons === 0 &&
-        capVals.subTitle.includes('Concurrent job run') &&
+        capVals.subTitle.includes('Concurrent Job') &&
         capVals.text.includes('Global') &&
         capVals.text.includes('Per Provider') &&
-        capVals.text.includes('Per model'),
+        capVals.text.includes('Per Model'),
       JSON.stringify(capVals).slice(0, 200),
     );
     await page.locator('.sf-stepper-input-btn').first().click();

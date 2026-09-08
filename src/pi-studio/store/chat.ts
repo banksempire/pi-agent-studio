@@ -834,6 +834,19 @@ async function fetchJobRuns(id: string): Promise<JobRunInfo[]> {
   return runs;
 }
 
+async function updateSchedulerConfig(config: {
+  globalMax?: number;
+  providerMax?: number;
+  modelMax?: number;
+}): Promise<void> {
+  await api('/api/scheduler/config', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(config),
+  });
+  await refreshJobs();
+}
+
 const selectedJobId = ref<string | null>(null);
 const jobEditor = reactive<{ open: boolean; jobId: string | null }>({ open: false, jobId: null });
 
@@ -2371,6 +2384,7 @@ export const store = {
   deleteJob,
   runJobNow,
   fetchJobRuns,
+  updateSchedulerConfig,
   openJobs,
   openModelCatalog,
   openPeakHours,

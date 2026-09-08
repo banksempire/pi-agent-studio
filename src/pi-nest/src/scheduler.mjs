@@ -327,6 +327,14 @@ export class Scheduler {
     };
   }
 
+  setLimits(next = {}) {
+    this.#limits = {
+      globalMax: normLimit(next.globalMax, this.#limits.globalMax),
+      providerMax: normLimit(next.providerMax, this.#limits.providerMax),
+      modelMax: normLimit(next.modelMax, this.#limits.modelMax),
+    };
+  }
+
   #emit(action, job, runId, error = '', sessionFile = '') {
     if (!this.#onEvent) return;
     try {

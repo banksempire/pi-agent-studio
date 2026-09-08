@@ -100,6 +100,12 @@ function applySchema(db) {
     );
   `);
   db.exec('CREATE INDEX IF NOT EXISTS job_runs_job ON job_runs(job_id, id)');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS scheduler_config (
+      key TEXT PRIMARY KEY,
+      value INTEGER NOT NULL
+    );
+  `);
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 }
 
@@ -173,6 +179,10 @@ export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null 
     ),
     loadUi: db.prepare(
       "SELECT file, ui_state, ui_error FROM sessions WHERE ui_state IN ('working','unread','error')",
+    ),
+    cfgAll: db.prepare('SELECT key, value FROM scheduler_config'),
+    cfgSet: db.prepare(
+      'INSERT INTO scheduler_config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
     ),
     jobInsert: db.prepare(`
       INSERT INTO jobs (id, name, enabled, kind, schedule_type, run_at, cron, payload, next_due, missed_policy, created_by, created_at, updated_at)
@@ -550,6 +560,27 @@ export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null 
       }
     },
     saveUiStates,
+    loadSchedulerConfig() {
+      try {
+        const out = {};
+        for (const r of stmt.cfgAll.all()) out[r.key] = Number(r.value);
+        return out;
+      } catch (e) {
+        warn('loadSchedulerConfig', e);
+        return {};
+      }
+    },
+    saveSchedulerConfig(config) {
+      try {
+        for (const [key, value] of Object.entries(config)) {
+          stmt.cfgSet.run(key, Math.max(1, Math.floor(Number(value))));
+        }
+        return true;
+      } catch (e) {
+        warn('saveSchedulerConfig', e);
+        return false;
+      }
+    },
     checkpoint() {
       try {
         db.exec('PRAGMA wal_checkpoint(TRUNCATE)');

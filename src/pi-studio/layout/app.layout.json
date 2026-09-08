@@ -87,7 +87,7 @@
               {
                 "id": "pinned",
                 "label": "Pinned",
-                "height": "variable",
+                "height": "fixed",
                 "minHeight": 60,
                 "components": [
                   {

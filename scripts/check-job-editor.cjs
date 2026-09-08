@@ -263,6 +263,21 @@ function writeSessionFile(name) {
       waiting: 2,
       limits: { globalMax: 2, providerMax: 2, modelMax: 1 },
     };
+    const jobConfigPatches = [];
+    await page.route('**/api/scheduler/config', async (route) => {
+      if (route.request().method() !== 'PATCH') {
+        await route.continue();
+        return;
+      }
+      const body = route.request().postDataJSON();
+      jobConfigPatches.push(body);
+      Object.assign(schedulerInfo.limits, body);
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ config: schedulerInfo.limits }),
+      });
+    });
     await page.route('**/api/jobs', async (route) => {
       const method = route.request().method();
       if (method === 'POST') {
@@ -765,11 +780,22 @@ function writeSessionFile(name) {
       };
     });
     report(
-      'the SCHEDULER panel Detail subsection shows the selected job via KeyValueList',
+      'the SCHEDULER panel Detail subsection shows the job form content via KeyValueList',
       detailState.rowSelected &&
         detailState.text.includes('custom-cron job') &&
-        detailState.text.includes('cron 15 9,17 * * mon-fri'),
+        detailState.text.includes('15 9,17 * * mon-fri') &&
+        !detailState.text.includes('Status'),
       JSON.stringify(detailState).slice(0, 220),
+    );
+    report(
+      'the Detail subsection is fixed-height and the History subsection is variable',
+      await page.evaluate(() => {
+        const detail = document.querySelector('[data-sub-body="job-detail"]');
+        const history = document.querySelector('[data-sub-body="job-history"]');
+        return (
+          !!detail && detail.style.height === '' && !!history && /^\d+(\.\d+)?px$/.test(history.style.height)
+        );
+      }),
     );
 
     await page.locator('.jobs-run').first().waitFor({ timeout: 5000 });
@@ -783,13 +809,32 @@ function writeSessionFile(name) {
 
     await page.locator('.sf-panel-tab', { hasText: 'Preference' }).click();
     await delay(200);
-    const prefsText = await page.locator('.scheduler-prefs').textContent();
+    const capVals = await page.evaluate(() =>
+      [...document.querySelectorAll('.scheduler-prefs input[type="number"]')].map((i) => i.value),
+    );
     report(
-      'the Preference section hosts the scheduler config readout',
-      (prefsText ?? '').includes('2 global') &&
-        (prefsText ?? '').includes('per provider') &&
-        (prefsText ?? '').includes('per model'),
-      String(prefsText).slice(0, 160),
+      'the Preference section hosts the concurrency cap config from the scheduler state',
+      JSON.stringify(capVals) === JSON.stringify(['2', '2', '1']),
+      JSON.stringify(capVals),
+    );
+    await page.locator('.scheduler-prefs input[type="number"]').first().fill('4');
+    await page.locator('.sp-save').click();
+    await delay(400);
+    report(
+      'saving the caps PATCHes the scheduler config endpoint',
+      jobConfigPatches.length === 1 &&
+        jobConfigPatches[0].globalMax === 4 &&
+        jobConfigPatches[0].providerMax === 2 &&
+        jobConfigPatches[0].modelMax === 1,
+      JSON.stringify(jobConfigPatches),
+    );
+    const capAfter = await page.evaluate(() =>
+      [...document.querySelectorAll('.scheduler-prefs input[type="number"]')].map((i) => i.value),
+    );
+    report(
+      'the caps re-sync from the refreshed scheduler state after save',
+      JSON.stringify(capAfter) === JSON.stringify(['4', '2', '1']),
+      JSON.stringify(capAfter),
     );
     await page.locator('.sf-panel-tab', { hasText: 'Detail' }).click();
     await delay(200);

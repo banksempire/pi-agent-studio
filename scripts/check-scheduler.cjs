@@ -764,6 +764,36 @@ async function concurrencyTests() {
     report('invalid limit values fall back to safe defaults', reg.prompts.length === 1);
     s.stop();
   }
+
+  {
+    const jr = makeJournal('sched-config-persist');
+    report(
+      'scheduler config round-trips through the journal',
+      JSON.stringify(jr.loadSchedulerConfig()) === JSON.stringify({}) &&
+        jr.saveSchedulerConfig({ globalMax: 5, providerMax: 3, modelMax: 2 }) === true &&
+        JSON.stringify(jr.loadSchedulerConfig()) ===
+          JSON.stringify({ globalMax: 5, providerMax: 3, modelMax: 2 }),
+      JSON.stringify(jr.loadSchedulerConfig()),
+    );
+    const reg = fakeRegistry();
+    const s = new Scheduler({ journal: jr, registry: reg, limits: jr.loadSchedulerConfig() });
+    const st = s.stats().limits;
+    report(
+      'boot builds the scheduler limits from the persisted config',
+      st.globalMax === 5 && st.providerMax === 3 && st.modelMax === 2,
+      JSON.stringify(st),
+    );
+    s.setLimits({ globalMax: 7 });
+    const st2 = s.stats().limits;
+    s.setLimits({ globalMax: 0 });
+    const st3 = s.stats().limits;
+    report(
+      'setLimits applies runtime patches and rejects invalid values',
+      st2.globalMax === 7 && st2.providerMax === 3 && st2.modelMax === 2 && st3.globalMax === 7,
+      JSON.stringify(st3),
+    );
+    s.stop();
+  }
 }
 
 async function reuseTests() {

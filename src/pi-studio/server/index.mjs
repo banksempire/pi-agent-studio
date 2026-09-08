@@ -31,11 +31,6 @@ const LEGACY_STATES_PATH =
   process.env.PI_STUDIO_STATES_PATH ?? path.join(STATE_FALLBACK_DIR, 'studio-session-states.json');
 const PEAK_HOURS_PATH =
   process.env.PI_STUDIO_PEAK_HOURS_PATH ?? path.join(path.dirname(DB_PATH), 'peak-hours.json');
-const SCHED_LIMITS = {
-  globalMax: process.env.PI_STUDIO_SCHED_GLOBAL_MAX,
-  providerMax: process.env.PI_STUDIO_SCHED_PROVIDER_MAX,
-  modelMax: process.env.PI_STUDIO_SCHED_MODEL_MAX,
-};
 const RESUME_MODE =
   (process.env.PI_STUDIO_RESUME ?? 'on') === 'off' ? 'skip' : (process.env.PI_STUDIO_RESUME_MODE ?? 'nudge');
 
@@ -1519,6 +1514,24 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (p === '/api/scheduler/config' && req.method === 'PATCH') {
+      if (!journal || !scheduler)
+        return sendJson(res, 503, { error: 'scheduler unavailable (stub client mode)' });
+      const body = await readBody(req);
+      const patch = {};
+      for (const key of ['globalMax', 'providerMax', 'modelMax']) {
+        const n = Number(body?.[key]);
+        if (Number.isInteger(n) && n >= 1) patch[key] = n;
+      }
+      if (Object.keys(patch).length === 0)
+        return sendJson(res, 400, { error: 'no valid limits (integers >= 1) in body' });
+      if (!journal.saveSchedulerConfig(patch))
+        return sendJson(res, 500, { error: 'failed to persist scheduler config' });
+      scheduler.setLimits(patch);
+      sendJson(res, 200, { config: scheduler.stats().limits });
+      return;
+    }
+
     if (p === '/api/jobs' && req.method === 'GET') {
       if (!journal) return sendJson(res, 503, { error: 'scheduler unavailable (stub client mode)' });
       sendJson(res, 200, {
@@ -1936,7 +1949,7 @@ if (journal && registry) {
       emit({ type: 'job_event', action, jobId: job?.id ?? '', runId: runId ?? null, error, sessionFile });
     },
     peak: peakGate,
-    limits: SCHED_LIMITS,
+    limits: journal.loadSchedulerConfig(),
   });
   scheduler.start();
 }

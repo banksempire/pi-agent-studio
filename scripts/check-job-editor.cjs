@@ -769,6 +769,48 @@ function writeSessionFile(name) {
       .first()
       .locator('.jobs-name')
       .click();
+    await page.locator('.jobs-detail').waitFor({ timeout: 5000 });
+    await delay(200);
+    report('clicking a row selects it without opening any popup', await noDialog());
+    const detailState = await page.evaluate(() => {
+      const panel = document.querySelector('.jobs-detail');
+      const vals = [...(panel?.querySelectorAll('.jd-val') ?? [])].map((el) => el.textContent ?? '');
+      return {
+        name: panel?.querySelector('.jd-name')?.textContent ?? '',
+        rowSelected: !!document.querySelector('.sf-tbl-row.jobs-row--sel'),
+        vals,
+      };
+    });
+    report(
+      'the detail panel shows the selected job with its cron expression',
+      detailState.rowSelected &&
+        detailState.name === 'custom-cron job' &&
+        detailState.vals.some((t) => t.includes('15 9,17 * * mon-fri')),
+      JSON.stringify(detailState),
+    );
+
+    await page
+      .locator('.jobs-tab .sf-tbl-row', { hasText: 'custom-cron job' })
+      .first()
+      .locator('.jobs-name')
+      .click();
+    await delay(200);
+    report(
+      'clicking the selected row again deselects it and closes the panel',
+      (await page.locator('.jobs-detail').count()) === 0,
+    );
+    await page
+      .locator('.jobs-tab .sf-tbl-row', { hasText: 'custom-cron job' })
+      .first()
+      .locator('.jobs-name')
+      .click();
+    await page.locator('.jobs-detail').waitFor({ timeout: 5000 });
+
+    await page
+      .locator('.jobs-tab .sf-tbl-row', { hasText: 'custom-cron job' })
+      .first()
+      .locator('.sf-tbl-btn[title="Edit job"]')
+      .click();
     await page
       .locator('.sf-dialog-title', { hasText: 'Edit job — custom-cron job' })
       .waitFor({ timeout: 10000 });
@@ -783,7 +825,7 @@ function writeSessionFile(name) {
       };
     });
     report(
-      'clicking a row opens the edit popup with an unrepresentable cron in Advanced, expression preserved',
+      'the row edit button opens the popup with an unrepresentable cron in Advanced, expression preserved',
       customState.patterns === 3 &&
         customState.selected === 'Advanced' &&
         customState.ref === '15 9,17 * * mon-fri',
@@ -808,13 +850,22 @@ function writeSessionFile(name) {
     report('the edit popup shows the job meta line', metaVisible);
     await page.locator('.je-cancel').click();
     await delay(200);
-    report('cancel closes the edit popup', await noDialog());
+    report(
+      'cancel closes the edit popup, the selection and detail panel persist',
+      (await noDialog()) && (await page.locator('.jobs-detail .jd-name').textContent()) === 'custom-cron job',
+    );
 
     await page
       .locator('.jobs-tab .sf-tbl-row', { hasText: 'off-peak job' })
       .first()
       .locator('.jobs-name')
       .click();
+    await delay(300);
+    report(
+      'selecting another row retargets the panel with no popup',
+      (await noDialog()) && (await page.locator('.jobs-detail .jd-name').textContent()) === 'off-peak job',
+    );
+    await page.locator('.jobs-detail .jd-edit').click();
     await page
       .locator('.sf-dialog-title', { hasText: 'Edit job — off-peak job' })
       .waitFor({ timeout: 10000 });
@@ -830,7 +881,7 @@ function writeSessionFile(name) {
       };
     });
     report(
-      'a non-peak job round-trips into the popup on the off-peak sub-type',
+      'a non-peak job round-trips into the popup from the panel edit button on the off-peak sub-type',
       npState.kind === 'off peak' &&
         npState.schedMode === 'Advanced' &&
         npState.cronRef === '' &&
@@ -839,6 +890,12 @@ function writeSessionFile(name) {
       JSON.stringify(npState),
     );
     await page.locator('.je-cancel').click();
+    await delay(200);
+    await page
+      .locator('.jobs-tab .sf-tbl-row', { hasText: 'custom-cron job' })
+      .first()
+      .locator('.jobs-name')
+      .click();
     await delay(200);
 
     await page
@@ -851,6 +908,10 @@ function writeSessionFile(name) {
       'delete asks for confirmation and calls the delete endpoint',
       jobDeletes.length === 1 && jobDeletes[0] === 'deadbeef',
       JSON.stringify(jobDeletes),
+    );
+    report(
+      'deleting the selected job clears the selection and closes the panel',
+      (await page.locator('.jobs-detail').count()) === 0,
     );
 
     await page.reload({ waitUntil: 'domcontentloaded' });

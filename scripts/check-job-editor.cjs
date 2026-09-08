@@ -825,7 +825,7 @@ function writeSessionFile(name) {
         const ths = [...head.querySelectorAll('.sf-tbl-th')];
         const last = ths[ths.length - 1];
         return {
-          noHScroll: scroll.scrollWidth <= scroll.clientWidth + 1,
+          noHScroll: scroll.scrollWidth <= scroll.clientWidth,
           lastThRight: last ? Math.round(last.getBoundingClientRect().right) : null,
           boxRight: Math.round(scroll.getBoundingClientRect().right),
         };
@@ -861,7 +861,7 @@ function writeSessionFile(name) {
         const last = ths[ths.length - 1];
         return {
           panel: Math.round(document.querySelector('.sf-panel--right').getBoundingClientRect().width),
-          noHScroll: scroll.scrollWidth <= scroll.clientWidth + 1,
+          noHScroll: scroll.scrollWidth <= scroll.clientWidth,
           lastRight: Math.round(last.getBoundingClientRect().right),
           boxRight: Math.round(scroll.getBoundingClientRect().right),
         };

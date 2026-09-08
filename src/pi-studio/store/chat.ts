@@ -834,6 +834,23 @@ async function fetchJobRuns(id: string): Promise<JobRunInfo[]> {
   return runs;
 }
 
+const selectedJobId = ref<string | null>(null);
+const jobEditor = reactive<{ open: boolean; jobId: string | null }>({ open: false, jobId: null });
+
+function selectJob(id: string | null) {
+  selectedJobId.value = id;
+}
+
+function openJobEditor(jobId: string | null) {
+  jobEditor.open = true;
+  jobEditor.jobId = jobId;
+}
+
+function closeJobEditor() {
+  jobEditor.open = false;
+  jobEditor.jobId = null;
+}
+
 function openJobs() {
   if (!ws) return;
   const existing = ws.findTabGlobal(JOBS_TAB_ID);
@@ -2383,6 +2400,15 @@ export const store = {
   get modelDetail() {
     return modelDetail.value;
   },
+  get selectedJob() {
+    return state.jobs.find((j) => j.id === selectedJobId.value) ?? null;
+  },
+  get jobEditor() {
+    return jobEditor;
+  },
+  selectJob,
+  openJobEditor,
+  closeJobEditor,
   get modelDefaultTick() {
     return modelDefaultTick.value;
   },

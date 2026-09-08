@@ -190,6 +190,29 @@
     }
   ],
   "rightPanels": {
+    "jobs": {
+      "title": "Job Detail",
+      "sections": [
+        {
+          "id": "job-detail",
+          "label": "Job Detail",
+          "subSections": [
+            {
+              "id": "job-detail",
+              "label": "Job Detail",
+              "height": "variable",
+              "minHeight": 80,
+              "components": [
+                {
+                  "type": "component",
+                  "key": "job-detail"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
     "peak-hours": {
       "title": "Model Detail",
       "sections": [

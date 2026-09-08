@@ -769,11 +769,11 @@ function writeSessionFile(name) {
       .first()
       .locator('.jobs-name')
       .click();
-    await page.locator('.jobs-detail').waitFor({ timeout: 5000 });
+    await page.locator('.job-detail').waitFor({ timeout: 5000 });
     await delay(200);
     report('clicking a row selects it without opening any popup', await noDialog());
     const detailState = await page.evaluate(() => {
-      const panel = document.querySelector('.jobs-detail');
+      const panel = document.querySelector('.job-detail');
       const vals = [...(panel?.querySelectorAll('.jd-val') ?? [])].map((el) => el.textContent ?? '');
       return {
         name: panel?.querySelector('.jd-name')?.textContent ?? '',
@@ -795,16 +795,17 @@ function writeSessionFile(name) {
       .locator('.jobs-name')
       .click();
     await delay(200);
+    await page.locator('.jd-empty').waitFor({ timeout: 5000 });
     report(
-      'clicking the selected row again deselects it and closes the panel',
-      (await page.locator('.jobs-detail').count()) === 0,
+      'clicking the selected row again deselects it back to the empty hint',
+      (await page.locator('.jd-empty').count()) === 1 && (await page.locator('.jd-name').count()) === 0,
     );
     await page
       .locator('.jobs-tab .sf-tbl-row', { hasText: 'custom-cron job' })
       .first()
       .locator('.jobs-name')
       .click();
-    await page.locator('.jobs-detail').waitFor({ timeout: 5000 });
+    await page.locator('.job-detail').waitFor({ timeout: 5000 });
 
     await page
       .locator('.jobs-tab .sf-tbl-row', { hasText: 'custom-cron job' })
@@ -852,7 +853,7 @@ function writeSessionFile(name) {
     await delay(200);
     report(
       'cancel closes the edit popup, the selection and detail panel persist',
-      (await noDialog()) && (await page.locator('.jobs-detail .jd-name').textContent()) === 'custom-cron job',
+      (await noDialog()) && (await page.locator('.job-detail .jd-name').textContent()) === 'custom-cron job',
     );
 
     await page
@@ -863,9 +864,9 @@ function writeSessionFile(name) {
     await delay(300);
     report(
       'selecting another row retargets the panel with no popup',
-      (await noDialog()) && (await page.locator('.jobs-detail .jd-name').textContent()) === 'off-peak job',
+      (await noDialog()) && (await page.locator('.job-detail .jd-name').textContent()) === 'off-peak job',
     );
-    await page.locator('.jobs-detail .jd-edit').click();
+    await page.locator('.job-detail .jd-edit').click();
     await page
       .locator('.sf-dialog-title', { hasText: 'Edit job — off-peak job' })
       .waitFor({ timeout: 10000 });
@@ -909,9 +910,10 @@ function writeSessionFile(name) {
       jobDeletes.length === 1 && jobDeletes[0] === 'deadbeef',
       JSON.stringify(jobDeletes),
     );
+    await page.locator('.jd-empty').waitFor({ timeout: 5000 });
     report(
-      'deleting the selected job clears the selection and closes the panel',
-      (await page.locator('.jobs-detail').count()) === 0,
+      'deleting the selected job clears the selection back to the empty hint',
+      (await page.locator('.jd-empty').count()) === 1 && (await page.locator('.jd-name').count()) === 0,
     );
 
     await page.reload({ waitUntil: 'domcontentloaded' });

@@ -30,6 +30,9 @@ function onAction(e: FrameworkAction) {
     case 'open-jobs':
       store.openJobs();
       break;
+    case 'edit-job':
+      if (typeof e.payload === 'string') store.openJobEditor(e.payload);
+      break;
     case 'refresh-model-catalog':
       void refreshModelCatalog().catch(() => {});
       break;

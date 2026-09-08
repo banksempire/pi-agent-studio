@@ -1,52 +1,56 @@
 <script setup lang="ts">
 import SvgIcon from '@sf/components/SvgIcon.vue';
-import { computed } from 'vue';
+import { kPanelAction } from '@sf/composables/usePanelAction';
+import { computed, inject } from 'vue';
 import { describeCron } from '../cronInfo';
 import { fmtRelative, fmtTime, scheduleText, targetText } from '../jobText';
-import type { JobInfo } from '../store/chat';
+import { useChatStore } from '../store/chat';
 
-const props = defineProps<{ job: JobInfo }>();
+const store = useChatStore();
 
-const emit = defineEmits<{
-  (e: 'close'): void;
-  (e: 'edit'): void;
-}>();
+const job = computed(() => store.selectedJob);
 
-const cronDescribe = computed(() => (props.job.cron ? describeCron(props.job.cron) : ''));
+type PanelActionFn = (action: { action?: string; payload?: unknown }) => void;
+const panelAction = inject<PanelActionFn | null>(kPanelAction, null);
+
+const cronDescribe = computed(() => (job.value?.cron ? describeCron(job.value.cron) : ''));
 
 const nextText = computed(() =>
-  props.job.enabled ? `${fmtTime(props.job.nextDue)} · ${fmtRelative(props.job.nextDue)}` : '—',
+  !job.value?.enabled ? '—' : `${fmtTime(job.value.nextDue)} · ${fmtRelative(job.value.nextDue)}`,
 );
 
 const lastText = computed(() => {
-  const r = props.job.lastRun;
+  const r = job.value?.lastRun;
   if (!r) return '—';
   return `${r.status} ${fmtRelative(r.finishedAt ?? r.queuedAt)}`;
 });
 
-const lastClass = computed(() => (props.job.lastRun ? `jd-status--${props.job.lastRun.status}` : ''));
+const lastClass = computed(() => (job.value?.lastRun ? `jd-status--${job.value.lastRun.status}` : ''));
 
 const modelText = computed(() => {
-  const m = props.job.payload.model;
+  const m = job.value?.payload.model;
   if (!m) return 'session default';
-  return props.job.payload.thinkLevel ? `${m}·${props.job.payload.thinkLevel}` : m;
+  return job.value?.payload.thinkLevel ? `${m}·${job.value?.payload.thinkLevel}` : m;
 });
 
 const missedText = computed(() =>
-  props.job.missedPolicy === 'skip' ? 'skip, wait for the next occurrence' : 'run once on catch-up',
+  job.value?.missedPolicy === 'skip' ? 'skip, wait for the next occurrence' : 'run once on catch-up',
 );
+
+function edit() {
+  if (!job.value) return;
+  panelAction?.({ action: 'edit-job', payload: job.value.id });
+}
 </script>
 
 <template>
-  <aside class="jobs-detail">
+  <div v-if="!job" class="jd-empty">Select a job in the table to see its details.</div>
+  <div v-else class="job-detail">
     <div class="jd-head">
       <span class="jd-name" :title="job.name">{{ job.name }}</span>
       <span class="jd-badge" :class="job.enabled ? 'jd-badge--on' : 'jd-badge--off'">{{
         job.enabled ? 'active' : 'paused'
       }}</span>
-      <button class="jd-close" type="button" title="Close details" @click="emit('close')">
-        <SvgIcon name="✕" />
-      </button>
     </div>
 
     <div class="jd-rows">
@@ -91,21 +95,25 @@ const missedText = computed(() =>
     </div>
 
     <div class="jd-actions">
-      <button class="jd-edit" type="button" title="Edit job" @click="emit('edit')">
+      <button class="jd-edit" type="button" title="Edit job" @click="edit">
         <SvgIcon name="✎" />Edit job
       </button>
     </div>
-  </aside>
+  </div>
 </template>
 
 <style scoped>
-.jobs-detail {
+.jd-empty {
+  padding: 6px 8px;
+  color: var(--sf-text-muted);
+  font-size: 13px;
+}
+
+.job-detail {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  min-height: 0;
-  overflow-y: auto;
-  box-sizing: border-box;
+  padding: 4px 0;
 }
 
 .jd-head {
@@ -141,24 +149,6 @@ const missedText = computed(() =>
 
 .jd-badge--off {
   color: var(--sf-text-muted);
-}
-
-.jd-close {
-  margin-left: auto;
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  background: none;
-  border: none;
-  color: var(--sf-text-muted);
-  cursor: pointer;
-  padding: 2px 6px;
-}
-
-@media (hover: hover) {
-  .jd-close:hover {
-    color: var(--sf-text-bright);
-  }
 }
 
 .jd-rows {
@@ -210,8 +200,6 @@ const missedText = computed(() =>
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   color: var(--sf-text);
-  max-height: 180px;
-  overflow-y: auto;
 }
 
 .jd-foot {
@@ -235,10 +223,9 @@ const missedText = computed(() =>
 }
 
 .jd-actions {
-  margin-top: auto;
   display: flex;
   justify-content: flex-end;
-  padding-top: 4px;
+  padding-top: 2px;
 }
 
 .jd-edit {

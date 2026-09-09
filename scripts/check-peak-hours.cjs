@@ -1477,7 +1477,7 @@ async function unitChecks({ report }) {
       await delay(200);
       report(
         `the peak-hours table never pans horizontally (${label})`,
-        st.ox === 'hidden' && st.cw < st.sw && x === 0,
+        st.ox === 'hidden' && st.cw >= st.sw && x === 0,
         JSON.stringify({ ...st, x }),
       );
     };

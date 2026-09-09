@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import Dialog from '@sf/components/Dialog.vue';
 import SvgIcon from '@sf/components/SvgIcon.vue';
 import Table from '@sf/components/Table.vue';
 import type { TableColumn } from '@sf/types/table';
@@ -11,6 +12,7 @@ import JobDialog from './JobDialog.vue';
 const store = useChatStore();
 
 const actionError = ref('');
+const confirmJob = ref<JobInfo | null>(null);
 
 const columns: TableColumn[] = [
   { key: 'enabled', label: 'On', fixedWidth: 46, mobile: 'lead' },
@@ -85,14 +87,32 @@ async function onSaved() {
   await store.refreshJobs();
 }
 
-async function toggle(row: Record<string, unknown>) {
-  const job = row.job as JobInfo;
+function runsOnActivation(job: JobInfo): boolean {
+  return job.scheduleType === 'once' && typeof job.runAt === 'number' && job.runAt <= Date.now();
+}
+
+async function setEnabled(job: JobInfo, enabled: boolean) {
   actionError.value = '';
   try {
-    await store.updateJob(job.id, { enabled: !job.enabled });
+    await store.updateJob(job.id, { enabled });
   } catch (err) {
     if (!(err instanceof TypeError)) actionError.value = String((err as Error)?.message ?? err);
   }
+}
+
+async function toggle(row: Record<string, unknown>) {
+  const job = row.job as JobInfo;
+  if (!job.enabled && runsOnActivation(job)) {
+    confirmJob.value = job;
+    return;
+  }
+  await setEnabled(job, !job.enabled);
+}
+
+async function confirmActivate() {
+  const job = confirmJob.value;
+  confirmJob.value = null;
+  if (job) await setEnabled(job, true);
 }
 
 async function runNow(row: Record<string, unknown>) {
@@ -200,6 +220,20 @@ onMounted(() => {
     </div>
 
     <JobDialog v-if="store.jobEditor.open" :job="editorJob" @close="closeDialog" @saved="onSaved" />
+
+    <Dialog :open="confirmJob !== null" title="Run immediately?" @close="confirmJob = null">
+      <p class="jobs-confirm-text">
+        <strong>{{ confirmJob?.name }}</strong> was scheduled for
+        {{ confirmJob ? fmtTime(confirmJob.runAt) : '' }} ({{ confirmJob ? fmtRelative(confirmJob.runAt) : '' }})
+        — that time has passed. Re-activating it will run it immediately.
+      </p>
+      <template #actions>
+        <button class="sf-dialog-btn jobs-confirm-cancel" type="button" @click="confirmJob = null">Cancel</button>
+        <button class="sf-dialog-btn sf-dialog-btn--accent jobs-confirm-run" type="button" @click="confirmActivate">
+          Run now &amp; activate
+        </button>
+      </template>
+    </Dialog>
   </div>
 </template>
 
@@ -213,6 +247,7 @@ onMounted(() => {
 }
 
 .jobs-count {
+
   color: var(--sf-text-muted);
   font-size: 16px;
   font-variant-numeric: tabular-nums;
@@ -338,5 +373,13 @@ onMounted(() => {
 .sf-root--mobile .jobs-tab :deep(.sf-tbl-c--title),
 .sf-root--mobile .jobs-tab :deep(.sf-tbl-c--sub) {
   line-height: 20px;
+}
+
+.jobs-confirm-text {
+  margin: 0;
+}
+
+.jobs-confirm-text strong {
+  color: var(--sf-text-bright);
 }
 </style>

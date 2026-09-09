@@ -227,6 +227,23 @@ function writeSessionFile(name) {
       updatedAt: Date.now() - 120_000,
       lastRun: null,
     };
+    const PAST_ONCE_JOB = {
+      id: 'feedf00d',
+      name: 'past one-shot job',
+      enabled: false,
+      kind: 'message',
+      scheduleType: 'once',
+      runAt: Date.now() - 3_600_000,
+      cron: null,
+      payload: { message: 'past probe', target: { mode: 'new', cwd: '/tmp' } },
+      nextDue: Date.now() - 3_600_000,
+      missedPolicy: 'coalesce',
+      createdBy: 'web',
+      createdAt: Date.now() - 7_200_000,
+      updatedAt: Date.now() - 3_600_000,
+      lastRun: Date.now() - 3_500_000,
+    };
+    const stubJobs = [CUSTOM_JOB, NONPEAK_JOB, PAST_ONCE_JOB];
     const STUB_RUNS = {
       runs: [
         {
@@ -292,7 +309,7 @@ function writeSessionFile(name) {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ jobs: [CUSTOM_JOB, NONPEAK_JOB], scheduler: schedulerInfo }),
+        body: JSON.stringify({ jobs: stubJobs.map((j) => ({ ...j })), scheduler: schedulerInfo }),
       });
     });
     await page.route('**/api/jobs/**', async (route) => {
@@ -314,11 +331,14 @@ function writeSessionFile(name) {
         return;
       }
       if (method === 'PATCH') {
-        jobPatches.push({ id: jobId, body: route.request().postDataJSON() });
+        const body = route.request().postDataJSON();
+        jobPatches.push({ id: jobId, body });
+        const target = stubJobs.find((j) => j.id === jobId);
+        if (target) Object.assign(target, body);
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
-          body: JSON.stringify({ job: CUSTOM_JOB }),
+          body: JSON.stringify({ job: target ?? CUSTOM_JOB }),
         });
         return;
       }
@@ -413,6 +433,57 @@ function writeSessionFile(name) {
       'the table switch patches the job enabled state',
       jobPatches.length === 1 && jobPatches[0].id === 'cafe0bad' && jobPatches[0].body.enabled === false,
       JSON.stringify(jobPatches),
+    );
+
+    const pastRow = () => page.locator('.jobs-tab .sf-tbl-row', { hasText: 'past one-shot job' }).first();
+    await pastRow().locator('.jobs-switch').click();
+    await delay(300);
+    const confirmState = await page.evaluate(() => ({
+      dialogOpen: !!document.querySelector('.sf-dialog'),
+      title: document.querySelector('.sf-dialog-title')?.textContent ?? '',
+      text: document.querySelector('.sf-dialog-body')?.textContent ?? '',
+    }));
+    report(
+      'activating a past-due once job asks for confirmation before patching',
+      confirmState.dialogOpen &&
+        confirmState.title === 'Run immediately?' &&
+        confirmState.text.includes('past one-shot job') &&
+        confirmState.text.includes('run it immediately') &&
+        jobPatches.length === 1,
+      `${JSON.stringify(confirmState)} | patches=${JSON.stringify(jobPatches)}`,
+    );
+
+    await page.locator('.jobs-confirm-cancel').click();
+    await delay(300);
+    report(
+      'cancelling the confirmation leaves the job disabled without patching',
+      !(await page.evaluate(() => !!document.querySelector('.sf-dialog'))) && jobPatches.length === 1,
+      `patches=${JSON.stringify(jobPatches)}`,
+    );
+
+    await pastRow().locator('.jobs-switch').click();
+    await delay(300);
+    await page.locator('.jobs-confirm-run').click();
+    await delay(400);
+    report(
+      'confirming activates the job immediately and closes the dialog',
+      jobPatches.length === 2 &&
+        jobPatches[1].id === 'feedf00d' &&
+        jobPatches[1].body.enabled === true &&
+        !(await page.evaluate(() => !!document.querySelector('.sf-dialog'))),
+      `patches=${JSON.stringify(jobPatches)}`,
+    );
+
+    const offRow = () => page.locator('.jobs-tab .sf-tbl-row', { hasText: 'off-peak job' }).first();
+    await offRow().locator('.jobs-switch').click();
+    await delay(300);
+    report(
+      'enabling a future-schedule job skips the confirmation',
+      jobPatches.length === 3 &&
+        jobPatches[2].id === 'cafe0bad' &&
+        jobPatches[2].body.enabled === true &&
+        !(await page.evaluate(() => !!document.querySelector('.sf-dialog'))),
+      `patches=${JSON.stringify(jobPatches)}`,
     );
 
     await page

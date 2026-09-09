@@ -180,7 +180,7 @@ onMounted(() => {
           <span class="jobs-name">{{ row.name }}</span>
         </template>
         <template #cell-schedule="{ row }">
-          <span class="jobs-muted jobs-sched" :title="String(row.schedule)">{{ row.schedule }}</span>
+          <span class="jobs-muted" :title="String(row.schedule)">{{ row.schedule }}</span>
         </template>
         <template #cell-target="{ row }">
           <span class="jobs-muted" :title="String(row.target)">{{ row.target }}</span>
@@ -328,11 +328,6 @@ onMounted(() => {
 
 .jobs-muted {
   color: var(--sf-text-muted);
-}
-
-.jobs-sched {
-  font-family: var(--sf-mono, monospace);
-  font-size: 12px;
 }
 
 .jobs-next {

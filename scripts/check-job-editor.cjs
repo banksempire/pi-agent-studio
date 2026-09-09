@@ -415,12 +415,39 @@ function writeSessionFile(name) {
     const npRowText = await page
       .locator('.jobs-tab .sf-tbl-row', { hasText: 'off-peak job' })
       .first()
-      .locator('.jobs-sched')
+      .locator('.sf-tbl-cell[data-col="schedule"]')
       .textContent();
     report(
       'non-peak jobs render an off-peak schedule in the table',
       npRowText.includes('off-peak daily') && npRowText.includes('stub/stub-pro'),
       String(npRowText),
+    );
+
+    const cellFonts = await page.evaluate(() => {
+      const row = document.querySelector('.jobs-tab .sf-tbl-row');
+      const cs = (col) => {
+        const el = row?.querySelector(`.sf-tbl-cell[data-col="${col}"]`)?.firstElementChild;
+        return el ? getComputedStyle(el) : null;
+      };
+      const name = cs('name');
+      const sched = cs('schedule');
+      const next = cs('next');
+      const last = cs('last');
+      return {
+        same:
+          !!name &&
+          !!sched &&
+          !!next &&
+          !!last &&
+          [sched, next, last].every((c) => c.fontFamily === name.fontFamily && c.fontSize === name.fontSize),
+        name: name ? `${name.fontSize} ${name.fontFamily.split(',')[0]}` : null,
+        sched: sched ? `${sched.fontSize} ${sched.fontFamily.split(',')[0]}` : null,
+      };
+    });
+    report(
+      'all job text cells share one font family and size',
+      !!cellFonts && cellFonts.same,
+      JSON.stringify(cellFonts),
     );
 
     await page

@@ -1274,6 +1274,19 @@ function writeSessionFile(name) {
       mobileDialog.w >= 300 && mobileDialog.w <= 392 && mobileDialog.fits && mobileDialog.noPageOverflow,
       JSON.stringify(mobileDialog),
     );
+    const mobileFit = await page.evaluate(() => {
+      const r = document.querySelector('.sf-dialog').getBoundingClientRect();
+      return {
+        top: Math.round(r.top * 10) / 10,
+        bottom: Math.round(r.bottom * 10) / 10,
+        vh: window.innerHeight,
+      };
+    });
+    report(
+      'mobile: the job popup stays between the top bar and the docker',
+      mobileFit.top >= 59.5 && mobileFit.bottom <= mobileFit.vh - 60 - 38 + 0.5,
+      JSON.stringify(mobileFit),
+    );
     const jobNoPan = await page.evaluate(() => {
       const card = document.querySelector('.sf-dialog');
       const body = card.querySelector('.sf-dialog-body');

@@ -1772,6 +1772,78 @@ async function unitChecks({ report }) {
       JSON.stringify({ before: tabBefore, after: tabAfter }),
     );
 
+    const mobileCtx = await browser.newContext({
+      viewport: { width: 320, height: 568 },
+      isMobile: true,
+      hasTouch: true,
+    });
+    const mpage = await mobileCtx.newPage();
+    mpage.on('pageerror', (e) => errors.push(`mobile pageerror: ${e.message}`));
+    mpage.on('console', (m) => {
+      if (m.type() === 'error' && !m.text().includes('503')) errors.push(`mobile console: ${m.text()}`);
+    });
+    await mpage.route('**/api/models*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          models: STUB_MODELS,
+          default: STUB_MODELS[0],
+          defaultSource: 'settings',
+          defaultThinkingLevel: null,
+          current: null,
+          currentThinkingLevel: null,
+        }),
+      });
+    });
+    await mpage.goto(`http://127.0.0.1:${vitePort}/`, { waitUntil: 'domcontentloaded' });
+    await mpage.waitForSelector('.sf-root--mobile', { timeout: 60000 });
+    await mpage.locator('.sf-mobile-menu-btn').click();
+    await mpage.locator('.sf-menu-row', { hasText: 'Chat' }).click();
+    await mpage.locator('.sf-menu-row', { hasText: 'Model Catalog…' }).click();
+    await mpage.waitForSelector('.model-catalog', { timeout: 30000 });
+    await mpage.locator('.model-catalog-row', { hasText: 'Stub Pro' }).first().click();
+    await delay(300);
+    await mpage.locator('.sf-mobile-rp-btn').click();
+    await mpage.waitForSelector('[data-sub-body="peak-hours"]', { timeout: 10000 });
+    await mpage.locator('[data-sub-body="peak-hours"] .sf-ph-act').click();
+    await mpage.waitForSelector('.sf-dialog', { timeout: 5000 });
+    await delay(300);
+
+    const mFit = await mpage.evaluate(() => {
+      const card = document.querySelector('.sf-dialog').getBoundingClientRect();
+      const body = document.querySelector('.sf-dialog-body');
+      const inputs = [...document.querySelectorAll('.aph-times input')].map((i) => {
+        const r = i.getBoundingClientRect();
+        return {
+          top: Math.round(r.top),
+          left: Math.round(r.left),
+          right: Math.round(r.right),
+          w: Math.round(r.width),
+        };
+      });
+      return {
+        top: Math.round(card.top * 10) / 10,
+        bottom: Math.round(card.bottom * 10) / 10,
+        vh: window.innerHeight,
+        scrollable: body.scrollHeight > body.clientHeight + 1,
+        inputs,
+      };
+    });
+    report(
+      'mobile: the peak popup stays between the top bar and the docker even when the form is taller',
+      mFit.top >= 59.5 && mFit.bottom <= mFit.vh - 60 - 38 + 0.5 && mFit.scrollable,
+      JSON.stringify({ top: mFit.top, bottom: mFit.bottom, vh: mFit.vh, scrollable: mFit.scrollable }),
+    );
+    report(
+      'mobile: peak start/end stack full-width so the time pickers respect the dialog paddings',
+      mFit.inputs.length === 2 &&
+        mFit.inputs[0].top < mFit.inputs[1].top &&
+        mFit.inputs.every((i) => i.w >= 240 && i.left >= 25 && i.right <= 295),
+      JSON.stringify(mFit.inputs),
+    );
+    await mobileCtx.close();
+
     r = await jfetch('/api/peak-hours');
     for (const e of r.body.entries.filter((en) => en.key.startsWith('stub/stress-'))) {
       await jfetch(`/api/peak-hours/${encodeURIComponent(e.id)}`, { method: 'DELETE' });

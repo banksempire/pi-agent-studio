@@ -188,8 +188,8 @@ async function runPass(browser, baseUrl, file, emit, label) {
   const errors = [];
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('.chat-list-item', { timeout: 60000, state: 'attached' });
-  await page.locator('.chat-list-item').first().click({ force: true });
+  await page.waitForSelector('.sf-pl-item', { timeout: 60000, state: 'attached' });
+  await page.locator('.sf-pl-item').first().click({ force: true });
   await page.waitForSelector('.chat-messages .chat-group', { timeout: 20000 });
   await delay(1500);
 

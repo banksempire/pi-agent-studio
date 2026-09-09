@@ -532,7 +532,7 @@ async function unitChecks({ report }) {
     await page.goto(`http://127.0.0.1:${vitePort}/`, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.sf-docker', { timeout: 60000 });
 
-    const itemSel = '.chat-list-item:has-text("peak-hours-check")';
+    const itemSel = '.sf-pl-item:has-text("peak-hours-check")';
     await page.waitForSelector(itemSel, { timeout: 60000 });
     await delay(1000);
     await page.locator(itemSel).first().click({ force: true });
@@ -567,21 +567,23 @@ async function unitChecks({ report }) {
       'layout: peak-hours subsection is variable-height with a minHeight',
       peakDef?.height === 'variable' &&
         peakDef?.minHeight === 80 &&
-        peakDef?.components?.[0]?.key === 'peak-hours',
+        !!peakDef?.components?.some(
+          (c) => c.type === 'list' && c.bind === 'peak-hours-rows' && c.variant === 'card',
+        ),
       JSON.stringify(peakDef ?? null),
     );
 
-    await page.waitForSelector('.aph', { timeout: 10000 });
+    await page.waitForSelector('[data-sub-body="peak-hours"]', { timeout: 10000 });
     const emptyHint = await page.locator('.aph-empty').count();
-    const emptyRows = await page.locator('.aph-row').count();
-    const idleHint = (await page.locator('.aph-hint').textContent()) ?? '';
+    const emptyRows = await page.locator('[data-sub-body="peak-hours"] .sf-pl-item').count();
+    const idleHint = (await page.locator('[data-sub-body="peak-hours"] .sf-ph-title').textContent()) ?? '';
     report(
       'panel starts scoped and empty with no hint text',
       emptyHint === 0 && emptyRows === 0 && idleHint.includes('select a model'),
       `hint=${emptyHint} rows=${emptyRows} idle=${idleHint.trim()}`,
     );
 
-    const addBeforeSelect = await page.locator('.aph-add').isDisabled();
+    const addBeforeSelect = await page.locator('[data-sub-body="peak-hours"] .sf-ph-act').isDisabled();
     report(
       'add is disabled until a model is selected in the catalog',
       addBeforeSelect,
@@ -590,14 +592,14 @@ async function unitChecks({ report }) {
 
     await page.locator('.model-catalog-row', { hasText: 'Stub Pro' }).first().click();
     await delay(300);
-    const scopedHint = (await page.locator('.aph-hint').textContent()) ?? '';
+    const scopedHint = (await page.locator('[data-sub-body="peak-hours"] .sf-ph-title').textContent()) ?? '';
     report(
       'the subsection head shows the selected model key',
       scopedHint.includes('stub/stub-pro'),
       `hint=${scopedHint.trim()}`,
     );
 
-    await page.locator('.aph-add').click();
+    await page.locator('[data-sub-body="peak-hours"] .sf-ph-act').click();
     await page.waitForSelector('.sf-dialog', { timeout: 5000 });
     await delay(150);
     const desktopFocus = await page.evaluate(() => ({
@@ -642,7 +644,7 @@ async function unitChecks({ report }) {
     await page.keyboard.press('Escape');
     await delay(200);
     const closedByEscape = (await page.locator('.sf-dialog').count()) === 0;
-    await page.locator('.aph-add').click();
+    await page.locator('[data-sub-body="peak-hours"] .sf-ph-act').click();
     await page.waitForSelector('.sf-dialog', { timeout: 5000 });
     report('Escape closes the popup', closedByEscape, `closed=${closedByEscape}`);
 
@@ -687,7 +689,7 @@ async function unitChecks({ report }) {
     const closedByButton = (await page.locator('.sf-dialog').count()) === 0;
     report('the close button closes the popup', closedByButton, `closed=${closedByButton}`);
 
-    await page.locator('.aph-add').click();
+    await page.locator('[data-sub-body="peak-hours"] .sf-ph-act').click();
     await page.waitForSelector('.sf-dialog', { timeout: 5000 });
     const modelSelectCount = await page.locator('#aph-model').count();
     const boundModel = (await page.locator('.aph-model-bound').textContent()) ?? '';
@@ -720,7 +722,7 @@ async function unitChecks({ report }) {
     );
 
     const addBtnTheme = await page.evaluate(() => {
-      const el = document.querySelector('.aph-add');
+      const el = document.querySelector('[data-sub-body="peak-hours"] .sf-ph-act');
       if (!el) return null;
       const cs = getComputedStyle(el);
       return { bg: cs.backgroundColor, color: cs.color, border: cs.borderTopStyle === 'solid' };
@@ -769,9 +771,9 @@ async function unitChecks({ report }) {
     await page.waitForSelector('.sf-root--mobile', { timeout: 5000 });
     await delay(400);
     await page.locator('.sf-mobile-rp-btn').first().click();
-    await page.waitForSelector('.aph-add', { timeout: 5000 });
+    await page.waitForSelector('[data-sub-body="peak-hours"] .sf-ph-act', { timeout: 5000 });
     const callsPreOpen = await page.evaluate(() => window.__pickerCalls);
-    await page.locator('.aph-add').click();
+    await page.locator('[data-sub-body="peak-hours"] .sf-ph-act').click();
     await page.waitForSelector('.sf-dialog', { timeout: 5000 });
     await delay(150);
     const mountState = await page.evaluate(() => ({
@@ -818,7 +820,7 @@ async function unitChecks({ report }) {
       pickerTap.stayedOpen && pickerTap.closedBySecondTap,
       JSON.stringify(pickerTap),
     );
-    await page.locator('.aph-add').click();
+    await page.locator('[data-sub-body="peak-hours"] .sf-ph-act').click();
     await page.waitForSelector('.sf-dialog', { timeout: 5000 });
     const mobileDayBtns = await page.locator('.aph-days .sf-ms-item').count();
     report('mobile dialog shows the weekday selector', mobileDayBtns === 7, `buttons=${mobileDayBtns}`);
@@ -892,7 +894,7 @@ async function unitChecks({ report }) {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.waitForSelector('.sf-root:not(.sf-root--mobile)', { timeout: 5000 });
     await delay(400);
-    await page.locator('.aph-add').click();
+    await page.locator('[data-sub-body="peak-hours"] .sf-ph-act').click();
     await page.waitForSelector('.sf-dialog', { timeout: 5000 });
 
     const dayCount = await page.locator('.aph-days .sf-ms-item').count();
@@ -989,9 +991,9 @@ async function unitChecks({ report }) {
     );
     await page.locator('.aph-save').click();
     await page.waitForSelector('.sf-dialog', { state: 'detached', timeout: 10000 });
-    await page.locator('.aph-row').waitFor({ timeout: 10000 });
+    await page.locator('[data-sub-body="peak-hours"] .sf-pl-item').waitFor({ timeout: 10000 });
 
-    let row = await page.locator('.aph-row').first().textContent();
+    let row = await page.locator('[data-sub-body="peak-hours"] .sf-pl-item').first().textContent();
     report(
       'created row shows the window in its timezone plus the UTC equivalent',
       row.includes('(UTC+2) 09:00-17:00') && row.includes('(UTC) 07:00-15:00') && row.includes('Mon–Fri'),
@@ -1021,7 +1023,10 @@ async function unitChecks({ report }) {
     );
     const entryId = r.body.entries[0].id;
 
-    await page.locator('.aph-row .aph-actions button[title="Edit window"]').first().click();
+    await page
+      .locator('[data-sub-body="peak-hours"] .sf-pl-item button[title="Edit window"]')
+      .first()
+      .click();
     await page.waitForSelector('.sf-dialog', { timeout: 5000 });
     const editPressed = await page.locator('.aph-days .sf-ms-item[aria-pressed="true"]').count();
     const editSun =
@@ -1042,7 +1047,7 @@ async function unitChecks({ report }) {
     );
     await page.locator('.aph-save').click();
     await page.waitForSelector('.sf-dialog', { state: 'detached', timeout: 10000 });
-    await page.locator('.aph-row').waitFor({ timeout: 10000 });
+    await page.locator('[data-sub-body="peak-hours"] .sf-pl-item').waitFor({ timeout: 10000 });
     r = await jfetch('/api/peak-hours');
     report(
       'saving after a timezone switch keeps the stored UTC window',
@@ -1051,10 +1056,13 @@ async function unitChecks({ report }) {
         r.body.entries[0].utcOffset === 0,
       JSON.stringify(r.body.entries[0]),
     );
-    row = await page.locator('.aph-row').first().textContent();
+    row = await page.locator('[data-sub-body="peak-hours"] .sf-pl-item').first().textContent();
     report('row re-renders in the new timezone', row.includes('(UTC) 07:00-15:00'), `row=${row}`);
 
-    await page.locator('.aph-row .aph-actions button[title="Edit window"]').first().click();
+    await page
+      .locator('[data-sub-body="peak-hours"] .sf-pl-item button[title="Edit window"]')
+      .first()
+      .click();
     await page.waitForSelector('.sf-dialog', { timeout: 5000 });
     for (let i = 0; i < 5; i++) {
       await page.locator('.aph-days .sf-ms-item[aria-pressed="true"]').first().click();
@@ -1080,7 +1088,7 @@ async function unitChecks({ report }) {
     );
     await page.locator('.aph-cancel').click();
     await delay(300);
-    const rowsAfterCancel = await page.locator('.aph-row').count();
+    const rowsAfterCancel = await page.locator('[data-sub-body="peak-hours"] .sf-pl-item').count();
     report('cancel leaves the list untouched', rowsAfterCancel === 1, `rows=${rowsAfterCancel}`);
 
     r = await jfetch('/api/peak-hours', {
@@ -1107,10 +1115,12 @@ async function unitChecks({ report }) {
     await page.locator('.sf-menu-row', { hasText: 'Model Catalog…' }).click();
     await page.waitForSelector('.model-catalog-row', { timeout: 10000 });
     await page.locator('.model-catalog-row', { hasText: 'Stub Pro' }).first().click();
-    await page.waitForSelector('.aph-row', { timeout: 10000 });
+    await page.waitForSelector('[data-sub-body="peak-hours"] .sf-pl-item', { timeout: 10000 });
     await delay(300);
-    const scopedRows = await page.locator('.aph-row').count();
-    const scopedGhostRows = await page.locator('.aph-row', { hasText: 'ghost' }).count();
+    const scopedRows = await page.locator('[data-sub-body="peak-hours"] .sf-pl-item').count();
+    const scopedGhostRows = await page
+      .locator('[data-sub-body="peak-hours"] .sf-pl-item', { hasText: 'ghost' })
+      .count();
     report(
       "the subsection lists only the selected model's windows",
       scopedRows === 1 && scopedGhostRows === 0,
@@ -1157,7 +1167,9 @@ async function unitChecks({ report }) {
     const peakTabPanelSubs = peakTabPanelDef?.sections?.[0]?.subSections ?? [];
     report(
       'layout: the peak-hours tab right panel shows the model detail',
-      peakTabPanelSubs.length === 1 && peakTabPanelSubs[0]?.components?.[0]?.key === 'model-detail',
+      peakTabPanelSubs.length === 1 &&
+        peakTabPanelSubs[0]?.components?.[0]?.type === 'keyValueList' &&
+        peakTabPanelSubs[0]?.components?.[0]?.bind === 'model-detail-rows',
       JSON.stringify(peakTabPanelDef ?? null),
     );
 
@@ -1223,7 +1235,7 @@ async function unitChecks({ report }) {
     await delay(300);
     const selRowCls =
       (await page.locator('.pht .sf-tbl-row', { hasText: 'stub/stub-pro' }).getAttribute('class')) ?? '';
-    const detailText = (await page.locator('.model-detail').textContent()) ?? '';
+    const detailText = (await page.locator('[data-sub-body="model-detail"]').textContent()) ?? '';
     report(
       'clicking a tab entry shows its model details in the right panel',
       selRowCls.includes('pht-row--selected') &&

@@ -91,9 +91,9 @@
                 "minHeight": 60,
                 "components": [
                   {
-                    "type": "component",
-                    "key": "chat-history",
-                    "props": { "pinned": true }
+                    "type": "list",
+                    "bind": "chat-pinned",
+                    "dismissOnActivate": true
                   }
                 ]
               },
@@ -113,8 +113,9 @@
                 ],
                 "components": [
                   {
-                    "type": "component",
-                    "key": "chat-history"
+                    "type": "list",
+                    "bind": "chat-history",
+                    "dismissOnActivate": true
                   }
                 ]
               },
@@ -132,8 +133,9 @@
                 ],
                 "components": [
                   {
-                    "type": "component",
-                    "key": "chat-sessions"
+                    "type": "list",
+                    "bind": "chat-sessions",
+                    "dismissOnActivate": true
                   }
                 ]
               }
@@ -150,8 +152,10 @@
                 "minHeight": 80,
                 "components": [
                   {
-                    "type": "component",
-                    "key": "directory-tree"
+                    "type": "tree",
+                    "bind": "directory-tree",
+                    "stateKey": "directory-tree",
+                    "empty": "Loading directories…"
                   }
                 ]
               }
@@ -212,8 +216,9 @@
               ],
               "components": [
                 {
-                  "type": "component",
-                  "key": "job-detail"
+                  "type": "keyValueList",
+                  "bind": "job-detail-rows",
+                  "maxHeight": 320
                 }
               ]
             },
@@ -224,8 +229,39 @@
               "minHeight": 60,
               "components": [
                 {
-                  "type": "component",
-                  "key": "job-history"
+                  "type": "table",
+                  "bind": "job-runs",
+                  "resizable": false,
+                  "empty": "no runs yet",
+                  "columns": [
+                    {
+                      "key": "status",
+                      "label": "Status",
+                      "min": 48,
+                      "kind": "status",
+                      "mobile": "lead"
+                    },
+                    {
+                      "key": "time",
+                      "label": "Queued",
+                      "min": 56,
+                      "kind": "time",
+                      "mobile": "sub"
+                    },
+                    {
+                      "key": "session",
+                      "label": "Session",
+                      "min": 60,
+                      "kind": "mono",
+                      "mobile": "title"
+                    },
+                    {
+                      "key": "error",
+                      "label": "Error",
+                      "min": 60,
+                      "kind": "danger"
+                    }
+                  ]
                 }
               ]
             }
@@ -241,8 +277,8 @@
               "height": "fixed",
               "components": [
                 {
-                  "type": "component",
-                  "key": "scheduler-prefs"
+                  "type": "form",
+                  "bind": "scheduler-caps"
                 }
               ]
             }
@@ -263,8 +299,9 @@
               "height": "fixed",
               "components": [
                 {
-                  "type": "component",
-                  "key": "model-detail"
+                  "type": "keyValueList",
+                  "bind": "model-detail-rows",
+                  "empty": "Click a model in the Model Catalog to inspect it."
                 }
               ]
             }
@@ -285,8 +322,9 @@
               "height": "fixed",
               "components": [
                 {
-                  "type": "component",
-                  "key": "model-detail"
+                  "type": "keyValueList",
+                  "bind": "model-detail-rows",
+                  "empty": "Click a model in the Model Catalog to inspect it."
                 }
               ]
             },
@@ -296,8 +334,8 @@
               "height": "fixed",
               "components": [
                 {
-                  "type": "component",
-                  "key": "model-preference"
+                  "type": "form",
+                  "bind": "model-preference-rows"
                 }
               ]
             },
@@ -308,8 +346,26 @@
               "minHeight": 80,
               "components": [
                 {
-                  "type": "component",
-                  "key": "peak-hours"
+                  "type": "header",
+                  "bind": "peak-model",
+                  "variant": "plain",
+                  "action": {
+                    "label": "add",
+                    "icon": "＋",
+                    "variant": "accent",
+                    "title": "Add peak hours",
+                    "action": "peak-add"
+                  }
+                },
+                {
+                  "type": "banner",
+                  "bind": "peak-error",
+                  "tone": "error"
+                },
+                {
+                  "type": "list",
+                  "bind": "peak-hours-rows",
+                  "variant": "card"
                 }
               ]
             }
@@ -331,8 +387,20 @@
             "height": "fixed",
             "components": [
               {
-                "type": "component",
-                "key": "model-picker"
+                "type": "keyValueList",
+                "bind": "model-picker-rows"
+              },
+              {
+                "type": "menuButton",
+                "label": "Change Model",
+                "bind": "model-picker-menu",
+                "title": "Change Model",
+                "action": "pick-model"
+              },
+              {
+                "type": "banner",
+                "bind": "model-picker-note",
+                "tone": "info"
               }
             ]
           },
@@ -342,8 +410,13 @@
             "height": "fixed",
             "components": [
               {
-                "type": "component",
-                "key": "session-stats"
+                "type": "header",
+                "bind": "session-header",
+                "variant": "bar"
+              },
+              {
+                "type": "keyValueList",
+                "bind": "session-stats"
               }
             ]
           }
@@ -359,8 +432,8 @@
             "height": "fixed",
             "components": [
               {
-                "type": "component",
-                "key": "prefs"
+                "type": "form",
+                "bind": "prefs-rows"
               }
             ]
           }
@@ -384,7 +457,8 @@
     "right": [
       {
         "id": "cwd",
-        "label": "/workspace/sf"
+        "label": "",
+        "bind": "app-cwd"
       }
     ]
   }

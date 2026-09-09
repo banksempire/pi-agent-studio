@@ -193,9 +193,9 @@ function readPrompts() {
       if (m.type() === 'error') errors.push(`console: ${m.text()}`);
     });
     await page.goto(`http://127.0.0.1:${vitePort}/`, { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('.chat-list-item:has-text("queue-msg-check")', { timeout: 60000 });
+    await page.waitForSelector('.sf-pl-item:has-text("queue-msg-check")', { timeout: 60000 });
     await delay(2000);
-    await page.locator('.chat-list-item:has-text("queue-msg-check")').first().click({ force: true });
+    await page.locator('.sf-pl-item:has-text("queue-msg-check")').first().click({ force: true });
     await page.waitForSelector('.chat-window', { timeout: 20000 });
     await delay(1500);
 

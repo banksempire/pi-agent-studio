@@ -165,10 +165,10 @@ function writeSession() {
       if (m.type() === 'error') errors.push(`console: ${m.text()}`);
     });
     await page.goto(`http://127.0.0.1:${vite}`, { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('.chat-list-item', { timeout: 60000 });
+    await page.waitForSelector('.sf-pl-item', { timeout: 60000 });
     await delay(1500);
 
-    await page.locator('.chat-list-item').first().click({ force: true });
+    await page.locator('.sf-pl-item').first().click({ force: true });
     await page.waitForSelector('.chat-input', { timeout: 20000 });
     await delay(1500);
 

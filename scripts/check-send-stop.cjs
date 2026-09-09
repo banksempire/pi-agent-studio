@@ -177,11 +177,11 @@ function writeSessionFile(name) {
         if (m.type() === 'error') errors.push(`console: ${m.text()}`);
       });
       await page.goto(`http://127.0.0.1:${vitePort}/`, { waitUntil: 'domcontentloaded' });
-      let itemSel = '.chat-list-item:has-text("send-stop-check")';
+      let itemSel = '.sf-pl-item:has-text("send-stop-check")';
       if (vp.width < 500) {
         await page.waitForSelector('.sf-root--mobile', { timeout: 60000 });
         await page.locator('.sf-docker-app[title="Chat"]').click();
-        itemSel = '[data-sub-body="history"] .chat-list-item:has-text("send-stop-check")';
+        itemSel = '[data-sub-body="history"] .sf-pl-item:has-text("send-stop-check")';
       }
       await page.waitForSelector(itemSel, { timeout: 60000 });
       await delay(2000);

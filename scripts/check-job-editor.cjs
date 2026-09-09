@@ -184,7 +184,7 @@ function writeSessionFile(name) {
     await page.goto(`http://127.0.0.1:${vitePort}/`, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.sf-docker', { timeout: 60000 });
 
-    const itemSel = '.chat-list-item:has-text("job-dialog-check")';
+    const itemSel = '.sf-pl-item:has-text("job-dialog-check")';
     await page.waitForSelector(itemSel, { timeout: 60000 });
     await delay(1000);
     await page.locator(itemSel).first().click({ force: true });
@@ -869,11 +869,11 @@ function writeSessionFile(name) {
       .first()
       .locator('.jobs-name')
       .click();
-    await page.locator('.job-detail').waitFor({ timeout: 5000 });
+    await page.locator('[data-sub-body="job-detail"] .kv-row').first().waitFor({ timeout: 5000 });
     await delay(200);
     report('clicking a row selects it without opening any popup', await noDialog());
     const detailState = await page.evaluate(() => {
-      const panel = document.querySelector('.job-detail');
+      const panel = document.querySelector('[data-sub-body="job-detail"]');
       return {
         text: panel?.textContent ?? '',
         msgBlock: !!document.querySelector('.job-detail-msg'),
@@ -891,7 +891,7 @@ function writeSessionFile(name) {
       JSON.stringify(detailState).slice(0, 220),
     );
     const heightProbe = await page.evaluate(() => {
-      const detail = document.querySelector('.job-detail');
+      const detail = document.querySelector('[data-sub-body="job-detail"] .sf-pc');
       const subBody = document.querySelector('[data-sub-body="job-detail"]');
       const style = detail ? getComputedStyle(detail) : null;
       return {
@@ -911,15 +911,18 @@ function writeSessionFile(name) {
       JSON.stringify(heightProbe),
     );
 
-    await page.locator('.job-history .sf-tbl-row').first().waitFor({ timeout: 5000 });
-    const historyRows = await page.locator('.job-history .sf-tbl-row').count();
-    const historyErr = await page.locator('.job-history .job-history-error').first().textContent();
+    await page.locator('[data-sub-body="job-history"] .sf-tbl-row').first().waitFor({ timeout: 5000 });
+    const historyRows = await page.locator('[data-sub-body="job-history"] .sf-tbl-row').count();
+    const historyErr = await page
+      .locator('[data-sub-body="job-history"] .sf-pt-cell--danger')
+      .first()
+      .textContent();
     const historyChrome = await page.evaluate(() => ({
-      search: !!document.querySelector('.job-history .sf-tbl-search'),
-      head: document.querySelector('.job-history .sf-tbl-head')?.textContent ?? '',
-      resizers: document.querySelectorAll('.job-history .sf-tbl-resize').length,
+      search: !!document.querySelector('[data-sub-body="job-history"] .sf-tbl-search'),
+      head: document.querySelector('[data-sub-body="job-history"] .sf-tbl-head')?.textContent ?? '',
+      resizers: document.querySelectorAll('[data-sub-body="job-history"] .sf-tbl-resize').length,
       fit: (() => {
-        const head = document.querySelector('.job-history .sf-tbl-head');
+        const head = document.querySelector('[data-sub-body="job-history"] .sf-tbl-head');
         const scroll = head ? head.closest('.sf-tbl-scroll') : null;
         if (!head || !scroll) return null;
         const ths = [...head.querySelectorAll('.sf-tbl-th')];
@@ -954,7 +957,7 @@ function writeSessionFile(name) {
     };
     const fitProbe = () =>
       page.evaluate(() => {
-        const head = document.querySelector('.job-history .sf-tbl-head');
+        const head = document.querySelector('[data-sub-body="job-history"] .sf-tbl-head');
         const scroll = head ? head.closest('.sf-tbl-scroll') : null;
         if (!head || !scroll) return null;
         const ths = [...head.querySelectorAll('.sf-tbl-th')];
@@ -995,7 +998,11 @@ function writeSessionFile(name) {
     await delay(600);
     const hiddenMounted = await page.evaluate(() => {
       const p = document.querySelector('.sf-panel--right');
-      return !!p && getComputedStyle(p).display === 'none' && !!p.querySelector('.job-history .sf-tbl-head');
+      return (
+        !!p &&
+        getComputedStyle(p).display === 'none' &&
+        !!p.querySelector('[data-sub-body="job-history"] .sf-tbl-head')
+      );
     });
     await page.locator('.sf-tab-panel-toggle').first().click();
     await delay(800);
@@ -1012,10 +1019,10 @@ function writeSessionFile(name) {
     await page.locator('.sf-panel-tab', { hasText: 'Preference' }).click();
     await delay(200);
     const capVals = await page.evaluate(() => ({
-      steppers: document.querySelectorAll('.scheduler-prefs .sf-stepper-input').length,
-      btns: document.querySelectorAll('.scheduler-prefs .sf-stepper-input-btn').length,
-      saveButtons: document.querySelectorAll('.scheduler-prefs .sp-save').length,
-      text: document.querySelector('.scheduler-prefs')?.textContent ?? '',
+      steppers: document.querySelectorAll('[data-sub-body="scheduler-prefs"] .sf-stepper-input').length,
+      btns: document.querySelectorAll('[data-sub-body="scheduler-prefs"] .sf-stepper-input-btn').length,
+      saveButtons: document.querySelectorAll('[data-sub-body="scheduler-prefs"] .sf-pc-btn').length,
+      text: document.querySelector('[data-sub-body="scheduler-prefs"]')?.textContent ?? '',
       subTitle: [...document.querySelectorAll('.sf-subsection-label')].map((el) => el.textContent ?? ''),
     }));
     report(
@@ -1032,7 +1039,9 @@ function writeSessionFile(name) {
     await page.locator('.sf-stepper-input-btn').first().click();
     await delay(1200);
     const stepped = await page.evaluate(() =>
-      [...document.querySelectorAll('.scheduler-prefs input[type="number"]')].map((i) => i.value),
+      [...document.querySelectorAll('[data-sub-body="scheduler-prefs"] input[type="number"]')].map(
+        (i) => i.value,
+      ),
     );
     report(
       'the spinner buttons step the cap value within bounds',
@@ -1047,10 +1056,12 @@ function writeSessionFile(name) {
         jobConfigPatches[0].modelMax === 1,
       JSON.stringify(jobConfigPatches),
     );
-    await page.locator('.scheduler-prefs input[type="number"]').first().fill('4');
+    await page.locator('[data-sub-body="scheduler-prefs"] input[type="number"]').first().fill('4');
     await delay(1200);
     const capAfter = await page.evaluate(() =>
-      [...document.querySelectorAll('.scheduler-prefs input[type="number"]')].map((i) => i.value),
+      [...document.querySelectorAll('[data-sub-body="scheduler-prefs"] input[type="number"]')].map(
+        (i) => i.value,
+      ),
     );
     report(
       'the caps re-sync from the refreshed scheduler state after save',
@@ -1079,8 +1090,8 @@ function writeSessionFile(name) {
       const other = document.querySelector('.sf-tbl-row:not(.jobs-row--sel) .jobs-name');
       return {
         selClass: !!document.querySelector('.sf-tbl-row.jobs-row--sel'),
-        detail: !!document.querySelector('.job-detail'),
-        empty: !!document.querySelector('.job-detail-empty'),
+        detail: !!document.querySelector('[data-sub-body="job-detail"] .kv-row'),
+        empty: !!document.querySelector('[data-sub-body="job-detail"] .sf-empty'),
         selColor: sel ? getComputedStyle(sel).color : '',
         otherColor: other ? getComputedStyle(other).color : '',
       };
@@ -1099,7 +1110,7 @@ function writeSessionFile(name) {
       .first()
       .locator('.jobs-name')
       .click();
-    await page.locator('.job-detail').waitFor({ timeout: 5000 });
+    await page.locator('[data-sub-body="job-detail"] .kv-row').first().waitFor({ timeout: 5000 });
 
     await page
       .locator('.jobs-tab .sf-tbl-row', { hasText: 'custom-cron job' })
@@ -1148,7 +1159,9 @@ function writeSessionFile(name) {
     report(
       'cancel closes the edit popup, the selection and detail panel persist',
       (await noDialog()) &&
-        ((await page.locator('.job-detail').textContent()) ?? '').includes('custom-cron job'),
+        ((await page.locator('[data-sub-body="job-detail"]').textContent()) ?? '').includes(
+          'custom-cron job',
+        ),
     );
 
     await page
@@ -1160,7 +1173,7 @@ function writeSessionFile(name) {
     report(
       'selecting another row retargets the panel with no popup',
       (await noDialog()) &&
-        ((await page.locator('.job-detail').textContent()) ?? '').includes('off-peak job'),
+        ((await page.locator('[data-sub-body="job-detail"]').textContent()) ?? '').includes('off-peak job'),
     );
     await page.locator('.sf-subsection-util[title="Edit job"]').click();
     await page
@@ -1206,11 +1219,11 @@ function writeSessionFile(name) {
       jobDeletes.length === 1 && jobDeletes[0] === 'deadbeef',
       JSON.stringify(jobDeletes),
     );
-    await page.locator('.job-detail-empty').waitFor({ timeout: 5000 });
+    await page.locator('[data-sub-body="job-detail"] .sf-empty').waitFor({ timeout: 5000 });
     report(
       'deleting the selected job clears the selection back to the empty hint',
-      (await page.locator('.job-detail-empty').count()) === 1 &&
-        (await page.locator('.job-detail').count()) === 0,
+      (await page.locator('[data-sub-body="job-detail"] .sf-empty').count()) === 1 &&
+        (await page.locator('[data-sub-body="job-detail"] .kv-row').count()) === 0,
     );
 
     await page.reload({ waitUntil: 'domcontentloaded' });

@@ -238,7 +238,7 @@ const composerIsFocused = (page) =>
     );
 
     const mobilePanel = page.locator('.sf-mobile-panel');
-    const historyItems = page.locator('[data-sub-body="history"] .chat-list-item');
+    const historyItems = page.locator('[data-sub-body="history"] .sf-pl-item');
     const mobileBarLabel = () => page.locator('.sf-mobile-tab-label').textContent();
 
     report(
@@ -248,7 +248,7 @@ const composerIsFocused = (page) =>
     );
 
     await page.locator('.sf-docker-app[title="Chat"]').click();
-    await page.waitForSelector('[data-sub-body="history"] .chat-list-item', { timeout: 60000 });
+    await page.waitForSelector('[data-sub-body="history"] .sf-pl-item', { timeout: 60000 });
     report(
       'chat panel opens fullscreen with the history list',
       (await mobilePanel.isVisible()) && (await historyItems.count()) >= 2,
@@ -279,7 +279,7 @@ const composerIsFocused = (page) =>
     );
 
     await page.locator('.sf-docker-app[title="Chat"]').click();
-    await page.waitForSelector('[data-sub-body="history"] .chat-list-item', { timeout: 30000 });
+    await page.waitForSelector('[data-sub-body="history"] .sf-pl-item', { timeout: 30000 });
     await page.locator('.sf-subsection-util[title="New Chat (Ctrl+N)"]').click();
     await page.waitForSelector('.sf-root .chat-messages', { timeout: 30000 });
     await delay(500);
@@ -292,7 +292,7 @@ const composerIsFocused = (page) =>
     await delay(600);
     report('desktop: switching shell mode does not focus the composer', !(await composerIsFocused(page)));
     await delay(400);
-    const desktopItem = page.locator('[data-sub-body="history"] .chat-list-item:has-text("Mob-B")');
+    const desktopItem = page.locator('[data-sub-body="history"] .sf-pl-item:has-text("Mob-B")');
     await desktopItem.first().click();
     await delay(600);
     report(

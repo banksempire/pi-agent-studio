@@ -251,15 +251,16 @@ const STUB_MODELS = [
     await page.goto(`http://127.0.0.1:${vitePort}/`, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.sf-docker', { timeout: 60000 });
 
-    const itemSel = '.chat-list-item:has-text("model-api-check")';
+    const itemSel = '.sf-pl-item:has-text("model-api-check")';
     await page.waitForSelector(itemSel, { timeout: 60000 });
     await delay(1000);
     await page.locator(itemSel).first().click({ force: true });
     await page.waitForSelector('.chat-msg', { timeout: 20000 });
     report('chat window opens with message content', true);
 
-    await page.waitForSelector('.model-menu', { timeout: 10000 });
-    const modelRow = (key) => page.locator(`.model-menu .kv-row:has(.kv-key:text-is("${key}")) .kv-value`);
+    await page.waitForSelector('[data-sub-body="session-model"] .kv-row', { timeout: 10000 });
+    const modelRow = (key) =>
+      page.locator(`[data-sub-body="session-model"] .kv-row:has(.kv-key:text-is("${key}")) .kv-value`);
     await modelRow('Model').waitFor({ timeout: 10000 });
     const beforeProvider = await modelRow('Provider').textContent();
     const beforeModel = await modelRow('Model').textContent();
@@ -270,7 +271,7 @@ const STUB_MODELS = [
       `${beforeProvider}/${beforeModel}/${beforeThinking}`,
     );
 
-    await page.locator('.model-menu-btn').click();
+    await page.locator('[data-sub-body="session-model"] .sf-pc-menubtn').click();
     await page.waitForSelector('.sf-menu-pop', { timeout: 5000 });
     await page.locator('.sf-menu-row', { hasText: 'stub' }).hover();
     await page.locator('.sf-menu-row', { hasText: 'Stub Pro' }).waitFor({ timeout: 5000 });
@@ -467,7 +468,7 @@ const STUB_MODELS = [
       aligns ? JSON.stringify(aligns) : 'no row',
     );
 
-    const detailHint = await page.locator('.model-detail-hint').count();
+    const detailHint = await page.locator('[data-sub-body="model-detail"] .sf-empty').count();
     report('model detail panel shows hint before selection', detailHint === 1, `hint=${detailHint}`);
 
     await page.setViewportSize({ width: 375, height: 900 });
@@ -603,8 +604,8 @@ const STUB_MODELS = [
 
     await page.locator('.model-catalog-row', { hasText: 'Stub Pro' }).first().click();
     await delay(400);
-    const detailText = (await page.locator('.model-detail').textContent()) ?? '';
-    const detailPill = await page.locator('.model-detail .kv-pill').count();
+    const detailText = (await page.locator('[data-sub-body="model-detail"]').textContent()) ?? '';
+    const detailPill = await page.locator('[data-sub-body="model-detail"] .kv-pill').count();
     const prefLabel = await page.locator('.sf-subsection-label', { hasText: 'Preference' }).count();
     report(
       'clicking a catalog row shows full metadata in the right panel',
@@ -650,11 +651,11 @@ const STUB_MODELS = [
     await page.locator('.sf-tab-label', { hasText: 'model-api-check' }).first().click({ force: true });
     await delay(400);
     const chatTitle = (await page.locator('.sf-panel--right .sf-panel-title').textContent()) ?? '';
-    const chatDetail = await page.locator('.model-detail').count();
+    const chatDetail = await page.locator('[data-sub-body="model-detail"]').count();
     await page.locator('.sf-tab-label', { hasText: 'Model Catalog' }).first().click({ force: true });
     await delay(400);
     const backTitle = (await page.locator('.sf-panel--right .sf-panel-title').textContent()) ?? '';
-    const backDetail = (await page.locator('.model-detail').textContent()) ?? '';
+    const backDetail = (await page.locator('[data-sub-body="model-detail"]').textContent()) ?? '';
     report(
       'right panel follows the focused tab: chat layout on chat tabs, catalog layout on catalog',
       chatTitle.trim() === 'Chat' &&
@@ -666,15 +667,20 @@ const STUB_MODELS = [
 
     await page.locator('.model-catalog-row', { hasText: 'Stub Mini' }).first().click();
     await delay(400);
-    const defPill = page.locator('.model-preference .prefs-row .sf-pill-item', { hasText: 'Yes' });
+    const defPill = page.locator(
+      '[data-sub-body="model-preference"] .sf-pf-row[data-row="default"] .sf-pill-item',
+      { hasText: 'Yes' },
+    );
     const miniSwitchBefore = await defPill.getAttribute('aria-pressed');
     await defPill.click();
     await delay(600);
     const togglePost = defaultPosts[defaultPosts.length - 1];
     const badgeRow = await page.locator('.model-catalog-row:has(.model-catalog-badge)').first().textContent();
     const miniSwitchAfter = await defPill.getAttribute('aria-pressed');
-    const miniPills = await page.locator('.model-preference-levels .sf-pill-item').count();
-    const srcNote = await page.locator('.model-preference-src').count();
+    const miniPills = await page
+      .locator('[data-sub-body="model-preference"] .sf-pf-row[data-row="think"] .sf-pill-item')
+      .count();
+    const srcNote = await page.locator('[data-sub-body="model-preference"] .sf-pf-note').count();
     report(
       'default-model toggle in the detail panel POSTs provider/id and moves the badge',
       miniSwitchBefore === 'false' &&
@@ -691,26 +697,43 @@ const STUB_MODELS = [
 
     await page.locator('.model-catalog-row', { hasText: 'Stub Pro' }).first().click();
     await delay(400);
-    await page.locator('.model-preference .prefs-row .sf-pill-item', { hasText: 'Yes' }).click();
+    await page
+      .locator('[data-sub-body="model-preference"] .sf-pf-row[data-row="default"] .sf-pill-item', {
+        hasText: 'Yes',
+      })
+      .click();
     await delay(600);
-    const proPills = await page.locator('.model-preference-levels .sf-pill-item').count();
+    const proPills = await page
+      .locator('[data-sub-body="model-preference"] .sf-pf-row[data-row="think"] .sf-pill-item')
+      .count();
     const pillGap = await page.evaluate(() => {
-      const track = document.querySelector('.model-preference .model-preference-levels .sf-pill-track');
-      if (!track?.parentElement) return null;
-      return Math.round(
-        track.parentElement.getBoundingClientRect().right - track.getBoundingClientRect().right,
-      );
+      const row = document.querySelector('[data-sub-body="model-preference"] .sf-pf-row[data-row="think"]');
+      const track = row?.querySelector('.sf-pill-track');
+      if (!row || !track) return null;
+      return Math.round(row.getBoundingClientRect().right - track.getBoundingClientRect().right);
     });
-    const pillItems = await page.locator('.model-preference-levels .sf-pill-item').count();
+    const pillItems = await page
+      .locator('[data-sub-body="model-preference"] .sf-pf-row[data-row="think"] .sf-pill-item')
+      .count();
     const itemW = await page.evaluate(() => {
-      const el = document.querySelector('.model-preference-levels .sf-pill-item');
+      const el = document.querySelector(
+        '[data-sub-body="model-preference"] .sf-pf-row[data-row="think"] .sf-pill-item',
+      );
       return el ? Math.round(el.getBoundingClientRect().width) : 0;
     });
-    const activeBefore = await page.locator('.model-preference-levels .sf-pill-item--on').textContent();
-    await page.locator('.model-preference-levels .sf-pill-item', { hasText: 'High' }).click();
+    const activeBefore = await page
+      .locator('[data-sub-body="model-preference"] .sf-pf-row[data-row="think"] .sf-pill-item--on')
+      .textContent();
+    await page
+      .locator('[data-sub-body="model-preference"] .sf-pf-row[data-row="think"] .sf-pill-item', {
+        hasText: 'High',
+      })
+      .click();
     await delay(600);
     const levelPost = defaultPosts[defaultPosts.length - 1];
-    const activeAfter = await page.locator('.model-preference-levels .sf-pill-item--on').textContent();
+    const activeAfter = await page
+      .locator('[data-sub-body="model-preference"] .sf-pf-row[data-row="think"] .sf-pill-item--on')
+      .textContent();
     report(
       'thinking-level pills POST thinkLevel with the default model and mark the active level',
       proPills === 3 &&
@@ -726,7 +749,11 @@ const STUB_MODELS = [
       `pills=${proPills} gap=${pillGap} itemW=${itemW} post=${JSON.stringify(levelPost)} active=${activeBefore}->${activeAfter}`,
     );
 
-    await page.locator('.model-preference .prefs-row .sf-pill-item', { hasText: 'No' }).click();
+    await page
+      .locator('[data-sub-body="model-preference"] .sf-pf-row[data-row="default"] .sf-pill-item', {
+        hasText: 'No',
+      })
+      .click();
     await delay(600);
     const clearPost = defaultPosts[defaultPosts.length - 1];
     const clearBadge = await page
@@ -734,9 +761,11 @@ const STUB_MODELS = [
       .first()
       .textContent();
     const clearSwitch = await page
-      .locator('.model-preference .prefs-row .sf-pill-item', { hasText: 'Yes' })
+      .locator('[data-sub-body="model-preference"] .sf-pf-row[data-row="default"] .sf-pill-item', {
+        hasText: 'Yes',
+      })
       .getAttribute('aria-pressed');
-    const clearSrc = await page.locator('.model-preference-src').textContent();
+    const clearSrc = await page.locator('[data-sub-body="model-preference"] .sf-pf-note').textContent();
     report(
       'unsetting the default POSTs null and falls back to the latest-chat model',
       !!clearPost &&
@@ -756,9 +785,9 @@ const STUB_MODELS = [
     report('the Chat menu no longer offers Change Model…', changeModelRows === 0, `rows=${changeModelRows}`);
     await page.keyboard.press('Escape');
     await delay(300);
-    await page.locator('.model-menu-btn').click();
+    await page.locator('[data-sub-body="session-model"] .sf-pc-menubtn').click();
     await delay(600);
-    const pickerOpen = await page.locator('.model-menu .sf-menu-pop').count();
+    const pickerOpen = await page.locator('[data-sub-body="session-model"] .sf-menu-pop').count();
     report(
       'the session panel Change Model button opens the picker menu',
       pickerOpen === 1,

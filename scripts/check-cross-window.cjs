@@ -249,12 +249,12 @@ function makeReporter() {
       if (m.type() === 'error') errors.push(`console: ${m.text()}`);
     });
     await page.goto(`http://127.0.0.1:${ports.vite}`, { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('.chat-list-item', { timeout: 60000 });
-    await page.waitForSelector('.chat-list-item:has-text("XWin-A:")', { timeout: 20000 });
+    await page.waitForSelector('.sf-pl-item', { timeout: 60000 });
+    await page.waitForSelector('.sf-pl-item:has-text("XWin-A:")', { timeout: 20000 });
     await delay(2000);
 
     const openSession = async (marker) => {
-      await page.locator(`.chat-list-item:has-text("${marker}")`).first().click({ force: true });
+      await page.locator(`.sf-pl-item:has-text("${marker}")`).first().click({ force: true });
       await page.waitForSelector('.chat-messages', { timeout: 20000 });
       await delay(2500);
       const i = await tabIndex(marker);
@@ -294,11 +294,11 @@ function makeReporter() {
 
     const t16 = await (async () => {
       const sessionsList = () => page.locator('[data-sub-body="sessions"]');
-      const bootCount = await sessionsList().locator('.chat-list-item').count();
+      const bootCount = await sessionsList().locator('.sf-pl-item').count();
       await openSession('XWin-C:');
-      const cItem = sessionsList().locator('.chat-list-item:has-text("XWin-C:")');
+      const cItem = sessionsList().locator('.sf-pl-item:has-text("XWin-C:")');
       const shown = (await cItem.count()) === 1;
-      const badge = (await cItem.locator('.chat-list-badge').textContent())?.trim();
+      const badge = (await cItem.locator('.sf-pl-badge').textContent())?.trim();
       const sessionsSub = page.locator('.sf-subsection:has([data-sub-body="sessions"])');
       await sessionsSub.locator('.sf-subsection-header').hover();
       await delay(100);
@@ -307,10 +307,10 @@ function makeReporter() {
       const openRow = page.locator('.sf-menu-pop .sf-menu-row:has-text("open")');
       await openRow.click();
       await delay(400);
-      const hiddenCount = await sessionsList().locator('.chat-list-item').count();
+      const hiddenCount = await sessionsList().locator('.sf-pl-item').count();
       await openRow.click();
       await delay(400);
-      const backCount = await sessionsList().locator('.chat-list-item').count();
+      const backCount = await sessionsList().locator('.sf-pl-item').count();
       await page.keyboard.press('Escape');
       await delay(200);
       const cIdx = await tabIndex('XWin-C:');
@@ -1160,13 +1160,13 @@ function makeReporter() {
         }
         return false;
       };
-      await page.waitForSelector('.chat-list-item', { timeout: 20000 });
-      const aRow = page.locator('.chat-list-item:has-text("XWin-A:")').first();
+      await page.waitForSelector('.sf-pl-item', { timeout: 20000 });
+      const aRow = page.locator('.sf-pl-item:has-text("XWin-A:")').first();
       if ((await aRow.count()) === 0) return { ok: false, why: 'XWin-A row missing in the session list' };
       const newTitle = 'XWin-A renamed without reload';
       await aRow.click({ button: 'right' });
       await page.locator('.sf-sm-menu .sf-sm-menu-row', { hasText: 'Rename' }).click();
-      await page.locator('.chat-dialog-input').fill(newTitle);
+      await page.locator('.sf-dialog-input').fill(newTitle);
       const renameChrome = await page.evaluate(() => {
         const dlg = document.querySelector('.sf-dialog');
         const btns = [...document.querySelectorAll('.sf-dialog-foot .sf-dialog-btn')];
@@ -1189,8 +1189,7 @@ function makeReporter() {
         JSON.stringify(renameChrome),
       );
       await page.getByRole('button', { name: 'Save' }).click();
-      const rowShows = async () =>
-        (await page.locator(`.chat-list-item:has-text("${newTitle}")`).count()) > 0;
+      const rowShows = async () => (await page.locator(`.sf-pl-item:has-text("${newTitle}")`).count()) > 0;
       const tabShows = async () => (await tabText()).some((t) => t.includes(newTitle));
       const updated = await until(async () => (await rowShows()) && (await tabShows()));
       return {
@@ -1209,7 +1208,7 @@ function makeReporter() {
         if ((await tabIndex(marker)) >= 0) return { ok: false, why: 'could not close XWin-B tab' };
       }
       await delay(600);
-      await page.locator(`.chat-list-item:has-text("${marker}")`).first().click({ force: true });
+      await page.locator(`.sf-pl-item:has-text("${marker}")`).first().click({ force: true });
       await page.waitForSelector('.chat-messages', { timeout: 20000 });
       const reviewTab = page.locator(`.sf-tab:has-text("${marker}")`).first();
       await reviewTab.waitFor({ state: 'visible', timeout: 10000 });
@@ -1272,8 +1271,8 @@ function makeReporter() {
       try {
         mob = await browser.newPage({ viewport: { width: 1440, height: 900 } });
         await mob.goto(`http://127.0.0.1:${ports.vite}`, { waitUntil: 'domcontentloaded' });
-        await mob.waitForSelector('.chat-list-item', { timeout: 60000 });
-        await mob.locator('.chat-list-item').first().click({ force: true });
+        await mob.waitForSelector('.sf-pl-item', { timeout: 60000 });
+        await mob.locator('.sf-pl-item').first().click({ force: true });
         await mob.waitForSelector('.chat-input', { timeout: 20000 });
         await delay(1500);
         await mob.setViewportSize({ width: 420, height: 900 });
@@ -1308,7 +1307,7 @@ function makeReporter() {
     const t19 = await (async () => {
       const histSub = page.locator('.sf-subsection:has([data-sub-body="history"])');
       const plusBtn = histSub.locator('.sf-subsection-util[title="New Chat (Ctrl+N)"]');
-      const newRow = () => page.locator('[data-sub-body="history"] .chat-list-item:has-text("New Chat")');
+      const newRow = () => page.locator('[data-sub-body="history"] .sf-pl-item:has-text("New Chat")');
       await histSub.locator('.sf-subsection-header').hover();
       await delay(150);
       for (let i = 0; i < 3; i++) {
@@ -1323,7 +1322,7 @@ function makeReporter() {
       await composer.fill('pins the lazy tab');
       await delay(900);
       await page.reload({ waitUntil: 'domcontentloaded' });
-      await page.waitForSelector('.chat-list-item', { timeout: 60000 });
+      await page.waitForSelector('.sf-pl-item', { timeout: 60000 });
       await delay(4000);
       const rowsAfterReload = await newRow().count();
       const tabsAfterReload = await page.locator('.sf-tab:has-text("New Chat")').count();
@@ -1427,7 +1426,7 @@ function makeReporter() {
         await delay(400);
       };
       await openList();
-      await page.locator(`.chat-list-item:has-text("${marker}")`).first().click({ force: true });
+      await page.locator(`.sf-pl-item:has-text("${marker}")`).first().click({ force: true });
       await delay(2500);
       const label = page.locator('.sf-mobile-tab-label');
       await label.waitFor({ state: 'visible', timeout: 10000 });
@@ -1442,7 +1441,7 @@ function makeReporter() {
       const pinned = !(await reviewOn());
       const dropdownClosed = (await page.locator('.sf-tab-dropdown').count()) === 0;
       await openList();
-      await page.locator('.chat-list-item:has-text("XWin-C:")').first().click({ force: true });
+      await page.locator('.sf-pl-item:has-text("XWin-C:")').first().click({ force: true });
       await delay(2500);
       await label.click();
       await delay(300);

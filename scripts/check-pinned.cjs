@@ -140,15 +140,15 @@ function makeReporter() {
 
 const pinnedBody = '[data-sub-body="pinned"]';
 const historyBody = '[data-sub-body="history"]';
-const pinnedItems = (page) => page.locator(`${pinnedBody} .chat-list-item`);
-const historyItems = (page) => page.locator(`${historyBody} .chat-list-item`);
+const pinnedItems = (page) => page.locator(`${pinnedBody} .sf-pl-item`);
+const historyItems = (page) => page.locator(`${historyBody} .sf-pl-item`);
 
 async function menuRow(page, label) {
   return page.locator('.sf-sm-menu-row', { hasText: label }).first();
 }
 
 async function openRowMenu(page, scopeSel, label) {
-  await page.locator(`${scopeSel} .chat-list-item`, { hasText: label }).first().click({ button: 'right' });
+  await page.locator(`${scopeSel} .sf-pl-item`, { hasText: label }).first().click({ button: 'right' });
   await page.waitForSelector('.sf-sm-menu', { timeout: 5000 });
 }
 
@@ -225,7 +225,7 @@ async function openRowMenu(page, scopeSel, label) {
       if (m.type() === 'error') errors.push(`console: ${m.text()}`);
     });
     await page.goto(`http://127.0.0.1:${vite}`, { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector(`${historyBody} .chat-list-item`, { timeout: 60000 });
+    await page.waitForSelector(`${historyBody} .sf-pl-item`, { timeout: 60000 });
     await delay(500);
 
     const order = await page.evaluate(
@@ -240,7 +240,7 @@ async function openRowMenu(page, scopeSel, label) {
     report('P1 Pinned sub-section exists and sits above Chat History', order === true, `order=${order}`);
 
     const emptyText = await page
-      .locator(`${pinnedBody} .chat-list-empty`)
+      .locator(`${pinnedBody} .sf-empty`)
       .textContent()
       .catch(() => '');
     report(
@@ -264,7 +264,7 @@ async function openRowMenu(page, scopeSel, label) {
       `row="${pinRowText.trim()}" svg=${pinRowSvg}`,
     );
     await pinRow.click();
-    await page.waitForSelector(`${pinnedBody} .chat-list-item`, { timeout: 5000 });
+    await page.waitForSelector(`${pinnedBody} .sf-pl-item`, { timeout: 5000 });
     await delay(300);
     report(
       'P4 Pin moves the chat into the Pinned section and out of Chat History',
@@ -288,7 +288,7 @@ async function openRowMenu(page, scopeSel, label) {
       `row="${unpinText}" svg=${unpinSvg}`,
     );
     await unpinRow.click();
-    await page.waitForSelector(`${historyBody} .chat-list-item:has-text("Pin-A")`, { timeout: 5000 });
+    await page.waitForSelector(`${historyBody} .sf-pl-item:has-text("Pin-A")`, { timeout: 5000 });
     await delay(300);
     report(
       'P6 Unpin moves the chat back into Chat History',
@@ -298,9 +298,9 @@ async function openRowMenu(page, scopeSel, label) {
 
     await openRowMenu(page, historyBody, 'Pin-A');
     await (await menuRow(page, 'Pin')).click();
-    await page.waitForSelector(`${pinnedBody} .chat-list-item:has-text("Pin-A")`, { timeout: 5000 });
+    await page.waitForSelector(`${pinnedBody} .sf-pl-item:has-text("Pin-A")`, { timeout: 5000 });
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await page.waitForSelector(`${historyBody} .chat-list-item`, { timeout: 60000 });
+    await page.waitForSelector(`${historyBody} .sf-pl-item`, { timeout: 60000 });
     await delay(500);
     report(
       'P7 pinning survives a full page reload (persisted)',
@@ -312,10 +312,10 @@ async function openRowMenu(page, scopeSel, label) {
 
     await openRowMenu(page, historyBody, 'Pin-B');
     await (await menuRow(page, 'Pin')).click();
-    await page.waitForSelector(`${pinnedBody} .chat-list-item:has-text("Pin-B")`, { timeout: 5000 });
+    await page.waitForSelector(`${pinnedBody} .sf-pl-item:has-text("Pin-B")`, { timeout: 5000 });
     await delay(400);
     const historyEmptyText = await page
-      .locator(`${historyBody} .chat-list-empty`)
+      .locator(`${historyBody} .sf-empty`)
       .textContent()
       .catch(() => '');
     const firstPinned = ((await pinnedItems(page).first().textContent()) ?? '').includes('Pin-A');
@@ -329,7 +329,7 @@ async function openRowMenu(page, scopeSel, label) {
 
     await openRowMenu(page, pinnedBody, 'Pin-B');
     await (await menuRow(page, 'Unpin')).click();
-    await page.waitForSelector(`${historyBody} .chat-list-item:has-text("Pin-B")`, { timeout: 5000 });
+    await page.waitForSelector(`${historyBody} .sf-pl-item:has-text("Pin-B")`, { timeout: 5000 });
     await delay(300);
     report(
       'P9 unpinning from the Pinned section restores the other chat in history',

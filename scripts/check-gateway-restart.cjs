@@ -321,8 +321,8 @@ const spawnBackend = (port, stubPath) =>
           netLog.push(`${tag} msgs ${r.status()} ${u.slice(u.indexOf('?') + 1, u.indexOf('?') + 60)}`);
       });
       await p.goto(`http://127.0.0.1:${vitePort}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-      await p.waitForSelector('.chat-list-item', { timeout: 60000 });
-      await p.locator('.chat-list-item').first().click({ force: true, timeout: 15000 });
+      await p.waitForSelector('.sf-pl-item', { timeout: 60000 });
+      await p.locator('.sf-pl-item').first().click({ force: true, timeout: 15000 });
       await p.waitForSelector('.chat-messages', { timeout: 30000 });
     }
     await delay(3000);

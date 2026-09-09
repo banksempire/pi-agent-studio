@@ -230,7 +230,7 @@ onMounted(() => {
       <template #actions>
         <button class="sf-dialog-btn jobs-confirm-cancel" type="button" @click="confirmJob = null">Cancel</button>
         <button class="sf-dialog-btn sf-dialog-btn--accent jobs-confirm-run" type="button" @click="confirmActivate">
-          Run now &amp; activate
+          Run now
         </button>
       </template>
     </Dialog>

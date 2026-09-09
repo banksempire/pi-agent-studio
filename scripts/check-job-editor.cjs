@@ -442,6 +442,7 @@ function writeSessionFile(name) {
       dialogOpen: !!document.querySelector('.sf-dialog'),
       title: document.querySelector('.sf-dialog-title')?.textContent ?? '',
       text: document.querySelector('.sf-dialog-body')?.textContent ?? '',
+      runBtn: (document.querySelector('.jobs-confirm-run')?.textContent ?? '').trim(),
     }));
     report(
       'activating a past-due once job asks for confirmation before patching',
@@ -449,6 +450,7 @@ function writeSessionFile(name) {
         confirmState.title === 'Run immediately?' &&
         confirmState.text.includes('past one-shot job') &&
         confirmState.text.includes('run it immediately') &&
+        confirmState.runBtn === 'Run now' &&
         jobPatches.length === 1,
       `${JSON.stringify(confirmState)} | patches=${JSON.stringify(jobPatches)}`,
     );
@@ -1180,6 +1182,26 @@ function writeSessionFile(name) {
 
     await page.setViewportSize({ width: 390, height: 844 });
     await delay(600);
+    const mobileSwitch = await page.evaluate(() => {
+      const row = document.querySelector('.jobs-tab .sf-tbl-row');
+      const sw = row?.querySelector('.jobs-switch');
+      const title = row?.querySelector('.sf-tbl-c--title');
+      const sub = row?.querySelector('.sf-tbl-c--sub');
+      if (!row || !sw || !title || !sub) return null;
+      const r = (el) => el.getBoundingClientRect();
+      const blockCenter = (r(title).top + r(sub).bottom) / 2;
+      const swCenter = (r(sw).top + r(sw).bottom) / 2;
+      return {
+        centered: Math.abs(swCenter - blockCenter) <= 3,
+        swCenter: Math.round(swCenter),
+        blockCenter: Math.round(blockCenter),
+      };
+    });
+    report(
+      'mobile: the enable switch is vertically centered across the two text lines',
+      !!mobileSwitch && mobileSwitch.centered,
+      JSON.stringify(mobileSwitch),
+    );
     await page.locator('.jobs-add').click();
     await page.locator('.sf-dialog-title', { hasText: 'New job' }).waitFor({ timeout: 10000 });
     await delay(300);

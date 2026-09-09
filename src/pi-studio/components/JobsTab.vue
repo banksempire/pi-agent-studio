@@ -53,7 +53,7 @@ const displayRows = computed(() =>
 );
 
 function selectRow(row: Record<string, unknown>) {
-  store.selectJob(store.selectedJob?.id === row.id ? null : (row.id as string));
+  store.selectJob(row.id as string);
 }
 
 function rowClass(row: Record<string, unknown>): Record<string, boolean> {
@@ -315,11 +315,7 @@ onMounted(() => {
 }
 
 .jobs-tab :deep(.sf-tbl-row.jobs-row--sel) {
-  background: var(--sf-accent-soft, rgba(96, 165, 250, 0.12));
-}
-
-.jobs-tab :deep(.sf-tbl-row.jobs-row--sel .jobs-name) {
-  color: var(--sf-accent);
+  background: var(--sf-selection);
 }
 
 .jobs-tab :deep(.sf-tbl-head) {

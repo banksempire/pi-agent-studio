@@ -1047,11 +1047,25 @@ function writeSessionFile(name) {
       .locator('.jobs-name')
       .click();
     await delay(200);
-    await page.locator('.job-detail-empty').waitFor({ timeout: 5000 });
+    const selKept = await page.evaluate(() => {
+      const sel = document.querySelector('.sf-tbl-row.jobs-row--sel .jobs-name');
+      const other = document.querySelector('.sf-tbl-row:not(.jobs-row--sel) .jobs-name');
+      return {
+        selClass: !!document.querySelector('.sf-tbl-row.jobs-row--sel'),
+        detail: !!document.querySelector('.job-detail'),
+        empty: !!document.querySelector('.job-detail-empty'),
+        selColor: sel ? getComputedStyle(sel).color : '',
+        otherColor: other ? getComputedStyle(other).color : '',
+      };
+    });
     report(
-      'clicking the selected row again deselects it back to the empty hint',
-      (await page.locator('.job-detail-empty').count()) === 1 &&
-        (await page.locator('.job-detail').count()) === 0,
+      'clicking the selected row again keeps it selected and the text style is unchanged',
+      selKept.selClass &&
+        selKept.detail &&
+        !selKept.empty &&
+        selKept.selColor !== '' &&
+        selKept.selColor === selKept.otherColor,
+      JSON.stringify(selKept),
     );
     await page
       .locator('.jobs-tab .sf-tbl-row', { hasText: 'custom-cron job' })

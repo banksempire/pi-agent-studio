@@ -74,10 +74,23 @@ function chatListItem(s: ChatSession): PanelListItem {
   };
 }
 
+const LOAD_MORE_ITEM_ID = 'sf-load-more-chats';
+
 function chatList(pinned: boolean): { items: PanelListItem[]; empty?: string } {
   const sessions = [...store.filteredSessions]
     .filter((s) => store.isPinned(s.id) === pinned)
     .sort((a, b) => b.lastActivity - a.lastActivity);
+  const items = sessions.map(chatListItem);
+  if (!pinned && store.hasMoreSessions) {
+    const remaining = Math.max(0, store.listTotal - store.listLoaded);
+    items.push({
+      id: LOAD_MORE_ITEM_ID,
+      label: store.loadingMore ? 'Loading…' : 'Load older chats',
+      meta: `${remaining} more`,
+      title: 'Load more chat history',
+      action: 'chat-history-more',
+    });
+  }
   let empty: string | undefined;
   if (sessions.length === 0) {
     if (store.filteredSessions.length === 0) {
@@ -89,7 +102,7 @@ function chatList(pinned: boolean): { items: PanelListItem[]; empty?: string } {
       empty = pinned ? 'No pinned chats — right-click one below to pin it.' : 'All chats are pinned.';
     }
   }
-  return { items: sessions.map(chatListItem), empty };
+  return { items, empty };
 }
 
 registerPanelData('chat-pinned', () => chatList(true));
@@ -809,6 +822,9 @@ export function handlePanelAction(action: string | undefined, payload: unknown):
         else if (p.option === 'rename') openRename(p.id ?? '');
         else if (p.option === 'delete') void store.deleteSession(p.id ?? '');
       }
+      break;
+    case 'chat-history-more':
+      if (p.gesture === 'activate') void store.loadMoreSessions();
       break;
     case 'chat-sessions':
       if (p.gesture === 'activate') store.openChat(p.id ?? '');

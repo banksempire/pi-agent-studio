@@ -193,6 +193,9 @@ interface ChatState {
   jobs: JobInfo[];
   jobsLoaded: boolean;
   scheduler: SchedulerInfo | null;
+  listTotal: number;
+  listLoaded: number;
+  loadingMore: boolean;
 }
 
 const PREFS_KEY = 'sf-chat:prefs';
@@ -349,7 +352,7 @@ function loadDrafts(): Record<string, string> {
 let draftsFlushTimer: number | null = null;
 
 function saveDraftsNow() {
-  if (state.sessions.length > 0) {
+  if (state.listTotal > 0 && state.listLoaded >= state.listTotal) {
     const known = new Set(state.sessions.map((s) => s.id));
     for (const id of Object.keys(state.drafts)) {
       if (!known.has(id)) delete state.drafts[id];
@@ -490,6 +493,9 @@ const state = reactive<ChatState>({
   jobs: [],
   jobsLoaded: false,
   scheduler: null,
+  listTotal: 0,
+  listLoaded: 0,
+  loadingMore: false,
   activeChatId: null,
   openViewTabIds: new Set(),
   reviewTabId: null,
@@ -918,52 +924,140 @@ function openPeakHours() {
   });
 }
 
-async function fetchList() {
+const CHAT_PAGE_SIZE = 50;
+
+async function fetchSessionsPage(
+  offset: number,
+  limit: number,
+): Promise<{ raws: SessionInfo[]; total: number }> {
+  const r = await api<{ sessions: SessionInfo[]; total: number }>(
+    `/api/sessions?limit=${limit}&offset=${offset}`,
+  );
+  return { raws: r.sessions ?? [], total: r.total ?? 0 };
+}
+
+async function fetchSessionsByFiles(files: string[]): Promise<SessionInfo[]> {
+  if (files.length === 0) return [];
   try {
-    const { sessions } = await api<{ sessions: SessionInfo[] }>('/api/sessions');
-    const prev = new Map(state.sessions.map((s) => [s.file, s]));
-    const onDisk = new Set(sessions.map((s) => s.file));
-    const synced: Record<string, SessionStateInfo> = {};
-    for (const raw of sessions) {
-      if (raw.state && raw.state !== 'close') {
-        synced[raw.file] = { state: raw.state, error: raw.stateError ?? '' };
+    const r = await api<{ sessions: SessionInfo[] }>(
+      `/api/sessions?files=${encodeURIComponent(files.join(','))}`,
+    );
+    return r.sessions ?? [];
+  } catch {
+    return [];
+  }
+}
+
+function initialInterestFiles(): string[] {
+  const files = new Set<string>();
+  const pushId = (id: string) => {
+    try {
+      files.add(decodeURIComponent(id));
+    } catch {}
+  };
+  for (const id of state.pinnedIds) pushId(id);
+  if (ws) {
+    for (const tabId of Object.keys(ws.tabDefs)) {
+      if (!tabId.startsWith(TAB_PREFIX)) continue;
+      pushId(tabId.slice(TAB_PREFIX.length));
+    }
+  }
+  return [...files];
+}
+
+function sessionFromRaw(raw: SessionInfo, old: ChatSession | undefined): ChatSession {
+  const s = toSession(raw);
+  s.onDisk = true;
+  if (old) {
+    s.messages = old.messages;
+    s.messagesLoaded = old.messagesLoaded;
+    s.hasMoreOlder = old.hasMoreOlder;
+    s.oldestId = old.oldestId;
+    s.loadingOlder = old.loadingOlder;
+    s.compacting = old.compacting;
+    s.compactResult = old.compactResult;
+    s.compactStartedAt = old.compactStartedAt;
+    s.compactEndedAt = old.compactEndedAt;
+    s.compactError = old.compactError;
+  }
+  return s;
+}
+
+function mergeSessionPage(allRaws: SessionInfo[], fullList: boolean): void {
+  const raws: SessionInfo[] = [];
+  const seenRaw = new Set<string>();
+  for (const raw of allRaws) {
+    if (seenRaw.has(raw.file)) continue;
+    seenRaw.add(raw.file);
+    raws.push(raw);
+  }
+  const prev = new Map(state.sessions.map((s) => [s.file, s]));
+  const unchanged =
+    raws.every((raw) => {
+      const old = prev.get(raw.file);
+      return old?.onDisk && oldListSignature(old) === listSignature(raw);
+    }) &&
+    (!fullList || prev.size === raws.length);
+  const synced: Record<string, SessionStateInfo> = {};
+  for (const raw of raws) {
+    if (raw.state && raw.state !== 'close') {
+      synced[raw.file] = { state: raw.state, error: raw.stateError ?? '' };
+    }
+  }
+  if (fullList) {
+    if (!sameSessionStates(state.sessionStates, synced)) state.sessionStates = synced;
+    pruneVisits(new Set(Object.keys(synced)));
+    if (unchanged) return;
+  } else {
+    const nextStates = { ...state.sessionStates };
+    let statesChanged = false;
+    for (const raw of raws) {
+      const info = synced[raw.file];
+      const cur = nextStates[raw.file];
+      if (info) {
+        if (!cur || cur.state !== info.state || cur.error !== info.error) {
+          nextStates[raw.file] = info;
+          statesChanged = true;
+        }
+      } else if (cur) {
+        delete nextStates[raw.file];
+        statesChanged = true;
       }
     }
-    if (!sameSessionStates(state.sessionStates, synced)) state.sessionStates = synced;
-    pruneVisits(onDisk);
-    const memoryOnly = state.sessions.filter((s) => !onDisk.has(s.file) && !s.onDisk);
-    if (
-      memoryOnly.length === 0 &&
-      sessions.length === prev.size &&
-      sessions.every((raw) => {
-        const old = prev.get(raw.file);
-        return old && oldListSignature(old) === listSignature(raw);
-      })
-    ) {
-      state.backend = 'online';
-      return;
-    }
-    state.sessions = [
-      ...memoryOnly,
-      ...sessions.map((raw) => {
-        const old = prev.get(raw.file);
-        const s = toSession(raw);
-        s.onDisk = true;
-        if (old) {
-          s.messages = old.messages;
-          s.messagesLoaded = old.messagesLoaded;
-          s.hasMoreOlder = old.hasMoreOlder;
-          s.oldestId = old.oldestId;
-          s.loadingOlder = old.loadingOlder;
-          s.compacting = old.compacting;
-          s.compactResult = old.compactResult;
-          s.compactStartedAt = old.compactStartedAt;
-          s.compactEndedAt = old.compactEndedAt;
-          s.compactError = old.compactError;
+    if (statesChanged) state.sessionStates = nextStates;
+    if (unchanged) return;
+  }
+  const rawsByFile = new Map(raws.map((raw) => [raw.file, raw]));
+  const memoryOnly = state.sessions.filter((s) => !s.onDisk && !rawsByFile.has(s.file));
+  const onDisk: ChatSession[] = fullList
+    ? raws.map((raw) => sessionFromRaw(raw, prev.get(raw.file)))
+    : (() => {
+        const kept: ChatSession[] = [];
+        for (const s of state.sessions) {
+          if (!s.onDisk) continue;
+          const raw = rawsByFile.get(s.file);
+          kept.push(raw ? sessionFromRaw(raw, s) : s);
         }
-        return s;
-      }),
-    ];
+        for (const raw of raws) {
+          if (prev.has(raw.file)) continue;
+          kept.push(sessionFromRaw(raw, prev.get(raw.file)));
+        }
+        return kept;
+      })();
+  onDisk.sort((a, b) => b.lastActivity - a.lastActivity);
+  state.sessions = [...memoryOnly, ...onDisk];
+}
+
+async function fetchList() {
+  try {
+    const initial = state.listTotal === 0 && state.listLoaded === 0;
+    const [page, pinRaws] = await Promise.all([
+      fetchSessionsPage(0, CHAT_PAGE_SIZE),
+      initial ? fetchSessionsByFiles(initialInterestFiles()) : Promise.resolve<SessionInfo[]>([]),
+    ]);
+    state.listTotal = page.total;
+    state.listLoaded = Math.max(state.listLoaded, page.raws.length);
+    mergeSessionPage([...page.raws, ...pinRaws], page.raws.length >= page.total);
     syncTabStatuses();
     state.backend = 'online';
     saveDrafts();
@@ -971,6 +1065,22 @@ async function fetchList() {
     sweepRestoredChatTabs();
   } catch (_e) {
     state.backend = 'offline';
+  }
+}
+
+export async function loadMoreSessions(): Promise<void> {
+  if (state.loadingMore || state.listLoaded >= state.listTotal) return;
+  state.loadingMore = true;
+  try {
+    const offset = state.listLoaded;
+    const { raws, total } = await fetchSessionsPage(offset, CHAT_PAGE_SIZE);
+    state.listTotal = total;
+    state.listLoaded = raws.length === 0 ? total : offset + raws.length;
+    mergeSessionPage(raws, offset === 0 && raws.length >= total);
+  } catch (e) {
+    if (!(e instanceof TypeError)) state.lastError = e instanceof Error ? e.message : String(e);
+  } finally {
+    state.loadingMore = false;
   }
 }
 
@@ -2303,6 +2413,19 @@ export const store = {
   get sessions() {
     return state.sessions;
   },
+  get listTotal() {
+    return state.listTotal;
+  },
+  get listLoaded() {
+    return state.listLoaded;
+  },
+  get hasMoreSessions() {
+    return state.listTotal > state.listLoaded;
+  },
+  get loadingMore() {
+    return state.loadingMore;
+  },
+  loadMoreSessions,
   get filteredSessions() {
     return state.sessions.filter((s) => s.onDisk && cwdMatches(s, state.selectedDirs));
   },

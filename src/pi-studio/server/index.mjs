@@ -1237,13 +1237,41 @@ const server = createServer(async (req, res) => {
       await sessionStates.reconcileNest(nestStates, resolveFileOutcome, FILE_STALE_RUN_MS);
       const states = new Map(nestStates.map((s) => [s.agentId, s]));
       await ensureModelCatalog();
-      const sessions = (await Promise.all(files.map((f) => analyzeSession(f, { states })))).filter(Boolean);
+      const filesParam = url.searchParams.get('files');
+      const limitParam = url.searchParams.get('limit');
+      let selected = files;
+      if (filesParam) {
+        const wanted = new Set(
+          filesParam
+            .split(',')
+            .map((f) => f.trim())
+            .filter(Boolean),
+        );
+        selected = files.filter((f) => wanted.has(f));
+      } else if (limitParam !== null) {
+        const limit = Math.max(0, Number(limitParam) || 0);
+        const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
+        const ranked = await Promise.all(
+          files.map(async (f) => {
+            const st = await stat(f).catch(() => null);
+            return { f, mtime: st ? st.mtimeMs : 0 };
+          }),
+        );
+        ranked.sort((a, b) => b.mtime - a.mtime || (a.f < b.f ? -1 : 1));
+        selected = ranked.slice(offset, offset + limit).map((e) => e.f);
+      }
+      const sessions = (await Promise.all(selected.map((f) => analyzeSession(f, { states })))).filter(
+        Boolean,
+      );
       sessions.sort((a, b) => b.modified - a.modified);
       for (const s of sessions) {
         s.state = sessionStates.stateOf(s.file);
         s.stateError = sessionStates.errorOf(s.file);
       }
-      sendJson(res, 200, { sessions: await Promise.all(sessions.map(withContext)) });
+      sendJson(res, 200, {
+        sessions: await Promise.all(sessions.map(withContext)),
+        total: filesParam ? sessions.length : files.length,
+      });
       return;
     }
 

@@ -1400,6 +1400,20 @@ function handleEvent(ev: any) {
       ensurePinnedSessionsVisible();
       break;
     }
+    case 'session_upsert': {
+      if (ev.session?.file) {
+        mergeSessionPage([ev.session as SessionInfo], false);
+        syncTabStatuses();
+      }
+      break;
+    }
+    case 'session_remove': {
+      if (state.sessions.some((s) => s.file === ev.file)) {
+        state.sessions = state.sessions.filter((s) => s.file !== ev.file);
+        sweepGhostChatTabs();
+      }
+      break;
+    }
   }
 }
 

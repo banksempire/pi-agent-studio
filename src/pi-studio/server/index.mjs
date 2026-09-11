@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { createReadStream, existsSync } from 'node:fs';
+import { createReadStream, existsSync, watch } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import os from 'node:os';
@@ -752,6 +752,53 @@ async function withContext(info) {
   return info;
 }
 
+async function sessionRow(file, states) {
+  const info = await analyzeSession(file, { states });
+  if (!info) return null;
+  info.state = sessionStates.stateOf(file);
+  info.stateError = sessionStates.errorOf(file);
+  return await withContext(info);
+}
+
+function rowSignatureOf(info) {
+  return [
+    info.file,
+    info.modified,
+    info.running,
+    info.messageCount,
+    info.model ?? '',
+    info.preview,
+    info.name ?? '',
+    info.firstMessage ?? '',
+    info.tokens?.input,
+    info.tokens?.output,
+    info.cost,
+    info.cwd,
+    JSON.stringify(info.context ?? ''),
+  ].join('|');
+}
+
+async function pushSessionRow(file) {
+  if (conns.size === 0 || !client) return;
+  try {
+    const nestStates = await client.listStates().catch(() => ({ states: [] }));
+    const states = new Map((nestStates.states ?? []).map((s) => [s.agentId, s]));
+    const info = await sessionRow(file, states);
+    if (!info) {
+      if (rowSignatures.has(file)) {
+        rowSignatures.delete(file);
+        fileMtimes.delete(file);
+        emit({ type: 'session_remove', file });
+      }
+      return;
+    }
+    const sig = rowSignatureOf(info);
+    if (rowSignatures.get(file) === sig) return;
+    rowSignatures.set(file, sig);
+    emit({ type: 'session_upsert', session: info });
+  } catch {}
+}
+
 const TREE_SKIP_DIRS = new Set([
   'node_modules',
   '.git',
@@ -892,6 +939,8 @@ function globalKeyOf(event) {
   if (event.type === 'session_status') return `s\u0000${event.file}`;
   if (event.type === 'session_state') return `st\u0000${event.file}`;
   if (event.type === 'queue_update') return `q\u0000${event.file}`;
+  if (event.type === 'session_upsert') return `su\u0000${event.session?.file ?? ''}`;
+  if (event.type === 'session_remove') return `sr\u0000${event.file}`;
   if (event.type === 'pins_update') return 'pins';
   return null;
 }
@@ -1056,6 +1105,7 @@ setInterval(() => {
 }, HEARTBEAT_INTERVAL_MS);
 
 const refreshTimers = new Map();
+const rowSignatures = new Map();
 function emitRefresh(file) {
   const existing = refreshTimers.get(file);
   if (existing) clearTimeout(existing);
@@ -1065,6 +1115,7 @@ function emitRefresh(file) {
       refreshTimers.delete(file);
       emit({ type: 'refresh', file });
       scheduleTreePush();
+      void pushSessionRow(file);
     }, 250),
   );
 }
@@ -1328,14 +1379,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (p === '/api/sessions' && req.method === 'GET') {
-      const files = [];
-      for (const dirEntry of await readdir(SESSIONS_ROOT, { withFileTypes: true })) {
-        if (!dirEntry.isDirectory()) continue;
-        const dir = path.join(SESSIONS_ROOT, dirEntry.name);
-        for (const f of await readdir(dir)) {
-          if (f.endsWith('.jsonl')) files.push(path.join(dir, f));
-        }
-      }
+      const files = await listSessionFiles();
       const nestStates = (await client.listStates().catch(() => ({ states: [] }))).states ?? [];
       await sessionStates.reconcileNest(nestStates, resolveFileOutcome, FILE_STALE_RUN_MS);
       const states = new Map(nestStates.map((s) => [s.agentId, s]));
@@ -1354,25 +1398,12 @@ const server = createServer(async (req, res) => {
       } else if (limitParam !== null) {
         const limit = Math.max(0, Number(limitParam) || 0);
         const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
-        const ranked = await Promise.all(
-          files.map(async (f) => {
-            const st = await stat(f).catch(() => null);
-            return { f, mtime: st ? st.mtimeMs : 0 };
-          }),
-        );
-        ranked.sort((a, b) => b.mtime - a.mtime || (a.f < b.f ? -1 : 1));
-        selected = ranked.slice(offset, offset + limit).map((e) => e.f);
+        selected = files.slice(offset, offset + limit);
       }
-      const sessions = (await Promise.all(selected.map((f) => analyzeSession(f, { states })))).filter(
-        Boolean,
-      );
+      const sessions = (await Promise.all(selected.map((f) => sessionRow(f, states)))).filter(Boolean);
       sessions.sort((a, b) => b.modified - a.modified);
-      for (const s of sessions) {
-        s.state = sessionStates.stateOf(s.file);
-        s.stateError = sessionStates.errorOf(s.file);
-      }
       sendJson(res, 200, {
-        sessions: await Promise.all(sessions.map(withContext)),
+        sessions,
         total: filesParam ? sessions.length : files.length,
       });
       return;
@@ -1966,6 +1997,18 @@ const fileParsedBytes = new Map();
 const FILE_FRESH_MS = 15_000;
 const FILE_STALE_RUN_MS = 30 * 60_000;
 const TERMINAL_STOP_REASONS = new Set(['stop', 'length', 'error', 'aborted']);
+const SESSION_SCAN_FALLBACK_MS = Number(process.env.PI_STUDIO_SESSION_SCAN_MS ?? 30_000);
+const SESSION_SCAN_FAST_MS = Number(process.env.PI_STUDIO_SESSION_SCAN_MS_FAST ?? 2_000);
+const SESSION_FILES_TTL_MS = 1_000;
+const sessionDirWatchers = new Map();
+const knownSessionDirs = new Set();
+const pendingFileChecks = new Map();
+let sessionFilesCache = null;
+let sessionFilesGen = 0;
+let sessionScanTimer = null;
+let sessionRootWatcher = null;
+let rootSyncTimer = null;
+let sessionWatchBroken = false;
 
 function applyFileEntries(file, newEntries) {
   let lastMessage = null;
@@ -2018,6 +2061,29 @@ async function trackFileGrowth(file, st, known) {
   if (newEntries.length > 0) applyFileEntries(file, newEntries);
 }
 
+async function checkSessionFile(file) {
+  const st = await stat(file).catch(() => null);
+  if (!st) {
+    if (fileMtimes.has(file)) {
+      fileMtimes.delete(file);
+      rowSignatures.delete(file);
+      sessionFilesGen++;
+      emit({ type: 'session_remove', file });
+    }
+    return;
+  }
+  const m = st.mtimeMs;
+  if (fileMtimes.get(file) === m) {
+    if (!fileParsedBytes.has(file)) fileParsedBytes.set(file, st.size);
+    return;
+  }
+  const known = fileMtimes.has(file);
+  fileMtimes.set(file, m);
+  sessionFilesGen++;
+  emitRefresh(file);
+  await trackFileGrowth(file, st, known);
+}
+
 async function watchSessionFiles() {
   for (const file of sessionStates.files()) {
     if (!existsSync(file)) sessionStates.remove(file);
@@ -2038,21 +2104,156 @@ async function watchSessionFiles() {
     } catch {
       continue;
     }
-    const jsonl = files.filter((f) => f.endsWith('.jsonl'));
-    const stats = await Promise.all(jsonl.map((f) => stat(path.join(dir, f)).catch(() => null)));
-    for (let i = 0; i < jsonl.length; i++) {
-      const st = stats[i];
-      if (!st) continue;
-      const file = path.join(dir, jsonl[i]);
-      const m = st.mtimeMs;
-      if (fileMtimes.get(file) !== m) {
-        const known = fileMtimes.has(file);
-        fileMtimes.set(file, m);
-        emitRefresh(file);
-        await trackFileGrowth(file, st, known);
-      } else if (!fileParsedBytes.has(file)) {
-        fileParsedBytes.set(file, st.size);
+    for (const f of files) {
+      if (f.endsWith('.jsonl')) await checkSessionFile(path.join(dir, f));
+    }
+  }
+}
+
+async function listSessionFiles() {
+  const now = Date.now();
+  if (
+    sessionFilesCache &&
+    sessionFilesCache.gen === sessionFilesGen &&
+    now - sessionFilesCache.at < SESSION_FILES_TTL_MS
+  ) {
+    return sessionFilesCache.files;
+  }
+  const files = [];
+  for (const dirEntry of await readdir(SESSIONS_ROOT, { withFileTypes: true })) {
+    if (!dirEntry.isDirectory()) continue;
+    const dir = path.join(SESSIONS_ROOT, dirEntry.name);
+    for (const f of await readdir(dir)) {
+      if (f.endsWith('.jsonl')) files.push(path.join(dir, f));
+    }
+  }
+  const ranked = await Promise.all(
+    files.map(async (f) => {
+      const st = await stat(f).catch(() => null);
+      return { f, mtime: st ? st.mtimeMs : 0 };
+    }),
+  );
+  ranked.sort((a, b) => b.mtime - a.mtime || (a.f < b.f ? -1 : 1));
+  sessionFilesCache = { at: now, gen: sessionFilesGen, files: ranked.map((e) => e.f) };
+  return sessionFilesCache.files;
+}
+
+function startSessionScan(ms) {
+  if (sessionScanTimer) clearInterval(sessionScanTimer);
+  sessionScanTimer = setInterval(() => void watchSessionFiles(), ms);
+}
+
+function breakSessionWatch(reason) {
+  if (sessionWatchBroken) return;
+  sessionWatchBroken = true;
+  for (const w of sessionDirWatchers.values()) {
+    try {
+      w.close();
+    } catch {}
+  }
+  sessionDirWatchers.clear();
+  knownSessionDirs.clear();
+  if (sessionRootWatcher) {
+    try {
+      sessionRootWatcher.close();
+    } catch {}
+    sessionRootWatcher = null;
+  }
+  startSessionScan(SESSION_SCAN_FAST_MS);
+  console.error(`[backend] session fs.watch unavailable (${reason}) — scanner at ${SESSION_SCAN_FAST_MS}ms`);
+}
+
+function scheduleFileCheck(file, delayMs = 150) {
+  if (pendingFileChecks.has(file)) return;
+  pendingFileChecks.set(
+    file,
+    setTimeout(() => {
+      pendingFileChecks.delete(file);
+      void checkSessionFile(file);
+    }, delayMs),
+  );
+}
+
+function scheduleRootSync() {
+  if (rootSyncTimer) return;
+  rootSyncTimer = setTimeout(() => {
+    rootSyncTimer = null;
+    void syncSessionDirs();
+  }, 200);
+}
+
+function watchSessionDir(dir) {
+  if (sessionDirWatchers.has(dir) || sessionWatchBroken) return;
+  let w;
+  try {
+    w = watch(dir, (_event, filename) => {
+      if (!filename) {
+        scheduleRootSync();
+        return;
       }
+      if (filename.endsWith('.jsonl')) scheduleFileCheck(path.join(dir, filename));
+      else scheduleRootSync();
+    });
+  } catch {
+    breakSessionWatch('watch failed');
+    return;
+  }
+  w.on('error', () => {
+    try {
+      w.close();
+    } catch {}
+    sessionDirWatchers.delete(dir);
+    knownSessionDirs.delete(dir);
+    scheduleRootSync();
+  });
+  w.on('close', () => sessionDirWatchers.delete(dir));
+  sessionDirWatchers.set(dir, w);
+}
+
+function watchSessionRoot() {
+  if (sessionRootWatcher || sessionWatchBroken) return;
+  let w;
+  try {
+    w = watch(SESSIONS_ROOT, (_event, filename) => {
+      if (filename === null || !filename.endsWith('.jsonl')) scheduleRootSync();
+    });
+  } catch {
+    breakSessionWatch('root watch failed');
+    return;
+  }
+  w.on('error', () => breakSessionWatch('root watcher error'));
+  w.on('close', () => {
+    if (sessionRootWatcher === w) sessionRootWatcher = null;
+  });
+  sessionRootWatcher = w;
+}
+
+async function syncSessionDirs() {
+  if (sessionWatchBroken) return;
+  watchSessionRoot();
+  let entries;
+  try {
+    entries = await readdir(SESSIONS_ROOT, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  const dirs = new Set(entries.filter((e) => e.isDirectory()).map((e) => path.join(SESSIONS_ROOT, e.name)));
+  for (const [dir, w] of sessionDirWatchers) {
+    if (!dirs.has(dir)) {
+      try {
+        w.close();
+      } catch {}
+      sessionDirWatchers.delete(dir);
+      knownSessionDirs.delete(dir);
+    }
+  }
+  for (const dir of dirs) {
+    watchSessionDir(dir);
+    if (knownSessionDirs.has(dir)) continue;
+    knownSessionDirs.add(dir);
+    const files = await readdir(dir).catch(() => []);
+    for (const f of files) {
+      if (f.endsWith('.jsonl')) scheduleFileCheck(path.join(dir, f), 0);
     }
   }
 }
@@ -2078,7 +2279,8 @@ if (journal && registry) {
 }
 
 void watchSessionFiles().then(() => {
-  setInterval(watchSessionFiles, 2000);
+  startSessionScan(SESSION_SCAN_FALLBACK_MS);
+  void syncSessionDirs();
 });
 
 server.listen(PORT, HOST, () => {

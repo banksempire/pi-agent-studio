@@ -532,6 +532,91 @@ async function stateOfSession(port, file) {
   })();
   report('S12 /api/sessions poll reconciles nest-running sessions missing from the registry', t.ok, t.why);
 
+  t = await (async () => {
+    const F_UP = writeSessionFile('sync-up1', { turns: 2 });
+    const U = sseClient(gatewayPort);
+    await waitReady(U);
+    let ev;
+    try {
+      ev = await waitFor(
+        U,
+        (e) => e.type === 'session_upsert' && e.session?.file === F_UP,
+        'session_upsert on create',
+        12000,
+      );
+    } catch (e) {
+      U.destroy();
+      return { ok: false, why: `no session_upsert for new file: ${e.message}` };
+    }
+    U.destroy();
+    const s = ev.session;
+    return {
+      ok: s.preview === 'sync-up1 a1' && s.messageCount === 4 && typeof s.state === 'string',
+      why: `push row on create: preview:'${s.preview}' msgs:${s.messageCount} state:${s.state}`,
+    };
+  })();
+  report('S13 new session file pushes session_upsert with full row, no list poll', t.ok, t.why);
+
+  t = await (async () => {
+    const F_UP = path.join(SESSIONS_ROOT, '--tmp-sync--', 'sync-up1.jsonl');
+    const U = sseClient(gatewayPort);
+    await waitReady(U);
+    const before = U.events.filter((e) => e.type === 'session_upsert' && e.session?.file === F_UP).length;
+    fs.appendFileSync(
+      F_UP,
+      `${JSON.stringify({
+        type: 'message',
+        id: 'sync-up1-u2',
+        parentId: null,
+        timestamp: new Date().toISOString(),
+        message: { role: 'user', content: [{ type: 'text', text: 'sync-up1 q2' }], timestamp: Date.now() },
+      })}\n`,
+    );
+    let ev;
+    try {
+      ev = await waitFor(
+        U,
+        (e) =>
+          e.type === 'session_upsert' && e.session?.file === F_UP && e.session?.preview === 'sync-up1 q2',
+        'session_upsert with new preview',
+        12000,
+      );
+    } catch (e) {
+      U.destroy();
+      return { ok: false, why: `no updated session_upsert after append: ${e.message}` };
+    }
+    const total = U.events.filter((e) => e.type === 'session_upsert' && e.session?.file === F_UP).length;
+    U.destroy();
+    return {
+      ok: total > before && ev.session.messageCount === 5,
+      why: `push row on append: upserts ${before}→${total} msgs:${ev.session.messageCount}`,
+    };
+  })();
+  report('S14 appending to a session pushes an updated row (preview/messageCount) via SSE', t.ok, t.why);
+
+  t = await (async () => {
+    const F_DEL = writeSessionFile('sync-del', { turns: 1 });
+    const U = sseClient(gatewayPort);
+    await waitReady(U);
+    await waitFor(
+      U,
+      (e) => e.type === 'session_upsert' && e.session?.file === F_DEL,
+      'row before delete',
+      12000,
+    );
+    fs.unlinkSync(F_DEL);
+    let ev;
+    try {
+      ev = await waitFor(U, (e) => e.type === 'session_remove' && e.file === F_DEL, 'session_remove', 12000);
+    } catch (e) {
+      U.destroy();
+      return { ok: false, why: `no session_remove after unlink: ${e.message}` };
+    }
+    U.destroy();
+    return { ok: ev.file === F_DEL, why: `session_remove for ${path.basename(ev.file)}` };
+  })();
+  report('S15 deleting a session file pushes session_remove', t.ok, t.why);
+
   A.destroy();
   gateway.kill('SIGTERM');
 

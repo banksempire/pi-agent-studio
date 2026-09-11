@@ -201,7 +201,7 @@ interface ChatState {
 const PREFS_KEY = 'sf-chat:prefs';
 const STATE_FILTER_KEY = 'sf-chat:stateFilter';
 const DRAFTS_KEY = 'sf-chat:drafts';
-const PINNED_KEY = 'sf-chat:pinned';
+const LEGACY_PINNED_KEY = 'sf-chat:pinned';
 
 function readPersistedObject(uiKey: string, legacyKey: string): Record<string, unknown> | null {
   const v = readUiValue(uiKey);
@@ -238,34 +238,94 @@ function saveStateFilter() {
   writePersistedObject('app.chat.stateFilter', STATE_FILTER_KEY, state.stateFilter);
 }
 
-function loadPinned(): Set<string> {
-  const out = new Set<string>();
-  const j = readPersistedObject('app.chat.pinned', PINNED_KEY);
-  if (j) {
-    for (const [id, v] of Object.entries(j)) {
-      if (id && v === true) out.add(id);
-    }
-  }
-  return out;
-}
-
-function pinnedRecord(): Record<string, boolean> {
-  const rec: Record<string, boolean> = {};
-  for (const id of state.pinnedIds) rec[id] = true;
-  return rec;
-}
-
-function savePinned() {
-  writePersistedObject('app.chat.pinned', PINNED_KEY, pinnedRecord());
-}
-
 function isPinned(sessionId: string): boolean {
   return state.pinnedIds.has(sessionId);
 }
 
+function applyPins(files: string[]) {
+  state.pinnedIds = new Set(files.map((f) => encodeURIComponent(f)));
+}
+
+async function fetchPins(): Promise<void> {
+  try {
+    const { pins } = await api<{ pins: string[] }>('/api/pins');
+    applyPins(pins ?? []);
+    migrateLegacyPins();
+  } catch {}
+}
+
+function ensurePinnedSessionsVisible() {
+  const known = new Set(state.sessions.map((s) => s.file));
+  const missing: string[] = [];
+  for (const id of state.pinnedIds) {
+    try {
+      const file = decodeURIComponent(id);
+      if (!known.has(file)) missing.push(file);
+    } catch {}
+  }
+  if (missing.length === 0) return;
+  void fetchSessionsByFiles(missing).then((raws) => {
+    if (raws.length > 0) mergeSessionPage(raws, false);
+  });
+}
+
+function migrateLegacyPins() {
+  const local = readPersistedObject('app.chat.pinned', LEGACY_PINNED_KEY);
+  const files: string[] = [];
+  if (local) {
+    for (const [id, v] of Object.entries(local)) {
+      if (!id || v !== true) continue;
+      try {
+        files.push(decodeURIComponent(id));
+      } catch {}
+    }
+  }
+  void (async () => {
+    if (files.length > 0 && state.pinnedIds.size === 0) {
+      for (const file of files) {
+        await api('/api/pins', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file, pinned: true }),
+        }).catch(() => null);
+      }
+      applyPins([...pinFiles(), ...files]);
+    }
+    removeUiValue('app.chat.pinned');
+    try {
+      localStorage.removeItem(LEGACY_PINNED_KEY);
+    } catch {}
+  })();
+}
+
+function pinFiles(): string[] {
+  return [...state.pinnedIds].map((id) => {
+    try {
+      return decodeURIComponent(id);
+    } catch {
+      return id;
+    }
+  });
+}
+
 function togglePinned(sessionId: string) {
-  if (!state.pinnedIds.delete(sessionId)) state.pinnedIds.add(sessionId);
-  savePinned();
+  let file = sessionId;
+  try {
+    file = decodeURIComponent(sessionId);
+  } catch {}
+  const nowPinned = !state.pinnedIds.has(sessionId);
+  if (nowPinned) state.pinnedIds.add(sessionId);
+  else state.pinnedIds.delete(sessionId);
+  if (nowPinned) ensurePinnedSessionsVisible();
+  void api('/api/pins', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file, pinned: nowPinned }),
+  }).catch(() => {
+    if (nowPinned) state.pinnedIds.delete(sessionId);
+    else state.pinnedIds.add(sessionId);
+    state.lastError = 'Could not sync pin — backend unreachable';
+  });
 }
 
 const modelDetail = ref<{ model: ModelInfo; isDefault: boolean } | null>(null);
@@ -502,7 +562,7 @@ const state = reactive<ChatState>({
   selectedDirs: new Set(),
   tree: null,
   treeCollapsed: new Set(),
-  pinnedIds: loadPinned(),
+  pinnedIds: new Set<string>(),
   backend: 'connecting',
   backendPing: null,
   backendLost: false,
@@ -518,13 +578,11 @@ const state = reactive<ChatState>({
 watch(uiEpoch, () => {
   state.stateFilter = loadStateFilter();
   state.prefs = loadPrefs();
-  state.pinnedIds = loadPinned();
 });
 
 if (readUiValue('app.chat.stateFilter') === undefined)
   writeUiValue('app.chat.stateFilter', state.stateFilter);
 if (readUiValue('app.chat.prefs') === undefined) writeUiValue('app.chat.prefs', state.prefs);
-if (readUiValue('app.chat.pinned') === undefined) writeUiValue('app.chat.pinned', pinnedRecord());
 
 try {
   localStorage.removeItem('sf-chat:pending');
@@ -1337,6 +1395,11 @@ function handleEvent(ev: any) {
       setQueue(ev.file, Array.isArray(ev.items) ? ev.items : []);
       break;
     }
+    case 'pins_update': {
+      applyPins(Array.isArray(ev.pins) ? ev.pins : []);
+      ensurePinnedSessionsVisible();
+      break;
+    }
   }
 }
 
@@ -1512,6 +1575,7 @@ function connectEvents() {
     syncViewSubscriptions();
     void refreshQueues();
     migrateLegacyQueues();
+    void fetchPins();
   });
   es.onopen = () => {
     state.backend = 'online';
@@ -1681,16 +1745,18 @@ export function bindWorkspace(api: WorkspaceApi) {
   );
 
   connectEvents();
-  void fetchList().then(() => {
-    if (firstBind) {
-      firstBind = false;
-      if (!hasPersistedLayout() && state.sessions.length > 0) {
-        openChat(state.sessions[0].id, { visit: false });
-        exitReview();
+  void fetchPins()
+    .then(() => fetchList())
+    .then(() => {
+      if (firstBind) {
+        firstBind = false;
+        if (!hasPersistedLayout() && state.sessions.length > 0) {
+          openChat(state.sessions[0].id, { visit: false });
+          exitReview();
+        }
       }
-    }
-    reconcileGhostWindows();
-  });
+      reconcileGhostWindows();
+    });
 
   if (listTimer === null) {
     listTimer = window.setInterval(() => void fetchList(), 15000);
@@ -2228,7 +2294,7 @@ export async function renameSession(sessionId: string, name: string): Promise<bo
 
 function forgetSessionUi(s: ChatSession) {
   forgetVisit(s.file);
-  if (state.pinnedIds.delete(s.id)) savePinned();
+  state.pinnedIds.delete(s.id);
   delete state.drafts[s.id];
   delete windowUi[s.id];
   delete state.sessionErrors[s.id];

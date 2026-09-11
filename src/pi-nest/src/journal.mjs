@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync } from 'nod
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const UI_STATES = new Set(['working', 'unread', 'error']);
 
 function warn(op, e) {
@@ -115,6 +115,12 @@ function applySchema(db) {
       value INTEGER NOT NULL
     );
   `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session_pins (
+      file TEXT PRIMARY KEY,
+      pinned_at INTEGER NOT NULL
+    );
+  `);
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 }
 
@@ -192,6 +198,11 @@ export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null 
       'SELECT file, cwd, model, think_level FROM sessions WHERE model IS NOT NULL OR think_level IS NOT NULL',
     ),
     removeSessionRow: db.prepare('DELETE FROM sessions WHERE file = ?'),
+    pinSet: db.prepare(
+      'INSERT INTO session_pins (file, pinned_at) VALUES (?, ?) ON CONFLICT(file) DO UPDATE SET pinned_at = excluded.pinned_at',
+    ),
+    pinClear: db.prepare('DELETE FROM session_pins WHERE file = ?'),
+    pinList: db.prepare('SELECT file FROM session_pins ORDER BY pinned_at DESC, file DESC'),
     uiClearAll: db.prepare('UPDATE sessions SET ui_state = NULL, ui_error = ?'),
     uiUpsert: db.prepare(
       'INSERT INTO sessions (file, ui_state, ui_error) VALUES (?, ?, ?) ON CONFLICT(file) DO UPDATE SET ui_state = excluded.ui_state, ui_error = excluded.ui_error',
@@ -358,6 +369,7 @@ export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null 
         stmt.removeSessionQueue.run(sessionFile);
         stmt.uiDeleteSession.run(sessionFile);
         stmt.removeSessionRow.run(sessionFile);
+        stmt.pinClear.run(sessionFile);
         db.exec('COMMIT');
       } catch (e) {
         try {
@@ -518,6 +530,24 @@ export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null 
         }));
       } catch (e) {
         warn('sessionsWithPrefs', e);
+        return [];
+      }
+    },
+    setPinned(file, pinned) {
+      try {
+        if (pinned) stmt.pinSet.run(file, Date.now());
+        else stmt.pinClear.run(file);
+        return true;
+      } catch (e) {
+        warn('setPinned', e);
+        return false;
+      }
+    },
+    listPins() {
+      try {
+        return stmt.pinList.all().map((r) => r.file);
+      } catch (e) {
+        warn('listPins', e);
         return [];
       }
     },

@@ -6,7 +6,6 @@ const os = require('node:os');
 const path = require('node:path');
 const { createRequire } = require('node:module');
 const { chromium } = createRequire(path.join(__dirname, '..', 'package.json'))('playwright');
-const { writeStubClient } = require('./lib/stub-backend.cjs');
 const {
   assertMemoryHeadroom,
   installStackCleanup,
@@ -15,12 +14,14 @@ const {
 } = require('./lib/suite-stack.cjs');
 
 const PRODUCT_ROOT = path.join(__dirname, '..');
+const STUB_SDK = path.join(PRODUCT_ROOT, 'scripts', 'lib', 'stub-sdk');
 const RUN_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'pinned-check-'));
 const SESSIONS_ROOT = path.join(RUN_ROOT, 'sessions');
 const TEST_DIR_NAME = '--tmp-pinned-check--';
 const TEST_SESSIONS_DIR = path.join(SESSIONS_ROOT, TEST_DIR_NAME);
 const TEST_CWD = RUN_ROOT;
 const STACK_STAMP = 'check-pinned:stack';
+const DB_PATH = path.join(RUN_ROOT, 'studio.db');
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -34,6 +35,8 @@ function freePort() {
     });
   });
 }
+
+const sessionPaths = {};
 
 function writeSessions() {
   fs.mkdirSync(TEST_SESSIONS_DIR, { recursive: true });
@@ -96,6 +99,7 @@ function writeSessions() {
     fs.writeFileSync(fn, `${lines.join('\n')}\n`);
     const old = new Date(Date.now() - ageMs);
     fs.utimesSync(fn, old, old);
+    sessionPaths[name] = fn;
   };
   sessionFile('Pin-A', 3, 10_000);
   sessionFile('Pin-B', 2, 120_000);
@@ -104,7 +108,7 @@ function writeSessions() {
 function killProc(child) {
   if (!child || child.exitCode !== null) return;
   try {
-    process.kill(-child.pid, 'SIGTERM');
+    child.kill('SIGTERM');
   } catch {}
 }
 
@@ -127,6 +131,43 @@ async function waitHttp(url, label, tries = 40) {
     } catch {}
   }
   throw new Error(`${label} did not come up`);
+}
+
+function getJson(url) {
+  return new Promise((resolve, reject) => {
+    http
+      .get(url, (res) => {
+        let out = '';
+        res.on('data', (c) => (out += c));
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(out));
+          } catch {
+            resolve(null);
+          }
+        });
+      })
+      .on('error', reject);
+  });
+}
+
+async function waitDown(url, tries = 30) {
+  for (let i = 0; i < tries; i++) {
+    const up = await new Promise((resolve) => {
+      const req = http.get(url, (r) => {
+        r.resume();
+        resolve(r.statusCode === 200);
+      });
+      req.on('error', () => resolve(false));
+      req.setTimeout(1000, () => {
+        req.destroy();
+        resolve(false);
+      });
+    });
+    if (!up) return true;
+    await delay(500);
+  }
+  return false;
 }
 
 function makeReporter() {
@@ -152,6 +193,13 @@ async function openRowMenu(page, scopeSel, label) {
   await page.waitForSelector('.sf-sm-menu', { timeout: 5000 });
 }
 
+function collectPageErrors(page, errors) {
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(`console: ${m.text()}`);
+  });
+}
+
 (async () => {
   const { report, isFailed } = makeReporter();
   assertMemoryHeadroom({ label: 'check-pinned' });
@@ -162,33 +210,36 @@ async function openRowMenu(page, scopeSel, label) {
 
   let browser;
   try {
-    const backend = await freePort();
+    const backendPort = await freePort();
     const vite = await freePort();
-    console.log(`stack: backend :${backend} vite :${vite}`);
-    const stub = writeStubClient(RUN_ROOT);
+    console.log(`stack: backend :${backendPort} vite :${vite}`);
     writeSessions();
+    const backendUrl = `http://127.0.0.1:${backendPort}`;
+    const backendEnv = {
+      ...process.env,
+      PI_STUDIO_PORT: String(backendPort),
+      PI_STUDIO_SESSIONS: SESSIONS_ROOT,
+      PI_STUDIO_DB_PATH: DB_PATH,
+      PI_STUDIO_STATES_PATH: path.join(RUN_ROOT, 'states.json'),
+      PI_STUDIO_CWD: TEST_CWD,
+      PI_SDK_DIR: STUB_SDK,
+      STUB_STATE_DIR: path.join(RUN_ROOT, 'stub-state'),
+    };
 
-    procs.push(
+    const spawnBackend = () =>
       spawnStackProc(spawn, STACK_STAMP, 'node', ['src/pi-studio/server/index.mjs'], {
         cwd: PRODUCT_ROOT,
-        env: {
-          ...process.env,
-          PI_STUDIO_PORT: String(backend),
-          PI_STUDIO_CLIENT_MODULE: stub.stubPath,
-          STUB_CONTROL_FILE: stub.controlPath,
-          PI_STUDIO_SESSIONS: SESSIONS_ROOT,
-          PI_STUDIO_DB_PATH: path.join(RUN_ROOT, 'studio.db'),
-          PI_STUDIO_STATES_PATH: path.join(RUN_ROOT, 'states.json'),
-          PI_STUDIO_CWD: TEST_CWD,
-        },
+        env: backendEnv,
         stdio: [
           'ignore',
           fs.openSync('/tmp/pinned-check-backend.log', 'a'),
           fs.openSync('/tmp/pinned-check-backend.log', 'a'),
         ],
-      }),
-    );
-    await waitHttp(`http://127.0.0.1:${backend}/api/health`, 'backend');
+      });
+
+    let backend = spawnBackend();
+    procs.push(backend);
+    await waitHttp(`${backendUrl}/api/health`, 'backend');
     procs.push(
       spawnStackProc(
         spawn,
@@ -205,7 +256,7 @@ async function openRowMenu(page, scopeSel, label) {
         ],
         {
           cwd: PRODUCT_ROOT,
-          env: { ...process.env, PI_API_PROXY: `http://127.0.0.1:${backend}` },
+          env: { ...process.env, PI_API_PROXY: `http://127.0.0.1:${backendPort}` },
           stdio: [
             'ignore',
             fs.openSync('/tmp/pinned-check-vite.log', 'a'),
@@ -218,12 +269,9 @@ async function openRowMenu(page, scopeSel, label) {
 
     browser = await chromium.launch();
     browserRef.current = browser;
-    const page = await browser.newPage({ viewport: { width: 1440, height: 844 } });
     const errors = [];
-    page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
-    page.on('console', (m) => {
-      if (m.type() === 'error') errors.push(`console: ${m.text()}`);
-    });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 844 } });
+    collectPageErrors(page, errors);
     await page.goto(`http://127.0.0.1:${vite}`, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector(`${historyBody} .sf-pl-item`, { timeout: 60000 });
     await delay(500);
@@ -335,6 +383,127 @@ async function openRowMenu(page, scopeSel, label) {
       'P9 unpinning from the Pinned section restores the other chat in history',
       (await pinnedItems(page).count()) === 1 && (await historyItems(page).count()) === 1,
       `pinned=${await pinnedItems(page).count()} history=${await historyItems(page).count()}`,
+    );
+
+    const contextB = await browser.newContext({ viewport: { width: 1440, height: 844 } });
+    const pageB = await contextB.newPage();
+    collectPageErrors(pageB, errors);
+    await pageB.goto(`http://127.0.0.1:${vite}`, { waitUntil: 'domcontentloaded' });
+    await pageB.waitForSelector(`${historyBody} .sf-pl-item`, { timeout: 60000 });
+    await delay(500);
+    const pinAOnDeviceB = (
+      (await pinnedItems(pageB)
+        .first()
+        .textContent()
+        .catch(() => '')) ?? ''
+    ).includes('Pin-A');
+    report(
+      'P10 a second device with a fresh browser profile sees the pin (server-side state)',
+      (await pinnedItems(pageB).count()) === 1 && pinAOnDeviceB,
+      `pinnedB=${await pinnedItems(pageB).count()} pinA=${pinAOnDeviceB}`,
+    );
+
+    await openRowMenu(pageB, historyBody, 'Pin-B');
+    await (await menuRow(pageB, 'Pin')).click();
+    await pageB.waitForSelector(`${pinnedBody} .sf-pl-item:has-text("Pin-B")`, { timeout: 5000 });
+    let liveA = false;
+    try {
+      await page.waitForFunction(
+        (sel) => document.querySelectorAll(`${sel} .sf-pl-item`).length === 2,
+        pinnedBody,
+        { timeout: 5000 },
+      );
+      liveA = true;
+    } catch {}
+    report('P11 pinning on one device appears live on the other (SSE, no reload)', liveA);
+
+    await openRowMenu(page, pinnedBody, 'Pin-B');
+    await (await menuRow(page, 'Unpin')).click();
+    await page.waitForSelector(`${historyBody} .sf-pl-item:has-text("Pin-B")`, { timeout: 5000 });
+    let liveB = false;
+    try {
+      await pageB.waitForFunction(
+        (sel) => document.querySelectorAll(`${sel} .sf-pl-item`).length === 1,
+        pinnedBody,
+        { timeout: 5000 },
+      );
+      liveB = true;
+    } catch {}
+    report('P12 unpinning on one device disappears live on the other (SSE, no reload)', liveB);
+
+    await delay(500);
+    killProc(backend);
+    if (!(await waitDown(`${backendUrl}/api/health`))) throw new Error('old backend did not stop');
+    backend = spawnBackend();
+    procs.push(backend);
+    await waitHttp(`${backendUrl}/api/health`, 'backend after restart');
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector(`${historyBody} .sf-pl-item`, { timeout: 60000 });
+    await delay(500);
+    const pinAAfterRestart = (
+      (await pinnedItems(page)
+        .first()
+        .textContent()
+        .catch(() => '')) ?? ''
+    ).includes('Pin-A');
+    report(
+      'P13 pins survive a full backend restart (journal-backed, not in-memory)',
+      (await pinnedItems(page).count()) === 1 && pinAAfterRestart,
+      `pinned=${await pinnedItems(page).count()} pinA=${pinAAfterRestart}`,
+    );
+
+    await openRowMenu(page, pinnedBody, 'Pin-A');
+    await (await menuRow(page, 'Unpin')).click();
+    await page.waitForSelector(`${historyBody} .sf-pl-item:has-text("Pin-A")`, { timeout: 5000 });
+    const pinsBefore = await getJson(`${backendUrl}/api/pins`);
+    report(
+      'P14a server pin list is empty before legacy migration',
+      Array.isArray(pinsBefore?.pins) && pinsBefore.pins.length === 0,
+      `pins=${JSON.stringify(pinsBefore?.pins)}`,
+    );
+
+    const pinBId = encodeURIComponent(sessionPaths['Pin-B']);
+    const contextC = await browser.newContext({ viewport: { width: 1440, height: 844 } });
+    await contextC.addInitScript(
+      (id) => localStorage.setItem('sf-chat:pinned', JSON.stringify({ [id]: true })),
+      pinBId,
+    );
+    const pageC = await contextC.newPage();
+    collectPageErrors(pageC, errors);
+    await pageC.goto(`http://127.0.0.1:${vite}`, { waitUntil: 'domcontentloaded' });
+    await pageC.waitForSelector(`${historyBody} .sf-pl-item`, { timeout: 60000 });
+    let migrated = false;
+    try {
+      await pageC.waitForSelector(`${pinnedBody} .sf-pl-item:has-text("Pin-B")`, { timeout: 10000 });
+      migrated = true;
+    } catch {}
+    const legacyCleared = await pageC.evaluate(() => localStorage.getItem('sf-chat:pinned') === null);
+    report(
+      'P14b legacy browser-local pins migrate to the server on first connect',
+      migrated && legacyCleared,
+      `migrated=${migrated} legacyCleared=${legacyCleared}`,
+    );
+    let migratedLive = false;
+    try {
+      await page.waitForFunction(
+        (sel) =>
+          [...document.querySelectorAll(`${sel} .sf-pl-item`)].some((n) => n.textContent.includes('Pin-B')),
+        pinnedBody,
+        { timeout: 5000 },
+      );
+      migratedLive = true;
+    } catch {}
+    report('P14c migrated pins propagate live to already-open devices', migratedLive);
+    await contextB.close().catch(() => {});
+    await contextC.close().catch(() => {});
+
+    const pinsAfter = await getJson(`${backendUrl}/api/pins`);
+    report(
+      'P14d server journal holds exactly the migrated pin',
+      Array.isArray(pinsAfter?.pins) &&
+        pinsAfter.pins.length === 1 &&
+        pinsAfter.pins[0] === sessionPaths['Pin-B'],
+      `pins=${JSON.stringify(pinsAfter?.pins)}`,
     );
 
     report('no console/page errors', errors.length === 0, errors.join('; '));

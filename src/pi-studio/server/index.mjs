@@ -50,6 +50,15 @@ if (process.env.PI_STUDIO_CLIENT_MODULE) {
   client = createLocalClient(registry);
 }
 const messageQueue = createMessageQueue({ client, journal, emit: (ev) => emit(ev) });
+const memoryPins = new Map();
+const pinStore = {
+  list: () => (journal ? journal.listPins() : [...memoryPins.keys()]),
+  set: (file, pinned) => {
+    if (journal) journal.setPinned(file, pinned);
+    else if (pinned) memoryPins.set(file, Date.now());
+    else memoryPins.delete(file);
+  },
+};
 
 function parseEntries(content) {
   const out = [];
@@ -883,6 +892,7 @@ function globalKeyOf(event) {
   if (event.type === 'session_status') return `s\u0000${event.file}`;
   if (event.type === 'session_state') return `st\u0000${event.file}`;
   if (event.type === 'queue_update') return `q\u0000${event.file}`;
+  if (event.type === 'pins_update') return 'pins';
   return null;
 }
 
@@ -1300,6 +1310,23 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (p === '/api/pins' && req.method === 'GET') {
+      sendJson(res, 200, { pins: pinStore.list() });
+      return;
+    }
+
+    if (p === '/api/pins' && req.method === 'POST') {
+      const { file, pinned } = await readBody(req);
+      if (typeof file !== 'string' || !file || typeof pinned !== 'boolean') {
+        return sendJson(res, 400, { error: 'file and boolean pinned required' });
+      }
+      pinStore.set(file, pinned);
+      const pins = pinStore.list();
+      emit({ type: 'pins_update', pins });
+      sendJson(res, 200, { ok: true, pins });
+      return;
+    }
+
     if (p === '/api/sessions' && req.method === 'GET') {
       const files = [];
       for (const dirEntry of await readdir(SESSIONS_ROOT, { withFileTypes: true })) {
@@ -1581,6 +1608,8 @@ const server = createServer(async (req, res) => {
         if (body.command === 'delete' && body.file && r.ok) {
           sessionStates.remove(body.file);
           messageQueue.removeAll(body.file);
+          pinStore.set(body.file, false);
+          emit({ type: 'pins_update', pins: pinStore.list() });
         }
         const out = { ok: r.ok, notice: r.notice || undefined, error: r.error || undefined };
         if (r.dataJson) out.data = JSON.parse(r.dataJson);

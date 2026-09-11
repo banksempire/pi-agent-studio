@@ -1223,6 +1223,10 @@ function handleEvent(ev: any) {
       scheduleJobsRefresh();
       break;
     }
+    case 'queue_update': {
+      setQueue(ev.file, Array.isArray(ev.items) ? ev.items : []);
+      break;
+    }
   }
 }
 
@@ -1396,10 +1400,13 @@ function connectEvents() {
     }
     lastViewFiles = new Set();
     syncViewSubscriptions();
+    void refreshQueues();
+    migrateLegacyQueues();
   });
   es.onopen = () => {
     state.backend = 'online';
     syncAllTails();
+    void refreshQueues();
   };
   es.onerror = () => {
     state.backend = 'offline';
@@ -1795,239 +1802,243 @@ export async function resendMessage(sessionId: string, mid: string) {
 }
 
 export interface QueuedChatMessage {
-  id: string;
+  id: number;
   text: string;
   images?: { data: string; mimeType: string }[];
 }
 
-const QUEUES_KEY = 'sf-chat:queues';
-const QUEUE_CLAIMS_KEY = 'sf-chat:queue-claims';
-const QUEUE_CLAIM_MS = 15000;
-const QUEUE_TAB_ID = `tab-${Math.random().toString(36).slice(2, 10)}`;
+const LEGACY_QUEUES_KEY = 'sf-chat:queues';
+const LEGACY_CLAIMS_KEY = 'sf-chat:queue-claims';
 
-function parseStoredQueues(): Record<string, QueuedChatMessage[]> | null {
-  try {
-    const raw = localStorage.getItem(QUEUES_KEY);
-    if (!raw) return null;
-    const j = JSON.parse(raw);
-    if (!j || typeof j !== 'object' || Array.isArray(j)) return null;
-    const out: Record<string, QueuedChatMessage[]> = {};
-    for (const [id, list] of Object.entries(j)) {
-      if (!Array.isArray(list)) continue;
-      const msgs: QueuedChatMessage[] = [];
-      for (const m of list) {
-        if (!(m && typeof m === 'object' && typeof m.id === 'string' && typeof m.text === 'string')) {
-          continue;
-        }
-        const rawImages: unknown[] = Array.isArray(m.images) ? m.images : [];
-        const images = rawImages
-          .filter((im): im is { data: string; mimeType: string } => {
-            const x = im as { data?: unknown; mimeType?: unknown } | null | undefined;
-            return (
-              !!x &&
-              typeof x.data === 'string' &&
-              typeof x.mimeType === 'string' &&
-              x.data !== '' &&
-              /^image\//.test(x.mimeType)
-            );
-          })
-          .slice(0, 4);
-        if (!m.text.trim() && !images.length) continue;
-        msgs.push({ id: m.id, text: m.text, ...(images.length ? { images } : {}) });
-      }
-      if (msgs.length) out[id] = msgs;
-    }
-    return out;
-  } catch {
-    return null;
-  }
-}
+const queuesByFile = reactive<Record<string, QueuedChatMessage[]>>({});
+const queueHoldBeats = new Map<string, { stop: () => void }>();
+let queueHoldMs = 15000;
 
-const sessionQueues = reactive<Record<string, QueuedChatMessage[]>>(parseStoredQueues() ?? {});
-
-function persistQueues(out: Record<string, QueuedChatMessage[]>) {
-  try {
-    localStorage.setItem(QUEUES_KEY, JSON.stringify(out));
-    return;
-  } catch {}
-  const lean: Record<string, QueuedChatMessage[]> = {};
-  for (const [id, q] of Object.entries(out)) lean[id] = q.map((m) => ({ id: m.id, text: m.text }));
-  try {
-    localStorage.setItem(QUEUES_KEY, JSON.stringify(lean));
-  } catch {}
-}
-
-function saveQueues() {
-  const out: Record<string, QueuedChatMessage[]> = {};
-  const known = state.sessions.length > 0 ? new Set(state.sessions.map((s) => s.id)) : null;
-  for (const [id, q] of Object.entries(sessionQueues)) {
-    if (known && !known.has(id)) {
-      delete sessionQueues[id];
-      continue;
-    }
-    if (q.length) {
-      out[id] = q.map((m) => ({
-        id: m.id,
-        text: m.text,
-        ...(m.images?.length ? { images: m.images } : {}),
-      }));
-    }
-  }
-  persistQueues(out);
-  const claims = readClaims();
-  let claimsDirty = false;
-  for (const id of Object.keys(claims)) {
-    if (!out[id]) {
-      delete claims[id];
-      claimsDirty = true;
-    }
-  }
-  if (claimsDirty) writeClaims(claims);
-}
-
-export function queuedMessagesOf(sessionId: string): QueuedChatMessage[] {
-  let q = sessionQueues[sessionId];
+function queueListOf(file: string): QueuedChatMessage[] {
+  let q = queuesByFile[file];
   if (!q) {
     q = reactive<QueuedChatMessage[]>([]);
-    sessionQueues[sessionId] = q;
+    queuesByFile[file] = q;
   }
   return q;
 }
 
-export function enqueueMessage(
-  sessionId: string,
-  text: string,
-  images: { data: string; mimeType: string }[] = [],
-) {
-  const trimmed = text.trim();
-  if (!trimmed && !images.length) return;
-  queuedMessagesOf(sessionId).push({
-    id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    text: trimmed,
-    ...(images.length ? { images } : {}),
-  });
-  saveQueues();
+export function queuedMessagesOf(sessionId: string): QueuedChatMessage[] {
+  const s = findSession(sessionId);
+  if (!s) return reactive<QueuedChatMessage[]>([]);
+  return queueListOf(s.file);
 }
 
-export function removeQueuedMessage(sessionId: string, id: string) {
-  const q = sessionQueues[sessionId];
-  if (!q) return;
-  const i = q.findIndex((m) => m.id === id);
-  if (i < 0) return;
-  q.splice(i, 1);
-  saveQueues();
+function cloneItems(items: QueuedChatMessage[]): QueuedChatMessage[] {
+  return items.map((m) => ({
+    id: m.id,
+    text: m.text,
+    ...(m.images?.length ? { images: m.images.map((im) => ({ ...im })) } : {}),
+  }));
 }
 
-export function updateQueuedMessage(sessionId: string, id: string, text: string) {
-  const trimmed = text.trim();
-  if (!trimmed) return;
-  const m = sessionQueues[sessionId]?.find((x) => x.id === id);
-  if (!m) return;
-  m.text = trimmed;
-  saveQueues();
+function setQueue(file: string, items: QueuedChatMessage[]) {
+  queuesByFile[file] = reactive(cloneItems(items));
 }
 
-const flushingQueues = new Set<string>();
-
-function adoptStoredQueues() {
-  const stored = parseStoredQueues();
-  if (!stored) return;
-  for (const id of Object.keys(sessionQueues)) {
-    if (!(id in stored) && !flushingQueues.has(id)) delete sessionQueues[id];
-  }
-  for (const [id, msgs] of Object.entries(stored)) {
-    if (flushingQueues.has(id)) continue;
-    sessionQueues[id] = reactive(msgs.map((m) => ({ ...m })));
+function applyQueueMap(queues: Record<string, QueuedChatMessage[]>) {
+  for (const k of Object.keys(queuesByFile)) delete queuesByFile[k];
+  for (const [file, items] of Object.entries(queues)) {
+    if (Array.isArray(items) && items.length) setQueue(file, items);
   }
 }
 
-window.addEventListener('storage', (ev) => {
-  if (ev.key === QUEUES_KEY) adoptStoredQueues();
-});
-
-interface QueueFlushClaim {
-  itemId: string;
-  tab: string;
-  at: number;
-}
-
-function readClaims(): Record<string, QueueFlushClaim> {
+async function refreshQueues(): Promise<void> {
   try {
-    const j = JSON.parse(localStorage.getItem(QUEUE_CLAIMS_KEY) || '{}');
-    if (!j || typeof j !== 'object' || Array.isArray(j)) return {};
-    const out: Record<string, QueueFlushClaim> = {};
-    for (const [k, v] of Object.entries(j)) {
-      const c = v as Record<string, unknown> | null;
-      if (c && typeof c.itemId === 'string' && typeof c.tab === 'string' && typeof c.at === 'number') {
-        out[k] = { itemId: c.itemId, tab: c.tab, at: c.at };
-      }
-    }
-    return out;
-  } catch {
-    return {};
-  }
-}
-
-function writeClaims(claims: Record<string, QueueFlushClaim>) {
-  try {
-    localStorage.setItem(QUEUE_CLAIMS_KEY, JSON.stringify(claims));
+    const j = await api<{ queues: Record<string, QueuedChatMessage[]> }>('/api/queue');
+    applyQueueMap(j.queues ?? {});
   } catch {}
 }
 
-const QUEUE_CLAIM_VERIFY_MS = 60;
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sanitizeQueueList(list: unknown): QueuedChatMessage[] {
+  if (!Array.isArray(list)) return [];
+  const msgs: QueuedChatMessage[] = [];
+  for (const m of list) {
+    if (!(m && typeof m === 'object' && typeof (m as any).text === 'string')) continue;
+    const rawImages: unknown[] = Array.isArray((m as any).images) ? (m as any).images : [];
+    const images = rawImages
+      .filter((im): im is { data: string; mimeType: string } => {
+        const x = im as { data?: unknown; mimeType?: unknown } | null | undefined;
+        return (
+          !!x &&
+          typeof x.data === 'string' &&
+          typeof x.mimeType === 'string' &&
+          x.data !== '' &&
+          /^image\//.test(x.mimeType)
+        );
+      })
+      .slice(0, 4);
+    const text = (m as any).text as string;
+    if (!text.trim() && !images.length) continue;
+    msgs.push({ id: 0, text, ...(images.length ? { images } : {}) });
+  }
+  return msgs;
 }
 
-async function claimQueueFlush(sessionId: string, itemId: string): Promise<boolean> {
-  const stored = parseStoredQueues();
-  const entry = stored?.[sessionId];
-  if (!stored || !entry?.length || entry[0].id !== itemId) {
-    adoptStoredQueues();
-    return false;
-  }
-  const claims = readClaims();
-  const c = claims[sessionId];
-  if (c && c.tab !== QUEUE_TAB_ID && c.itemId === itemId && Date.now() - c.at < QUEUE_CLAIM_MS) {
-    return false;
-  }
-  claims[sessionId] = { itemId, tab: QUEUE_TAB_ID, at: Date.now() };
-  writeClaims(claims);
-  await delay(QUEUE_CLAIM_VERIFY_MS);
-  const after = readClaims()[sessionId];
-  if (!after || after.tab !== QUEUE_TAB_ID || after.itemId !== itemId) return false;
-  const stillHead = parseStoredQueues()?.[sessionId]?.[0]?.id === itemId;
-  if (!stillHead) {
-    adoptStoredQueues();
-    return false;
-  }
-  return true;
-}
-
-watch(
-  () => state.sessions.map((s) => `${s.id}:${s.status}`).join('|'),
-  () => {
-    for (const s of state.sessions) {
-      if (s.status !== 'idle' || !sessionQueues[s.id]?.length || flushingQueues.has(s.id)) continue;
-      flushingQueues.add(s.id);
-      const sid = s.id;
-      void (async () => {
-        try {
-          const first = sessionQueues[sid]?.[0];
-          if (!first || !(await claimQueueFlush(sid, first.id))) return;
-          const live = sessionQueues[sid];
-          if (!live?.length || live[0].id !== first.id) return;
-          live.splice(0, 1);
-          saveQueues();
-          await sendMessage(sid, first.text, { wait: true, images: first.images ?? [] });
-        } finally {
-          flushingQueues.delete(sid);
-        }
-      })();
+function migrateLegacyQueues() {
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(LEGACY_QUEUES_KEY);
+  } catch {}
+  if (!raw) return;
+  const byFile = new Map<string, QueuedChatMessage[]>();
+  try {
+    const j = JSON.parse(raw);
+    if (j && typeof j === 'object' && !Array.isArray(j)) {
+      for (const [key, list] of Object.entries(j)) {
+        const msgs = sanitizeQueueList(list);
+        if (msgs.length) byFile.set(decodeURIComponent(key), msgs);
+      }
     }
-  },
-);
+  } catch {}
+  if (byFile.size === 0) {
+    try {
+      localStorage.removeItem(LEGACY_QUEUES_KEY);
+      localStorage.removeItem(LEGACY_CLAIMS_KEY);
+    } catch {}
+    return;
+  }
+  void (async () => {
+    for (const [file, msgs] of byFile) {
+      for (const m of msgs) {
+        await fetch('/api/queue', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file, message: m.text, ...(m.images?.length ? { images: m.images } : {}) }),
+        }).catch(() => null);
+      }
+    }
+    try {
+      if (localStorage.getItem(LEGACY_QUEUES_KEY) === raw) localStorage.removeItem(LEGACY_QUEUES_KEY);
+      localStorage.removeItem(LEGACY_CLAIMS_KEY);
+    } catch {}
+    void refreshQueues();
+  })();
+}
+
+export async function enqueueMessage(
+  sessionId: string,
+  text: string,
+  images: { data: string; mimeType: string }[] = [],
+): Promise<boolean> {
+  const s = findSession(sessionId);
+  const trimmed = text.trim();
+  if (!s || (!trimmed && !images.length)) return false;
+  const temp: QueuedChatMessage = { id: -Date.now(), text: trimmed };
+  if (images.length) temp.images = images.map((im) => ({ ...im }));
+  queueListOf(s.file).push(temp);
+  try {
+    const { items } = await api<{ items: QueuedChatMessage[] }>('/api/queue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file: s.file,
+        message: trimmed,
+        ...(images.length ? { images } : {}),
+      }),
+    });
+    setQueue(s.file, items ?? []);
+    return true;
+  } catch (e) {
+    const q = queuesByFile[s.file];
+    if (q) {
+      const i = q.findIndex((m) => m.id === temp.id);
+      if (i >= 0) q.splice(i, 1);
+    }
+    if (!(e instanceof TypeError)) {
+      setSessionError(sessionId, e instanceof Error ? e.message : String(e));
+    } else {
+      state.backend = 'offline';
+    }
+    return false;
+  }
+}
+
+export async function removeQueuedMessage(sessionId: string, id: number) {
+  const s = findSession(sessionId);
+  if (!s) return;
+  const q = queuesByFile[s.file];
+  if (q) {
+    const i = q.findIndex((m) => m.id === id);
+    if (i >= 0) q.splice(i, 1);
+  }
+  try {
+    const { items } = await api<{ items: QueuedChatMessage[] }>(
+      `/api/queue/${id}?file=${encodeURIComponent(s.file)}`,
+      { method: 'DELETE' },
+    );
+    setQueue(s.file, items ?? []);
+  } catch {}
+}
+
+export async function updateQueuedMessage(sessionId: string, id: number, text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  const s = findSession(sessionId);
+  if (!s) return;
+  const m = queuesByFile[s.file]?.find((x) => x.id === id);
+  if (m) m.text = trimmed;
+  try {
+    const { items } = await api<{ items: QueuedChatMessage[] }>(
+      `/api/queue/${id}?file=${encodeURIComponent(s.file)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: trimmed }),
+      },
+    );
+    setQueue(s.file, items ?? []);
+  } catch {}
+}
+
+export function queueEditHold(sessionId: string) {
+  const s = findSession(sessionId);
+  if (!s) return;
+  queueEditRelease(sessionId);
+  const entry = { timer: null as number | null, stopped: false };
+  const arm = () => {
+    if (entry.stopped || entry.timer !== null) return;
+    entry.timer = window.setInterval(beat, Math.max(1000, Math.floor(queueHoldMs / 3)));
+  };
+  const beat = () => {
+    if (entry.stopped) return;
+    api<{ holdMs?: number }>('/api/queue/hold', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: s.file }),
+    })
+      .then((j) => {
+        if (j?.holdMs && j.holdMs !== queueHoldMs) queueHoldMs = j.holdMs;
+        arm();
+      })
+      .catch(arm);
+  };
+  beat();
+  queueHoldBeats.set(sessionId, {
+    stop: () => {
+      entry.stopped = true;
+      if (entry.timer !== null) window.clearInterval(entry.timer);
+      entry.timer = null;
+    },
+  });
+}
+
+export function queueEditRelease(sessionId: string) {
+  queueHoldBeats.get(sessionId)?.stop();
+  queueHoldBeats.delete(sessionId);
+  const s = findSession(sessionId);
+  if (!s) return;
+  api('/api/queue/release', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: s.file }),
+  }).catch(() => {});
+}
 
 export function markCompactFailed(sessionId: string, reason?: string | null) {
   const s = findSession(sessionId);
@@ -2114,6 +2125,7 @@ function forgetSessionUi(s: ChatSession) {
   delete sessionAttachments[s.id];
   delete sessionOpenGroups[s.id];
   forgetChatScroll(s.id);
+  if (s.file) delete queuesByFile[s.file];
   saveDrafts();
 }
 
@@ -2362,6 +2374,8 @@ export const store = {
   enqueueMessage,
   removeQueuedMessage,
   updateQueuedMessage,
+  queueEditHold,
+  queueEditRelease,
   sessionErrorOf,
   setSessionError,
   clearSessionError,

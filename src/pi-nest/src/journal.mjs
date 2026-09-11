@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync } from 'nod
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const UI_STATES = new Set(['working', 'unread', 'error']);
 
 function warn(op, e) {
@@ -68,6 +68,15 @@ function applySchema(db) {
     );
   `);
   db.exec('CREATE INDEX IF NOT EXISTS queue_items_session ON queue_items(session_file, id)');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ui_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_file TEXT NOT NULL,
+      message TEXT NOT NULL,
+      images TEXT NOT NULL DEFAULT '[]'
+    );
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS ui_queue_session ON ui_queue(session_file, id)');
   db.exec(`
     CREATE TABLE IF NOT EXISTS jobs (
       id TEXT PRIMARY KEY,
@@ -160,6 +169,16 @@ export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null 
     snapshotPartial: db.prepare('UPDATE queue_items SET partial_text = ? WHERE id = ?'),
     remove: db.prepare('DELETE FROM queue_items WHERE id = ?'),
     removeSessionQueue: db.prepare('DELETE FROM queue_items WHERE session_file = ?'),
+    uiEnqueue: db.prepare('INSERT INTO ui_queue (session_file, message, images) VALUES (?, ?, ?)'),
+    uiList: db.prepare('SELECT id, message, images FROM ui_queue WHERE session_file = ? ORDER BY id'),
+    uiAll: db.prepare('SELECT id, session_file, message, images FROM ui_queue ORDER BY session_file, id'),
+    uiUpdate: db.prepare('UPDATE ui_queue SET message = ? WHERE id = ? AND session_file = ?'),
+    uiDelete: db.prepare('DELETE FROM ui_queue WHERE id = ? AND session_file = ?'),
+    uiDeleteSession: db.prepare('DELETE FROM ui_queue WHERE session_file = ?'),
+    uiCount: db.prepare('SELECT COUNT(*) AS n FROM ui_queue'),
+    pendingBySession: db.prepare(
+      "SELECT COUNT(*) AS n FROM queue_items WHERE session_file = ? AND message = ? AND status IN ('queued','inflight')",
+    ),
     pending: db.prepare(
       "SELECT id, session_file, message, images, status, started_at, partial_text FROM queue_items WHERE status IN ('queued','inflight') ORDER BY id",
     ),
@@ -337,6 +356,7 @@ export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null 
       try {
         db.exec('BEGIN IMMEDIATE');
         stmt.removeSessionQueue.run(sessionFile);
+        stmt.uiDeleteSession.run(sessionFile);
         stmt.removeSessionRow.run(sessionFile);
         db.exec('COMMIT');
       } catch (e) {
@@ -345,6 +365,104 @@ export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null 
         } catch {}
         warn('removeSession', e);
       }
+    },
+    addUiQueue(sessionFile, { message, images = [] }) {
+      try {
+        const r = stmt.uiEnqueue.run(sessionFile, message, JSON.stringify(images ?? []));
+        return Number(r.lastInsertRowid);
+      } catch (e) {
+        warn('addUiQueue', e);
+        return null;
+      }
+    },
+    listUiQueue(sessionFile) {
+      try {
+        return stmt.uiList.all(sessionFile).map((r) => ({
+          id: Number(r.id),
+          text: r.message,
+          images: parseImages(r.images),
+        }));
+      } catch (e) {
+        warn('listUiQueue', e);
+        return [];
+      }
+    },
+    listAllUiQueue() {
+      try {
+        const out = new Map();
+        for (const r of stmt.uiAll.all()) {
+          const file = r.session_file;
+          if (!out.has(file)) out.set(file, []);
+          out.get(file).push({ id: Number(r.id), text: r.message, images: parseImages(r.images) });
+        }
+        return out;
+      } catch (e) {
+        warn('listAllUiQueue', e);
+        return new Map();
+      }
+    },
+    updateUiQueue(id, sessionFile, message) {
+      try {
+        const r = stmt.uiUpdate.run(message, id, sessionFile);
+        return Number(r.changes) > 0;
+      } catch (e) {
+        warn('updateUiQueue', e);
+        return false;
+      }
+    },
+    deleteUiQueue(id, sessionFile) {
+      try {
+        const r = stmt.uiDelete.run(id, sessionFile);
+        return Number(r.changes) > 0;
+      } catch (e) {
+        warn('deleteUiQueue', e);
+        return false;
+      }
+    },
+    deleteUiQueueSession(sessionFile) {
+      try {
+        stmt.uiDeleteSession.run(sessionFile);
+        return true;
+      } catch (e) {
+        warn('deleteUiQueueSession', e);
+        return false;
+      }
+    },
+    uiQueueCount() {
+      try {
+        return Number(stmt.uiCount.get()?.n ?? 0);
+      } catch {
+        return 0;
+      }
+    },
+    reconcileUiQueue() {
+      const out = new Map();
+      try {
+        db.exec('BEGIN IMMEDIATE');
+        const rows = stmt.uiAll.all();
+        const pendingOf = new Map();
+        for (const r of rows) {
+          const key = `${r.session_file}\u0000${r.message}`;
+          if (!pendingOf.has(key)) {
+            pendingOf.set(key, Number(stmt.pendingBySession.get(r.session_file, r.message)?.n ?? 0));
+          }
+          const owned = pendingOf.get(key);
+          if (owned > 0) {
+            pendingOf.set(key, owned - 1);
+            stmt.uiDelete.run(r.id, r.session_file);
+            continue;
+          }
+          if (!out.has(r.session_file)) out.set(r.session_file, []);
+          out.get(r.session_file).push({ id: Number(r.id), text: r.message, images: parseImages(r.images) });
+        }
+        db.exec('COMMIT');
+      } catch (e) {
+        try {
+          db.exec('ROLLBACK');
+        } catch {}
+        warn('reconcileUiQueue', e);
+      }
+      return out;
     },
     pendingItems() {
       try {

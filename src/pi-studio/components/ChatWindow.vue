@@ -17,6 +17,8 @@ import {
   openGroupsOf,
   type QueuedChatMessage,
   queuedMessagesOf,
+  queueEditHold,
+  queueEditRelease,
   removeQueuedMessage,
   sessionErrorOf,
   setAttachments,
@@ -667,12 +669,20 @@ function send(viaKeyboard = false) {
 
 const queue = computed(() => queuedMessagesOf(props.sessionId));
 
-function queueMessage(viaKeyboard = false) {
+async function queueMessage(viaKeyboard = false) {
   if (actionMode.value !== 'queue') return;
   const text = input.value.trim();
   const imgs = attachments.value.map((a) => ({ data: a.data, mimeType: a.mimeType }));
   if (!text && !imgs.length) return;
-  enqueueMessage(props.sessionId, text, imgs);
+  const ok = await enqueueMessage(props.sessionId, text, imgs);
+  if (!ok) {
+    input.value = text;
+    setAttachments(
+      props.sessionId,
+      imgs.map((im) => ({ ...im, url: dataUrlOf(im) })),
+    );
+    return;
+  }
   input.value = '';
   attachments.value = [];
   store.noteChatInteraction(props.sessionId);
@@ -699,6 +709,7 @@ const queueEditEl = ref<HTMLTextAreaElement | null>(null);
 function editQueued(q: QueuedChatMessage) {
   editingQueue.value = q;
   editingText.value = q.text;
+  queueEditHold(props.sessionId);
   nextTick(() => {
     queueEditEl.value?.focus();
     queueEditEl.value?.select();
@@ -706,6 +717,7 @@ function editQueued(q: QueuedChatMessage) {
 }
 
 function closeQueueEdit() {
+  if (editingQueue.value) queueEditRelease(props.sessionId);
   editingQueue.value = null;
   editingText.value = '';
 }
@@ -713,7 +725,7 @@ function closeQueueEdit() {
 function saveQueueEdit() {
   const q = editingQueue.value;
   if (!q || !editingText.value.trim()) return;
-  updateQueuedMessage(props.sessionId, q.id, editingText.value);
+  void updateQueuedMessage(props.sessionId, q.id, editingText.value);
   closeQueueEdit();
 }
 
@@ -893,6 +905,7 @@ onMounted(() => {
 onUnmounted(() => {
   const el = listEl.value;
   if (el) captureScroll(el, chatScrollOf(props.sessionId));
+  closeQueueEdit();
   window.removeEventListener('resize', onViewportResize);
   window.removeEventListener('keydown', onWindowShiftKey, true);
   window.removeEventListener('keyup', onWindowShiftKey, true);

@@ -115,6 +115,29 @@ function readPrompts() {
   }
 }
 
+async function clickWhenVisible(locator, timeout = 15000) {
+  await locator.waitFor({ state: 'visible', timeout });
+  await locator.dispatchEvent('click');
+}
+
+function getJson(port, p) {
+  return new Promise((resolve, reject) => {
+    http
+      .get({ host: '127.0.0.1', port, path: p }, (res) => {
+        let out = '';
+        res.on('data', (c) => (out += c));
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(out));
+          } catch {
+            resolve(null);
+          }
+        });
+      })
+      .on('error', reject);
+  });
+}
+
 (async () => {
   const { report, isFailed } = makeReporter();
   const procs = [];
@@ -146,6 +169,7 @@ function readPrompts() {
           PI_STUDIO_DB_PATH: path.join(RUN_ROOT, 'studio.db'),
           PI_STUDIO_SPILL_PATH: path.join(RUN_ROOT, 'backend-spill.json'),
           PI_STUDIO_CWD: RUN_ROOT,
+          PI_STUDIO_QUEUE_HOLD_MS: '6000',
         },
         stdio: [
           'ignore',
@@ -341,7 +365,7 @@ function readPrompts() {
       );
     report('button row order is [to bottom][image][action] on one line', rowOk, JSON.stringify(runningRects));
 
-    await queueBtn.click({ force: true });
+    await clickWhenVisible(queueBtn);
     await delay(400);
     report(
       'queueing moves the input text into one box and clears the input',
@@ -353,7 +377,7 @@ function readPrompts() {
     );
 
     await input.fill('second queued message with more words');
-    await queueBtn.click({ force: true });
+    await clickWhenVisible(queueBtn);
     await delay(400);
     const boxTexts = await boxes.allInnerTexts();
     report(
@@ -392,7 +416,7 @@ function readPrompts() {
     );
 
     await input.fill('third message');
-    await queueBtn.click({ force: true });
+    await clickWhenVisible(queueBtn);
     await delay(300);
     report('queue holds two messages before the flush', (await boxes.count()) === 2);
 
@@ -447,9 +471,9 @@ function readPrompts() {
 
     await runUntilStop();
     await input.fill('layout short');
-    await queueBtn.click({ force: true });
+    await clickWhenVisible(queueBtn);
     await input.fill('L'.repeat(400));
-    await queueBtn.click({ force: true });
+    await clickWhenVisible(queueBtn);
     await delay(400);
 
     const layout = await page.evaluate(() => {
@@ -562,7 +586,7 @@ function readPrompts() {
       'running + text + image attachment → button stays Queue (queue holds images)',
       (await queueBtn.count()) === 1 && (await stopBtn.count()) === 0,
     );
-    await queueBtn.click({ force: true });
+    await clickWhenVisible(queueBtn);
     await delay(400);
     const imgBox = await page.evaluate(() => {
       const box = document.querySelector('.chat-queue-box');
@@ -625,7 +649,7 @@ function readPrompts() {
     await input.fill('two images');
     await attachImages(2);
     await delay(300);
-    await queueBtn.click({ force: true });
+    await clickWhenVisible(queueBtn);
     await delay(400);
     report(
       'queued multi-image message shows the indicator in its box',
@@ -677,7 +701,7 @@ function readPrompts() {
     await runUntilStop();
     await input.fill('viewer close on flush');
     await attachImages(1);
-    await queueBtn.click({ force: true });
+    await clickWhenVisible(queueBtn);
     await delay(400);
     await boxes.first().click({ force: true });
     await delay(300);
@@ -859,15 +883,18 @@ function readPrompts() {
     await input.fill('survive alpha');
     await attachImages(1);
     await delay(300);
-    await queueBtn.click({ force: true });
+    await clickWhenVisible(queueBtn);
     await input.fill('survive beta');
-    await queueBtn.click({ force: true });
+    await clickWhenVisible(queueBtn);
     await delay(500);
-    const storedQueues = await page.evaluate(() => localStorage.getItem('sf-chat:queues'));
+    const storedQueues = await getJson(backendPort, `/api/queue?file=${encodeURIComponent(F)}`);
     report(
-      'queued messages (images included) are persisted to localStorage',
-      !!storedQueues && storedQueues.includes('survive alpha') && storedQueues.includes('survive beta'),
-      (storedQueues || '').slice(0, 120),
+      'queued messages (images included) are persisted on the gateway',
+      storedQueues.items.length === 2 &&
+        storedQueues.items[0].text === 'survive alpha' &&
+        (storedQueues.items[0].images?.length ?? 0) === 1 &&
+        storedQueues.items[1].text === 'survive beta',
+      JSON.stringify((storedQueues.items || []).map((m) => m.text)),
     );
 
     await page.reload({ waitUntil: 'domcontentloaded' });
@@ -926,21 +953,18 @@ function readPrompts() {
       JSON.stringify(surviveFlush2),
     );
     await delay(1000);
-    const storedAfter = await page.evaluate(() => {
-      const j = JSON.parse(localStorage.getItem('sf-chat:queues') || '{}');
-      return Object.values(j).flat().length;
-    });
+    const storedAfter = await getJson(backendPort, '/api/queue');
     report(
-      'queue storage is empty once everything is delivered',
-      (await boxes.count()) === 0 && storedAfter === 0,
-      `boxes:${await boxes.count()} storedItems:${storedAfter}`,
+      'gateway queue is empty once everything is delivered',
+      (await boxes.count()) === 0 && Object.keys(storedAfter.queues ?? {}).length === 0,
+      `boxes:${await boxes.count()} queues:${JSON.stringify(Object.keys(storedAfter.queues ?? {}))}`,
     );
 
     await runUntilStop();
     await input.fill('multi one');
-    await queueBtn.click({ force: true });
+    await clickWhenVisible(queueBtn);
     await input.fill('multi two');
-    await queueBtn.click({ force: true });
+    await clickWhenVisible(queueBtn);
     await delay(500);
 
     const page2 = await context.newPage();
@@ -956,13 +980,13 @@ function readPrompts() {
       await delay(500);
     }
     report(
-      'a second tab restores the same queue from shared storage',
+      'a second tab restores the same queue from the gateway',
       (await boxes2.count()) === 2,
       `tab2 boxes:${await boxes2.count()}`,
     );
 
     await input.fill('multi three');
-    await queueBtn.click({ force: true });
+    await clickWhenVisible(queueBtn);
     let adopted = false;
     for (let i = 0; i < 20; i++) {
       if ((await boxes2.count()) === 3) {
@@ -971,7 +995,7 @@ function readPrompts() {
       }
       await delay(500);
     }
-    report('a queue action in one tab appears in the other (storage event)', adopted);
+    report('a queue action in one tab appears in the other (gateway event)', adopted);
 
     await idleUntilSend();
     let multiOne = null;
@@ -984,7 +1008,7 @@ function readPrompts() {
       await delay(500);
     }
     report(
-      'two tabs idle-flush together: the claim guard delivers exactly once',
+      'two tabs idle-flush together: the gateway delivers exactly once',
       !!multiOne && multiOne.length === 1 && multiOne[0].interrupt === false,
       `deliveries:${multiOne ? multiOne.length : 0}`,
     );
@@ -1018,6 +1042,116 @@ function readPrompts() {
       cancelSynced && (await boxes.count()) === 0 && (await boxes2.count()) === 0,
     );
     await page2.close();
+
+    await runUntilStop();
+    await input.fill('orphan alpha');
+    await clickWhenVisible(queueBtn);
+    await input.fill('orphan beta');
+    await clickWhenVisible(queueBtn);
+    await delay(500);
+    await context.close();
+    await setStatus('idle');
+    let orphanFlush = null;
+    for (let i = 0; i < 40 && !orphanFlush; i++) {
+      const hits = readPrompts().filter((p) => p.agentId === F && p.message === 'orphan alpha');
+      if (hits.length === 1) orphanFlush = hits[0];
+      else await delay(250);
+    }
+    report(
+      'closing the browser does not hold the queue back (gateway flushes clientless)',
+      !!orphanFlush && orphanFlush.interrupt === false,
+      JSON.stringify(orphanFlush),
+    );
+    await setStatus('running');
+    await delay(400);
+    await setStatus('idle');
+    let orphanFlush2 = null;
+    for (let i = 0; i < 40 && !orphanFlush2; i++) {
+      const hits = readPrompts().filter((p) => p.agentId === F && p.message === 'orphan beta');
+      if (hits.length === 1) orphanFlush2 = hits[0];
+      else await delay(250);
+    }
+    report(
+      'second orphaned message flushes exactly once on the next finish',
+      !!orphanFlush2 &&
+        readPrompts().filter((p) => p.agentId === F && p.message === 'orphan beta').length === 1,
+    );
+
+    const context2 = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page3 = await context2.newPage();
+    page3.on('pageerror', (e) => errors.push(`page3 pageerror: ${e.message}`));
+    page3.on('console', (m) => {
+      if (m.type() === 'error') errors.push(`page3 console: ${m.text()}`);
+    });
+    await page3.goto(`http://127.0.0.1:${vitePort}/`, { waitUntil: 'domcontentloaded' });
+    await page3.waitForSelector('.sf-pl-item:has-text("queue-msg-check")', { timeout: 60000 });
+    await page3.locator('.sf-pl-item:has-text("queue-msg-check")').first().click({ force: true });
+    await page3.waitForSelector('.chat-window', { timeout: 30000 });
+    await delay(1500);
+    const input3 = page3.locator('.chat-input');
+    const queueBtn3 = page3.locator('.chat-send-btn--queue');
+    const stopBtn3 = page3.locator('.chat-send-btn--stop');
+    const editBtn3 = page3.locator('[title="Edit this queued message"]');
+    const editPopup3 = page3.locator('.chat-queue-edit');
+    const waitStop3 = async (want) => {
+      for (let i = 0; i < 40; i++) {
+        if ((await stopBtn3.count()) === want) return true;
+        await delay(250);
+      }
+      return (await stopBtn3.count()) === want;
+    };
+
+    await setStatus('running');
+    report('page3 follows the running status', await waitStop3(1));
+    await input3.fill('hold me while editing');
+    await clickWhenVisible(queueBtn3);
+    await delay(400);
+    await editBtn3.first().click();
+    await delay(300);
+    report('edit popup open on the queued message', (await editPopup3.count()) === 1);
+    await setStatus('idle');
+    await delay(8000);
+    const holdHits = readPrompts().filter((p) => p.agentId === F && p.message === 'hold me while editing');
+    const boxes3 = await page3.locator('.chat-queue-box').count();
+    report(
+      'editing holds the flush past the whole TTL (heartbeats keep refreshing the hold)',
+      holdHits.length === 0 && boxes3 === 1,
+      `deliveries:${holdHits.length} boxes:${boxes3}`,
+    );
+    await page3.locator('.chat-queue-edit-btn:not(.chat-queue-edit-btn--primary)').click();
+    await delay(300);
+    let released = null;
+    for (let i = 0; i < 40 && !released; i++) {
+      const hits = readPrompts().filter((p) => p.agentId === F && p.message === 'hold me while editing');
+      if (hits.length === 1) released = hits[0];
+      else await delay(250);
+    }
+    report(
+      'closing the edit popup releases the queue and the message flushes',
+      !!released && released.interrupt === false,
+      JSON.stringify(released),
+    );
+
+    await setStatus('running');
+    report('page3 running again', await waitStop3(1));
+    await input3.fill('die mid edit');
+    await clickWhenVisible(queueBtn3);
+    await delay(400);
+    await editBtn3.first().click();
+    await delay(300);
+    await context2.close();
+    await setStatus('idle');
+    let diedFlush = null;
+    for (let i = 0; i < 60 && !diedFlush; i++) {
+      const hits = readPrompts().filter((p) => p.agentId === F && p.message === 'die mid edit');
+      if (hits.length === 1) diedFlush = hits[0];
+      else await delay(500);
+    }
+    report(
+      'browser death mid-edit: the hold expires and the queue flushes anyway',
+      !!diedFlush && diedFlush.interrupt === false,
+      JSON.stringify(diedFlush),
+    );
 
     report('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   } catch (e) {

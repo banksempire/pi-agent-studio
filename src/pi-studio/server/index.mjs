@@ -12,6 +12,7 @@ import { applyImplicitNewChatDefault } from '../../pi-nest/src/models.mjs';
 import { AgentRegistry, WATCHDOG_INTERVAL_MS } from '../../pi-nest/src/registry.mjs';
 import { computeNextDue, Scheduler } from '../../pi-nest/src/scheduler.mjs';
 import { normalizeJobInput, payloadFromInput, validateJob } from './job-input.mjs';
+import { createMessageQueue, normalizeAttachments } from './message-queue.mjs';
 import { createPeakHoursStore } from './peak-hours.mjs';
 import { createSessionStates } from './session-states.mjs';
 
@@ -48,6 +49,7 @@ if (process.env.PI_STUDIO_CLIENT_MODULE) {
   registry = new AgentRegistry({ journal });
   client = createLocalClient(registry);
 }
+const messageQueue = createMessageQueue({ client, journal, emit: (ev) => emit(ev) });
 
 function parseEntries(content) {
   const out = [];
@@ -880,6 +882,7 @@ function globalKeyOf(event) {
   if (event.type === 'tree') return 'tree';
   if (event.type === 'session_status') return `s\u0000${event.file}`;
   if (event.type === 'session_state') return `st\u0000${event.file}`;
+  if (event.type === 'queue_update') return `q\u0000${event.file}`;
   return null;
 }
 
@@ -1075,6 +1078,7 @@ function handleClientEvent(ev) {
   if (ev.type === 'session_status') {
     if (payload.status === 'running') sessionStates.noteAgentRunning(ev.file);
     else if (payload.status === 'idle') sessionStates.noteAgentSettled(ev.file, { stale: !!payload.stale });
+    messageQueue.noteStatus(ev.file, payload.status);
   } else if (ev.type === 'message' && payload?.role === 'assistant' && payload.stopReason) {
     sessionStates.noteAssistantOutcome(ev.file, payload.stopReason, payload.error ?? '');
   }
@@ -1224,6 +1228,78 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (p === '/api/queue' && req.method === 'GET') {
+      const file = url.searchParams.get('file');
+      if (file)
+        return sendJson(res, 200, {
+          items: messageQueue.list(file),
+          held: messageQueue.heldFiles().includes(file),
+        });
+      sendJson(res, 200, { queues: messageQueue.all() });
+      return;
+    }
+
+    if (p === '/api/queue' && req.method === 'POST') {
+      const { file, message, images } = await readBody(req);
+      if (!file || typeof message !== 'string') {
+        return sendJson(res, 400, { error: 'file and message required' });
+      }
+      const norm = normalizeAttachments(images);
+      if (norm.error) return sendJson(res, 400, { error: norm.error });
+      if (!message.trim() && !norm.images.length) {
+        return sendJson(res, 400, { error: 'file and message required' });
+      }
+      if (!existsSync(file) && registry && !registry.has(file)) {
+        return sendJson(res, 404, { error: 'session file not found' });
+      }
+      const id = messageQueue.enqueue(file, { message: message.trim(), images: norm.images });
+      if (id === null) return sendJson(res, 500, { error: 'failed to persist queued message' });
+      sendJson(res, 200, { ok: true, items: messageQueue.list(file) });
+      return;
+    }
+
+    if (p === '/api/queue/hold' && req.method === 'POST') {
+      const { file } = await readBody(req);
+      if (!file) return sendJson(res, 400, { error: 'file required' });
+      messageQueue.hold(file);
+      sendJson(res, 200, { ok: true, holdMs: messageQueue.holdMs });
+      return;
+    }
+
+    if (p === '/api/queue/release' && req.method === 'POST') {
+      const { file } = await readBody(req);
+      if (!file) return sendJson(res, 400, { error: 'file required' });
+      messageQueue.release(file);
+      sendJson(res, 200, { ok: true, items: messageQueue.list(file) });
+      return;
+    }
+
+    if (p.startsWith('/api/queue/') && req.method === 'PATCH') {
+      const file = url.searchParams.get('file');
+      const id = Number(p.slice('/api/queue/'.length));
+      const body = await readBody(req);
+      if (!file || !Number.isInteger(id))
+        return sendJson(res, 400, { error: 'file and numeric id required' });
+      if (typeof body.message !== 'string' || !body.message.trim()) {
+        return sendJson(res, 400, { error: 'message required' });
+      }
+      if (!messageQueue.updateText(file, id, body.message.trim())) {
+        return sendJson(res, 404, { error: 'queued message not found' });
+      }
+      sendJson(res, 200, { ok: true, items: messageQueue.list(file) });
+      return;
+    }
+
+    if (p.startsWith('/api/queue/') && req.method === 'DELETE') {
+      const file = url.searchParams.get('file');
+      const id = Number(p.slice('/api/queue/'.length));
+      if (!file || !Number.isInteger(id))
+        return sendJson(res, 400, { error: 'file and numeric id required' });
+      if (!messageQueue.remove(file, id)) return sendJson(res, 404, { error: 'queued message not found' });
+      sendJson(res, 200, { ok: true, items: messageQueue.list(file) });
+      return;
+    }
+
     if (p === '/api/sessions' && req.method === 'GET') {
       const files = [];
       for (const dirEntry of await readdir(SESSIONS_ROOT, { withFileTypes: true })) {
@@ -1301,23 +1377,9 @@ const server = createServer(async (req, res) => {
       }
       let attachments = [];
       if (images !== undefined) {
-        if (!Array.isArray(images) || images.length > 4) {
-          return sendJson(res, 400, { error: 'images must be an array of at most 4 attachments' });
-        }
-        let totalBytes = 0;
-        for (const im of images) {
-          if (!im || typeof im.data !== 'string' || typeof im.mimeType !== 'string') {
-            return sendJson(res, 400, { error: 'each image needs { mimeType, data }' });
-          }
-          if (!/^image\//.test(im.mimeType)) {
-            return sendJson(res, 400, { error: 'only image/* attachments are allowed' });
-          }
-          totalBytes += im.data.length;
-        }
-        if (totalBytes > 8 * 1024 * 1024) {
-          return sendJson(res, 400, { error: 'attached images exceed 8 MB (base64)' });
-        }
-        attachments = images;
+        const norm = normalizeAttachments(images);
+        if (norm.error) return sendJson(res, 400, { error: norm.error });
+        attachments = norm.images;
       }
       if (!message.trim() && !attachments.length) {
         return sendJson(res, 400, { error: 'file and message required' });
@@ -1488,7 +1550,10 @@ const server = createServer(async (req, res) => {
           extra: body.extra ?? {},
           reqId: body.reqId ?? '',
         });
-        if (body.command === 'delete' && body.file && r.ok) sessionStates.remove(body.file);
+        if (body.command === 'delete' && body.file && r.ok) {
+          sessionStates.remove(body.file);
+          messageQueue.removeAll(body.file);
+        }
         const out = { ok: r.ok, notice: r.notice || undefined, error: r.error || undefined };
         if (r.dataJson) out.data = JSON.parse(r.dataJson);
         sendJson(res, r.ok ? 200 : 400, out);
@@ -1698,6 +1763,7 @@ const server = createServer(async (req, res) => {
         nest: true,
         draining,
         journal: { pending: journal?.pendingCount() ?? 0, recovery: lastRecovery },
+        uiQueued: messageQueue.size(),
         mem: {
           rss: s.rss,
           heapUsed: s.heapUsed,
@@ -1963,6 +2029,8 @@ server.listen(PORT, HOST, () => {
   wireClientEvents();
   void bootReconcile();
   void bootRecover();
+  const restored = messageQueue.restore();
+  if (restored > 0) console.log(`[backend] restored ${restored} queued message(s) from the journal`);
   console.log(`pi-agent-studio backend on ${HOST}:${PORT}`);
   console.log(`sessions: ${SESSIONS_ROOT}`);
   console.log(`new chats cwd: ${NEW_CHAT_CWD}`);

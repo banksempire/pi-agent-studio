@@ -1287,6 +1287,29 @@ function writeSessionFile(name) {
       mobileFit.top >= 59.5 && mobileFit.bottom <= mobileFit.vh - 60 - 38 + 0.5,
       JSON.stringify(mobileFit),
     );
+    const mobileHeights = await page.evaluate(() => {
+      const h = (sel) => {
+        const el = document.querySelector(sel);
+        return el ? Math.round(el.getBoundingClientRect().height * 10) / 10 : null;
+      };
+      return {
+        name: h('#je-name'),
+        runAt: h('#je-runat'),
+        cwd: h('#je-cwd'),
+        modelBtn: h('.je-model-btn'),
+        message: h('.je-textarea'),
+      };
+    });
+    report(
+      'mobile: every one-line box in the job form shares the same 36px height, message box stays multi-line',
+      mobileHeights.name === 36 &&
+        mobileHeights.runAt === 36 &&
+        mobileHeights.cwd === 36 &&
+        mobileHeights.modelBtn === 36 &&
+        mobileHeights.message !== null &&
+        mobileHeights.message >= 90,
+      JSON.stringify(mobileHeights),
+    );
     const jobNoPan = await page.evaluate(() => {
       const card = document.querySelector('.sf-dialog');
       const body = card.querySelector('.sf-dialog-body');

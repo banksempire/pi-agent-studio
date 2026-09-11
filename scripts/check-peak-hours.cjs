@@ -1824,12 +1824,24 @@ async function unitChecks({ report }) {
           step: i.step,
         };
       });
+      const oneLine = (sel) => {
+        const el = document.querySelector(sel);
+        return el ? Math.round(el.getBoundingClientRect().height * 10) / 10 : null;
+      };
+      const appearance = getComputedStyle(document.querySelector('.aph-times input')).appearance;
       return {
         top: Math.round(card.top * 10) / 10,
         bottom: Math.round(card.bottom * 10) / 10,
         vh: window.innerHeight,
         scrollable: body.scrollHeight > body.clientHeight + 1,
         inputs,
+        heights: {
+          start: oneLine('#aph-start'),
+          end: oneLine('#aph-end'),
+          tz: oneLine('#aph-tz'),
+          note: oneLine('#aph-note'),
+        },
+        appearance,
       };
     });
     report(
@@ -1846,6 +1858,15 @@ async function unitChecks({ report }) {
             i.left >= 25 && i.right <= 295 && i.minW === '0px' && i.padRight === '22px' && i.step === '60',
         ),
       JSON.stringify(mFit.inputs),
+    );
+    report(
+      'mobile: every one-line box in the peak form shares the same 36px height, native time input de-UAed',
+      mFit.appearance === 'none' &&
+        mFit.heights.start === 36 &&
+        mFit.heights.end === 36 &&
+        mFit.heights.tz === 36 &&
+        mFit.heights.note === 36,
+      JSON.stringify({ appearance: mFit.appearance, heights: mFit.heights }),
     );
     await mobileCtx.close();
 

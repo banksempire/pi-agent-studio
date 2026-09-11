@@ -162,7 +162,10 @@ defineExpose({
 .tf-input--native {
   color-scheme: dark;
   cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
   min-width: 0;
+  min-height: 36px;
   padding-right: 22px;
   background-size: 12px 12px;
   background-position: right 5px center;

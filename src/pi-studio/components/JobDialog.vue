@@ -729,6 +729,7 @@ function fmtRel(ms: number | null): string {
 
 .je-input {
   width: 100%;
+  height: 36px;
   box-sizing: border-box;
   padding: 7px 10px;
   border-radius: var(--sf-radius-sm);
@@ -748,6 +749,7 @@ function fmtRel(ms: number | null): string {
 }
 .je-textarea {
   resize: vertical;
+  height: auto;
   min-height: 90px;
   line-height: 1.45;
 }
@@ -981,6 +983,7 @@ function fmtRel(ms: number | null): string {
 .je-model-btn {
   display: inline-flex;
   align-items: center;
+  height: 36px;
   max-width: 100%;
   min-width: 0;
   padding: 7px 32px 7px 10px;

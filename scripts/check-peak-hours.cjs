@@ -1819,7 +1819,9 @@ async function unitChecks({ report }) {
           top: Math.round(r.top),
           left: Math.round(r.left),
           right: Math.round(r.right),
-          w: Math.round(r.width),
+          minW: getComputedStyle(i).minWidth,
+          padRight: getComputedStyle(i).paddingRight,
+          step: i.step,
         };
       });
       return {
@@ -1836,10 +1838,13 @@ async function unitChecks({ report }) {
       JSON.stringify({ top: mFit.top, bottom: mFit.bottom, vh: mFit.vh, scrollable: mFit.scrollable }),
     );
     report(
-      'mobile: peak start/end stack full-width so the time pickers respect the dialog paddings',
+      'mobile: peak start/end share one row inside the dialog, boxes never clip, icon chrome intact',
       mFit.inputs.length === 2 &&
-        mFit.inputs[0].top < mFit.inputs[1].top &&
-        mFit.inputs.every((i) => i.w >= 240 && i.left >= 25 && i.right <= 295),
+        mFit.inputs[0].top === mFit.inputs[1].top &&
+        mFit.inputs.every(
+          (i) =>
+            i.left >= 25 && i.right <= 295 && i.minW === '0px' && i.padRight === '22px' && i.step === '60',
+        ),
       JSON.stringify(mFit.inputs),
     );
     await mobileCtx.close();

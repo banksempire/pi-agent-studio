@@ -103,6 +103,7 @@ defineExpose({
       ref="inputEl"
       class="tf-input tf-input--native"
       type="time"
+      step="60"
       :value="modelValue"
       @input="onNativeInput"
       @change="disarmPickerSwallow"
@@ -161,6 +162,10 @@ defineExpose({
 .tf-input--native {
   color-scheme: dark;
   cursor: pointer;
+  min-width: 0;
+  padding-right: 22px;
+  background-size: 12px 12px;
+  background-position: right 5px center;
 }
 
 .tf-input--native::-webkit-calendar-picker-indicator {

@@ -291,10 +291,6 @@ async function save() {
   gap: 10px;
 }
 
-.sf-root--mobile .aph-times {
-  grid-template-columns: 1fr;
-}
-
 .aph-live {
   font-size: 12px;
   color: var(--sf-text-muted);

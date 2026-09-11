@@ -109,6 +109,10 @@ function getJson(port, p, method = 'GET', body = null) {
       },
     );
     req.on('error', reject);
+    req.setTimeout(2000, () => {
+      req.destroy(new Error('timeout'));
+      reject(new Error('timeout'));
+    });
     if (body) req.write(JSON.stringify(body));
     req.end();
   });
@@ -234,10 +238,37 @@ async function main() {
     const oldPid = pidfile('backend')?.pid;
     const cli = studioAsync(['-i', ID, 'restart', 'backend', '--yes'], env);
     procs.push(cli);
-    await delay(900);
+    let cliErr = '';
+    cli.stderr?.on('data', (d) => (cliErr += d));
+    let drainObserved = false;
+    let cliExitCode = null;
+    let cliExitAt = 0;
+    {
+      const deadline = Date.now() + 20000;
+      const startedAt = Date.now();
+      while (Date.now() < deadline) {
+        if (cli.exitCode !== null) {
+          cliExitCode = cli.exitCode;
+          cliExitAt = Date.now() - startedAt;
+          break;
+        }
+        try {
+          const h = await getJson(backendPort, '/api/health');
+          if (h?.draining) {
+            drainObserved = true;
+            break;
+          }
+        } catch {}
+        await delay(50);
+      }
+    }
     const cliAlive = cli.exitCode === null;
-    process.kill(cli.pid, 'SIGKILL');
-    report('restart CLI was mid-drain when killed', cliAlive, '');
+    if (cliAlive) process.kill(cli.pid, 'SIGKILL');
+    report(
+      'restart CLI was mid-drain when killed',
+      cliAlive && drainObserved,
+      `cliAlive=${cliAlive} drainObserved=${drainObserved} cliExit=${JSON.stringify({ code: cliExitCode, atMs: cliExitAt })} stderr=${cliErr.trim().slice(0, 300)}`,
+    );
 
     const back = await waitHealthy(backendPort, DRAIN_MS + 60000);
     const newPid = pidfile('backend')?.pid;

@@ -419,8 +419,14 @@ async function runBackend(stub, opts) {
     console.log('phase 3 — refcount-0 close signal + heartbeat reconcile');
     viewA.buf = '';
     viewB.buf = '';
+    viewA.stopBeating();
+    await postStreamSignal(b2.port, 'heartbeat', viewA.clientId, viewA.files);
     const closeA = await postStreamSignal(b2.port, 'close', viewA.clientId, [FLOOD_FILE]);
     viewA.files = [];
+    viewA.beatTimer = setInterval(() => {
+      if (!viewA.clientId || viewA.closed) return;
+      postStreamSignal(b2.port, 'heartbeat', viewA.clientId, viewA.files);
+    }, BEAT_MS);
     await delay(600);
     const afterClose = await health(b2.port);
     report(

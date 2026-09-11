@@ -329,20 +329,35 @@ const composerIsFocused = (page) =>
     }
     await page.waitForSelector('.sf-welcome', { timeout: 15000 });
     report(
-      'desktop start page: classic shortcuts layout, no mobile variant',
-      (await page.locator('.sf-welcome-shortcuts').count()) === 1 &&
+      'desktop start page: quick actions and fact grid, no mobile variant',
+      (await page.locator('.welcome-d').count()) === 1 &&
+        (await page.locator('.welcome-d-action').count()) === 3 &&
+        (await page.locator('.welcome-d-fact').count()) === 4 &&
         (await page.locator('.welcome-m').count()) === 0,
+    );
+
+    await page.locator('.welcome-d-action', { hasText: 'Model Catalog' }).click();
+    await page.waitForSelector('.sf-tab-label:has-text("Model Catalog")', { timeout: 15000 });
+    report(
+      'desktop start page: Model Catalog quick action opens the catalog tab',
+      (await page.locator('.sf-tab-label', { hasText: 'Model Catalog' }).count()) === 1,
+    );
+    await page.locator('.sf-tab.active .sf-tab-close').first().click();
+    await delay(300);
+    report(
+      'desktop: closing the tab returns to the start page',
+      (await page.locator('.welcome-d').count()) === 1,
     );
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForSelector('.sf-root--mobile', { timeout: 15000 });
     await delay(400);
     report(
-      'mobile start page: dedicated mobile welcome, desktop shortcuts hidden',
+      'mobile start page: dedicated mobile welcome, desktop variant hidden',
       (await page.locator('.welcome-m').count()) === 1 &&
-        (await page.locator('.welcome-m-card').count()) === 3 &&
+        (await page.locator('.welcome-m-card').count()) === 4 &&
         (await page.locator('.welcome-m-cta').count()) === 1 &&
-        (await page.locator('.sf-welcome-shortcuts').count()) === 0,
+        (await page.locator('.welcome-d').count()) === 0,
     );
 
     report('no console/page errors', errors.length === 0, errors.join('; '));

@@ -323,6 +323,28 @@ const composerIsFocused = (page) =>
         .isVisible(),
     );
 
+    while ((await page.locator('.sf-tab.active .sf-tab-close').count()) > 0) {
+      await page.locator('.sf-tab.active .sf-tab-close').first().click();
+      await delay(200);
+    }
+    await page.waitForSelector('.sf-welcome', { timeout: 15000 });
+    report(
+      'desktop start page: classic shortcuts layout, no mobile variant',
+      (await page.locator('.sf-welcome-shortcuts').count()) === 1 &&
+        (await page.locator('.welcome-m').count()) === 0,
+    );
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForSelector('.sf-root--mobile', { timeout: 15000 });
+    await delay(400);
+    report(
+      'mobile start page: dedicated mobile welcome, desktop shortcuts hidden',
+      (await page.locator('.welcome-m').count()) === 1 &&
+        (await page.locator('.welcome-m-card').count()) === 3 &&
+        (await page.locator('.welcome-m-cta').count()) === 1 &&
+        (await page.locator('.sf-welcome-shortcuts').count()) === 0,
+    );
+
     report('no console/page errors', errors.length === 0, errors.join('; '));
   } catch (e) {
     console.error(e);

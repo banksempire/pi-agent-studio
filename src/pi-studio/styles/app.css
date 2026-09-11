@@ -962,6 +962,78 @@
   margin-bottom: 14px;
 }
 
+.welcome-m {
+  width: min(100%, 340px);
+  padding: 0 20px;
+}
+
+.welcome-m-hero {
+  text-align: center;
+  margin-bottom: 26px;
+}
+
+.welcome-m-hero h1 {
+  font-size: 26px;
+  font-weight: 300;
+  color: var(--sf-text-bright);
+  margin-bottom: 6px;
+}
+
+.welcome-m-hero p {
+  color: var(--sf-text-muted);
+  font-size: 14px;
+}
+
+.welcome-m-cta {
+  display: block;
+  width: 100%;
+  padding: 14px 20px;
+  border-radius: 10px;
+  margin-bottom: 26px;
+}
+
+.welcome-m-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.welcome-m-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: var(--sf-bg-light);
+  border: 1px solid var(--sf-border);
+  border-radius: 10px;
+  text-align: left;
+}
+
+.welcome-m-card-icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  color: var(--sf-text);
+}
+
+.welcome-m-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.welcome-m-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--sf-text-bright);
+}
+
+.welcome-m-card-text {
+  font-size: 13px;
+  color: var(--sf-text-muted);
+}
+
 .welcome-btn:hover:not(:disabled) {
   box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
 }

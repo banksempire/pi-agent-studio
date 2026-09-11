@@ -67,6 +67,10 @@ export async function createClient() {
           JSON.stringify({ agentId: evt && evt.agentId, message: evt && evt.message, interrupt: evt && evt.interrupt, images: evt && evt.images ? evt.images.length : 0 }) + '\\n',
         );
       }
+      const ts = Date.now();
+      const row = { id: 'pending-' + ts, role: 'user', text: (evt && evt.message) ?? '', ts };
+      if (evt && Array.isArray(evt.images) && evt.images.length > 0) row.images = evt.images;
+      bus.emit('agent-event', { type: 'message', file: evt && evt.agentId, json: JSON.stringify(row) });
       return { ok: true };
     },
     async abort(evt) {

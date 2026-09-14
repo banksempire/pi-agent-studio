@@ -65,7 +65,14 @@ export function defineTool(def) {
   return def;
 }
 
-export class DefaultResourceLoader {}
+export class DefaultResourceLoader {
+  constructor(options = {}) {
+    if (!options.agentDir) {
+      throw new TypeError('DefaultResourceLoader requires agentDir (real SDK crashes resolving it)');
+    }
+    this.options = options;
+  }
+}
 
 export class SessionManager {
   constructor(cwd, dir, file) {

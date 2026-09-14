@@ -109,6 +109,7 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
     const sm = new sdk.SessionManager(cwd, dir, path.join(dir, 'transcript.jsonl'), true);
     const loader = new sdk.DefaultResourceLoader({
       cwd,
+      agentDir: sdk.getAgentDir(),
       appendSystemPromptOverride: (base) => [
         ...base,
         [SUBAGENT_CONTRACT, run.role].filter(Boolean).join(' '),

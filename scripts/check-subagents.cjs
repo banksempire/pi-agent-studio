@@ -103,6 +103,10 @@ function subagentDirs(parent) {
   return fs.readdirSync(dir).filter((e) => fs.existsSync(path.join(dir, e, 'result.json')));
 }
 
+function existsSyncSafe(parent, childId) {
+  return fs.existsSync(path.join(SESSIONS_ROOT, '_subagents', parent, childId, 'result.json'));
+}
+
 function readChildResults(parent) {
   const dir = path.join(SESSIONS_ROOT, '_subagents', parent);
   if (!fs.existsSync(dir)) return [];
@@ -233,6 +237,18 @@ async function engineTests() {
   report('final answer without tool calls', faNoTools === 'direct');
   const faEmpty = finalAnswerFromTurns([{ text: '', hasToolCalls: true }]);
   report('empty after tool call -> empty', faEmpty === '');
+
+  const { createAnswerCollector } = await import(pathToFileURL(path.join(NEST, 'subagents.mjs')).href);
+  const coll = createAnswerCollector();
+  coll.push({ role: 'assistant', content: [{ type: 'text', text: 'pre-tool thinking' }] });
+  coll.push({ role: 'assistant', content: [{ type: 'toolCall', id: 'c1', name: 'read', arguments: {} }] });
+  coll.push({ role: 'assistant', content: [{ type: 'text', text: 'post-tool' }] });
+  report('collector drops pre-tool-call text', coll.answer() === 'post-tool', JSON.stringify(coll.answer()));
+  coll.push({ role: 'assistant', content: [{ type: 'toolCall', id: 'c2', name: 'read', arguments: {} }] });
+  coll.push({ role: 'assistant', content: [{ type: 'text', text: 'recovered' }] });
+  report('collector resets on every tool call', coll.answer() === 'recovered');
+  coll.push({ role: 'user', content: [{ type: 'text', text: 'ignore me' }] });
+  report('collector ignores non-assistant messages', coll.answer() === 'recovered');
 }
 
 async function managerTests() {
@@ -388,6 +404,57 @@ async function managerTests() {
 
   const noTarget = manager.gc({});
   report('gc without target refused', !noTarget.ok);
+
+  console.log('optimization hardening');
+  const queuedManager = createSubagentManager({
+    sessionsRoot: SESSIONS_ROOT,
+    getSession: (id) => (id === parentId || id === parent2Id ? parentSession : null),
+    limits: { globalMax: 1, providerMax: 1, modelMax: 1 },
+  });
+  appendChildRule({ match: 'hang tight', behavior: 'hang' });
+  const parent2Id = parentId.replace('parent-1', 'parent-2');
+  const twoSlow = queuedManager.runTasks(parent2Id, [
+    { prompt: 'hang tight forever' },
+    { prompt: 'quick reply please' },
+  ]);
+  await delay(300);
+  const queuedList = queuedManager.list({});
+  report(
+    'second child queued behind governor cap',
+    queuedList.some((r) => r.label === 'task-2' && r.status === 'queued'),
+    JSON.stringify(queuedList.map((r) => [r.label, r.status])),
+  );
+  queuedManager.abortForParent(parent2Id);
+  const [hangSlow, queuedRun] = await twoSlow;
+  report('running child aborted', hangSlow.status === 'aborted', hangSlow.status);
+  report(
+    'queued child aborted without spawning',
+    queuedRun.status === 'aborted' && !existsSyncSafe(parent2Id, queuedRun.id),
+    `${queuedRun.status} dir=${existsSyncSafe(parent2Id, queuedRun.id)}`,
+  );
+  const promptsForParent2 = childPrompts().filter((p) => p.file.includes('parent-2'));
+  report(
+    'queued child consumed zero model prompts',
+    promptsForParent2.length === 1,
+    String(promptsForParent2.length),
+  );
+
+  appendChildRule({ match: 'unknown model probe', behavior: 'reply' });
+  const [badModel] = await manager.runTasks(parentId, [
+    { prompt: 'unknown model probe', model: 'nope/missing' },
+  ]);
+  report(
+    'unknown model fails fast without child',
+    badModel.status === 'failed' && badModel.error.includes('unknown model'),
+    badModel.error,
+  );
+
+  const wipe2 = queuedManager.gc({ session: parent2Id });
+  report(
+    'gc prunes empty parent dir',
+    wipe2.removed.length === 1 && !fs.existsSync(path.join(SESSIONS_ROOT, '_subagents', 'parent-2')),
+    JSON.stringify(wipe2.removed.map((r) => r.id)),
+  );
 
   return { manager, parentId };
 }

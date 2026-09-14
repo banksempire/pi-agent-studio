@@ -66,6 +66,26 @@ export function finalAnswerFromTurns(turns) {
     .trim();
 }
 
+export function createAnswerCollector() {
+  let parts = [];
+  return {
+    push(message) {
+      if (message?.role !== 'assistant') return;
+      const hasToolCalls =
+        Array.isArray(message.content) && message.content.some((b) => b?.type === 'toolCall');
+      if (hasToolCalls) {
+        parts = [];
+        return;
+      }
+      const text = textOf(message.content);
+      if (text) parts.push(text);
+    },
+    answer() {
+      return parts.join('\n').trim();
+    },
+  };
+}
+
 function truncate(text, cap = TOOL_RESULT_CAP) {
   const t = String(text ?? '');
   return t.length <= cap ? t : `${t.slice(0, cap)}\n… [truncated, full result on disk]`;
@@ -85,7 +105,10 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
 
   function release(run) {
     runs.delete(run.id);
-    byParent.get(run.parent)?.delete(run.id);
+    const set = byParent.get(run.parent);
+    if (!set) return;
+    set.delete(run.id);
+    if (set.size === 0) byParent.delete(run.parent);
   }
 
   function report(run, onUpdate) {
@@ -101,8 +124,8 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
     return path.join(sessionsRoot, SUBAGENTS_DIRNAME, parentFolderId(parentAgentId));
   }
 
-  function childSession(run, modelRuntime, model, thinkingLevel) {
-    const parent = getSession(run.parent);
+  function childSession(run, parentSession, modelRuntime, model, thinkingLevel) {
+    const parent = parentSession ?? getSession(run.parent);
     const cwd = run.cwd ?? parent?.sessionManager?.getCwd() ?? process.cwd();
     const dir = path.join(baseDir(run.parent), run.id);
     mkdirSync(dir, { recursive: true });
@@ -129,33 +152,40 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
 
   function subscribeChild(session, collected) {
     session.subscribe((ev) => {
-      if (ev.type !== 'message_end' || ev.message?.role !== 'assistant') return;
-      const d = textOf(ev.message.content);
-      const hasToolCalls =
-        Array.isArray(ev.message.content) && ev.message.content.some((b) => b?.type === 'toolCall');
-      collected.turns.push({ text: d, hasToolCalls });
+      if (ev.type !== 'message_end') return;
+      collected.push(ev.message);
     });
   }
 
-  async function runOne(run, { modelRuntime, model, thinkingLevel, onUpdate }) {
+  async function runOne(run, { parentSession, modelRuntime, model, thinkingLevel, onUpdate }) {
     track(run);
     run.status = 'queued';
     report(run, onUpdate);
     const slot = await governor.waitForSlot(modelKeyOf(model));
+    if (run.status === 'aborted') {
+      run.error = run.error || 'parent aborted while queued';
+      governor.release(slot);
+      run.finishedAt = Date.now();
+      release(run);
+      writeResultFile(run);
+      report(run, onUpdate);
+      return;
+    }
     let child = null;
     try {
       run.status = 'running';
       run.startedAt = Date.now();
       report(run, onUpdate);
-      child = await childSession(run, modelRuntime, model, thinkingLevel);
+      child = await childSession(run, parentSession, modelRuntime, model, thinkingLevel);
       run.childSession = child.session;
-      const collected = { turns: [] };
+      const collected = createAnswerCollector();
       subscribeChild(child.session, collected);
       let timedOut = false;
       const timer = setTimeout(() => {
         timedOut = true;
         child.session.abort().catch(() => {});
       }, CHILD_TIMEOUT_MS);
+      timer.unref?.();
       try {
         await child.session.prompt(run.prompt);
         if (run.status === 'aborted') {
@@ -164,10 +194,10 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
           run.status = 'failed';
           run.error = 'timed out';
         } else {
-          let answer = finalAnswerFromTurns(collected.turns);
+          let answer = collected.answer();
           if (!answer) {
             await child.session.prompt(REPAIR_PROMPT);
-            answer = finalAnswerFromTurns(collected.turns);
+            answer = collected.answer();
           }
           if (!answer) {
             run.status = 'failed';
@@ -259,7 +289,7 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
           run.error = `unknown model '${run.model}'`;
           return Promise.resolve();
         }
-        return runOne(run, { modelRuntime: parent.modelRuntime, model, onUpdate });
+        return runOne(run, { parentSession: parent, modelRuntime: parent.modelRuntime, model, onUpdate });
       }),
     );
     return built;
@@ -304,7 +334,12 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
             startedAt: null,
             finishedAt: null,
           };
-          const done = runOne(run, { modelRuntime: parent.modelRuntime, model, onUpdate }).then(() => {
+          const done = runOne(run, {
+            parentSession: parent,
+            modelRuntime: parent.modelRuntime,
+            model,
+            onUpdate,
+          }).then(() => {
             if (!instances.has(nodeId)) instances.set(nodeId, []);
             instances.get(nodeId).push(run);
           });
@@ -534,6 +569,26 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
         out.push(row);
       }
     }
+    const seen = new Set(out.map((r) => r.id));
+    for (const run of runs.values()) {
+      if (seen.has(run.id)) continue;
+      if (session && parentFolderId(run.parent) !== parentFolderId(session)) continue;
+      out.push({
+        parent: parentFolderId(run.parent),
+        id: run.id,
+        kind: run.kind,
+        label: run.label,
+        status: run.status,
+        role: run.role ?? null,
+        model: run.model ?? null,
+        prompt: String(run.prompt ?? '').slice(0, 120),
+        error: run.error ?? '',
+        resultPreview: '',
+        startedAt: run.startedAt ?? null,
+        finishedAt: null,
+        bytes: 0,
+      });
+    }
     out.sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0));
     return out;
   }
@@ -552,10 +607,12 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
           .filter((e) => e.isDirectory())
           .map((e) => e.name);
     const removed = [];
+    const touchedParents = new Set();
     let bytes = 0;
     for (const p of parents) {
       const pdir = path.join(root, p);
       if (!existsSync(pdir)) continue;
+      touchedParents.add(pdir);
       for (const e of readdirSync(pdir, { withFileTypes: true })) {
         if (!e.isDirectory()) continue;
         const dir = path.join(pdir, e.name);
@@ -574,6 +631,13 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
         } catch (err) {
           console.error('[subagents] gc remove failed:', err?.message ?? err);
         }
+      }
+    }
+    if (!dryRun) {
+      for (const pdir of touchedParents) {
+        try {
+          if (existsSync(pdir) && readdirSync(pdir).length === 0) rmSync(pdir, { recursive: true });
+        } catch {}
       }
     }
     return { ok: true, dryRun, removed, bytes };
@@ -596,7 +660,7 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
     let n = 0;
     for (const id of ids) {
       const run = runs.get(id);
-      if (run?.status !== 'running') continue;
+      if (run?.status !== 'running' && run?.status !== 'queued') continue;
       n++;
       run.status = 'aborted';
       run.error = 'parent aborted';

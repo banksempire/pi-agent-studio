@@ -86,10 +86,23 @@ export class AgentRegistry extends EventEmitter {
   #live = new Map();
   #pending = new Map();
   #journal;
+  #subagents = null;
 
   constructor({ journal = null } = {}) {
     super();
     this.#journal = journal;
+  }
+
+  setSubagents(subagents) {
+    this.#subagents = subagents;
+  }
+
+  liveSession(agentId) {
+    return this.#live.get(agentId)?.session ?? null;
+  }
+
+  #customTools(agentId) {
+    return this.#subagents?.toolsFor(agentId) ?? [];
   }
 
   createSession(cwd) {
@@ -131,7 +144,10 @@ export class AgentRegistry extends EventEmitter {
       const { cwd, dir, model, thinkLevel } = this.#pending.get(agentId);
       this.#pending.delete(agentId);
       const sessionManager = new sdk.SessionManager(cwd, dir, agentId, true);
-      const { session } = await sdk.createAgentSession({ sessionManager });
+      const { session } = await sdk.createAgentSession({
+        sessionManager,
+        customTools: this.#customTools(agentId),
+      });
       if (model) {
         try {
           await session.setModel(model);
@@ -154,6 +170,7 @@ export class AgentRegistry extends EventEmitter {
     }
     const { session } = await sdk.createAgentSession({
       sessionManager: sdk.SessionManager.open(agentId),
+      customTools: this.#customTools(agentId),
     });
     return this.#register(agentId, session);
   }
@@ -268,6 +285,9 @@ export class AgentRegistry extends EventEmitter {
 
   async abort(agentId) {
     const live = this.#live.get(agentId);
+    try {
+      await this.#subagents?.abortForParent(agentId);
+    } catch {}
     if (live) {
       try {
         await live.session.abort();
@@ -278,6 +298,11 @@ export class AgentRegistry extends EventEmitter {
 
   async drain({ timeoutMs = 45000 } = {}) {
     let aborted = 0;
+    for (const agentId of this.#live.keys()) {
+      try {
+        this.#subagents?.abortForParent(agentId);
+      } catch {}
+    }
     for (const [agentId, live] of this.#live) {
       live.drained = true;
       if (live.pumping) {

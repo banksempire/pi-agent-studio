@@ -1,4 +1,5 @@
 import { countCronMatches, nextCronTime } from './cron.mjs';
+import { SlotGovernor } from './governor.mjs';
 
 export const SCHEDULER_TICK_MS = 30_000;
 const TIMER_MAX_MS = 2 ** 31 - 1;
@@ -59,12 +60,10 @@ export class Scheduler {
   #onEvent;
   #tickMs;
   #peak;
-  #limits;
+  #governor;
   #interval = null;
   #timer = null;
   #ticking = false;
-  #inflight = new Set();
-  #changeWaiters = new Set();
 
   constructor({
     journal,
@@ -79,11 +78,11 @@ export class Scheduler {
     this.#onEvent = onEvent;
     this.#tickMs = tickMs;
     this.#peak = peak ?? ALWAYS_OPEN_PEAK;
-    this.#limits = {
+    this.#governor = new SlotGovernor({
       globalMax: normLimit(limits.globalMax, DEFAULT_SCHED_LIMITS.globalMax),
       providerMax: normLimit(limits.providerMax, DEFAULT_SCHED_LIMITS.providerMax),
       modelMax: normLimit(limits.modelMax, DEFAULT_SCHED_LIMITS.modelMax),
-    };
+    });
   }
 
   start() {
@@ -120,7 +119,7 @@ export class Scheduler {
     if (earliest === null) return;
     const rawDelay = earliest - Date.now();
     const delayMs =
-      rawDelay < 0 && this.#inflight.size > 0 ? this.#tickMs : Math.max(0, Math.min(rawDelay, TIMER_MAX_MS));
+      rawDelay < 0 && this.#governor.size > 0 ? this.#tickMs : Math.max(0, Math.min(rawDelay, TIMER_MAX_MS));
     this.#timer = setTimeout(() => {
       this.#timer = null;
       this.tick().catch((e) => console.error('[scheduler] timer tick failed:', e?.message ?? e));
@@ -267,53 +266,30 @@ export class Scheduler {
   async runNow(jobId) {
     const job = this.#journal.getJob(jobId);
     if (!job) return { ok: false, error: 'job not found' };
-    const slot = await this.#waitForSlot(job);
+    const slot = await this.#governor.waitForSlot(jobModelKey(job));
     try {
       return await this.fire(job, Date.now(), { manual: true });
     } finally {
-      this.#release(slot);
+      this.#governor.release(slot);
     }
   }
 
   #acquire(job) {
-    if (this.#inflight.size >= this.#limits.globalMax) return null;
-    const key = jobModelKey(job);
-    if (key) {
-      let perProvider = 0;
-      let perModel = 0;
-      for (const slot of this.#inflight) {
-        if (!slot.key) continue;
-        if (slot.key.provider === key.provider) perProvider++;
-        if (slot.key.model === key.model) perModel++;
-      }
-      if (perProvider >= this.#limits.providerMax || perModel >= this.#limits.modelMax) return null;
-    }
-    const slot = { key };
-    this.#inflight.add(slot);
-    return slot;
+    return this.#governor.tryAcquire(jobModelKey(job));
   }
 
   #release(slot) {
-    this.#inflight.delete(slot);
-    if (this.#changeWaiters.size > 0) {
-      const waiters = [...this.#changeWaiters];
-      this.#changeWaiters.clear();
-      for (const w of waiters) w();
-    }
+    this.#governor.release(slot);
   }
 
   async #waitForSlot(job) {
-    for (;;) {
-      const slot = this.#acquire(job);
-      if (slot) return slot;
-      await new Promise((resolve) => this.#changeWaiters.add(resolve));
-    }
+    return this.#governor.waitForSlot(jobModelKey(job));
   }
 
   async idle() {
     for (;;) {
-      if (this.#inflight.size === 0 && !this.#ticking) return;
-      const changed = new Promise((resolve) => this.#changeWaiters.add(resolve));
+      if (this.#governor.size === 0 && !this.#ticking) return;
+      const changed = new Promise((resolve) => this.#governor.onChange(resolve));
       const nudge = new Promise((resolve) => setTimeout(resolve, 25));
       await Promise.race([changed, nudge]);
     }
@@ -321,18 +297,14 @@ export class Scheduler {
 
   stats() {
     return {
-      running: this.#inflight.size,
+      running: this.#governor.size,
       waiting: this.#journal.dueJobs(Date.now()).length,
-      limits: { ...this.#limits },
+      limits: this.#governor.limits,
     };
   }
 
   setLimits(next = {}) {
-    this.#limits = {
-      globalMax: normLimit(next.globalMax, this.#limits.globalMax),
-      providerMax: normLimit(next.providerMax, this.#limits.providerMax),
-      modelMax: normLimit(next.modelMax, this.#limits.modelMax),
-    };
+    this.#governor.setLimits(next ?? {});
   }
 
   #emit(action, job, runId, error = '', sessionFile = '') {

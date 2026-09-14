@@ -9,6 +9,7 @@ import {
   settingsSdk,
   supportedThinkingLevels,
 } from './sdk-bridge.mjs';
+import { SUBAGENTS_DIRNAME } from './subagents.mjs';
 
 const CATALOG_TTL_MS = 30 * 1000;
 const CATALOG_MAX_ENTRIES = 8;
@@ -141,7 +142,7 @@ export function explicitDefault() {
 function listSessionFiles(root) {
   const out = [];
   for (const ent of readdirSync(root, { withFileTypes: true })) {
-    if (!ent.isDirectory()) continue;
+    if (!ent.isDirectory() || ent.name === SUBAGENTS_DIRNAME) continue;
     const dir = path.join(root, ent.name);
     let names;
     try {

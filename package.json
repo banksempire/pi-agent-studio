@@ -34,7 +34,8 @@
     "check:restart-selfkill": "node scripts/check-restart-selfkill.cjs",
     "check:modelapi": "node scripts/check-model-api.cjs",
     "check:peakhours": "node scripts/check-peak-hours.cjs",
-    "check:scheduler": "node scripts/check-scheduler.cjs"
+    "check:scheduler": "node scripts/check-scheduler.cjs",
+    "check:subagents": "node scripts/check-subagents.cjs"
   },
   "dependencies": {
     "dompurify": "^3.4.13",

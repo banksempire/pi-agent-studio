@@ -1,6 +1,7 @@
 import { execSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -33,6 +34,16 @@ if (!sdkDir) {
 const sdk = await import(pathToFileURL(path.join(sdkDir, 'dist', 'index.js')).href);
 
 const realSdkDir = findRealSdkDir();
+const typebox = (() => {
+  for (const dir of [realSdkDir, sdkDir]) {
+    if (!dir) continue;
+    try {
+      return createRequire(path.join(dir, 'dist', 'index.js'))('typebox');
+    } catch {}
+  }
+  console.error('[pi-nest] typebox not resolvable from the pi SDK');
+  process.exit(1);
+})();
 const settingsSdk =
   realSdkDir && realSdkDir !== sdkDir
     ? await import(pathToFileURL(path.join(realSdkDir, 'dist', 'index.js')).href)
@@ -44,7 +55,7 @@ if (realSdkDir) {
   ).catch(() => null);
 }
 
-export { sdk, sdkDir, settingsManagerMod, settingsSdk };
+export { sdk, sdkDir, settingsManagerMod, settingsSdk, typebox };
 
 export function hashId(text) {
   let h = 0;

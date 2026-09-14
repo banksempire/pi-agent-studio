@@ -6,7 +6,9 @@ const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 const stateDir = process.env.STUB_STATE_DIR ?? '/tmp/stub-sdk-state';
 fs.mkdirSync(stateDir, { recursive: true });
 const promptsLog = path.join(stateDir, 'prompts.jsonl');
+const childPromptsLog = path.join(stateDir, 'subagent-prompts.jsonl');
 const releaseFile = path.join(stateDir, 'release');
+const childScriptFile = path.join(stateDir, 'subagent-script.jsonl');
 
 export const BUILTIN_SLASH_COMMANDS = [];
 
@@ -59,6 +61,12 @@ export function parseSessionEntries(raw) {
   return out;
 }
 
+export function defineTool(def) {
+  return def;
+}
+
+export class DefaultResourceLoader {}
+
 export class SessionManager {
   constructor(cwd, dir, file) {
     this.cwd = cwd;
@@ -73,13 +81,96 @@ export class SessionManager {
   static inMemory(cwd) {
     return new SessionManager(cwd, null, null);
   }
+
+  getCwd() {
+    return this.cwd;
+  }
+}
+
+function loadChildRules() {
+  if (!fs.existsSync(childScriptFile)) return [];
+  const rules = [];
+  for (const line of fs.readFileSync(childScriptFile, 'utf8').split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      rules.push(JSON.parse(line));
+    } catch {}
+  }
+  return rules;
+}
+
+function ruleFor(prompt) {
+  const rules = loadChildRules();
+  let hit = null;
+  for (const r of rules) {
+    if (typeof r.match === 'string' && prompt.includes(r.match)) hit = r;
+  }
+  return hit;
+}
+
+function assistantMessage(content) {
+  return { role: 'assistant', content, timestamp: Date.now() };
+}
+
+function appendEntry(file, message) {
+  const ts = Date.now();
+  fs.appendFileSync(
+    file,
+    `${JSON.stringify({
+      type: 'message',
+      id: `stub-${ts}-${Math.random().toString(36).slice(2, 7)}`,
+      parentId: null,
+      timestamp: new Date(ts).toISOString(),
+      message: { ...message, timestamp: ts },
+    })}\n`,
+  );
+}
+
+function isChildSession(sessionManager) {
+  return typeof sessionManager?.dir === 'string' && sessionManager.dir.includes('_subagents');
+}
+
+async function runChildPrompt(session, file, message) {
+  const ts = Date.now();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  appendEntry(file, { role: 'user', content: [{ type: 'text', text: message }] });
+  fs.appendFileSync(childPromptsLog, `${JSON.stringify({ file, message, ts })}\n`);
+  session.emit({ type: 'agent_start' });
+  const rule = ruleFor(message);
+  const behavior = rule?.behavior ?? 'reply';
+  const reply = rule?.reply ?? `stub sub-agent result: ${message.slice(0, 48)}`;
+  if (behavior === 'fail') {
+    session.emit({ type: 'agent_settled' });
+    throw new Error('stub child failure');
+  }
+  if (behavior === 'tool-then-empty') {
+    const msg = assistantMessage([
+      { type: 'toolCall', id: `call-${ts}`, name: 'read', arguments: { path: 'x' } },
+    ]);
+    appendEntry(file, msg);
+    session.emit({ type: 'message_end', message: msg });
+    session.emit({ type: 'agent_settled' });
+    return;
+  }
+  if (behavior === 'hang') {
+    while (!session.aborted && !fs.existsSync(releaseFile)) await delay(25);
+    session.emit({ type: 'agent_settled' });
+    return;
+  }
+  const msg = assistantMessage([{ type: 'text', text: reply }]);
+  appendEntry(file, msg);
+  session.emit({ type: 'message_end', message: msg });
+  session.emit({ type: 'agent_settled' });
 }
 
 export async function createAgentSession({ sessionManager }) {
   const file = sessionManager.file;
+  const child = isChildSession(sessionManager);
   let listener = () => {};
   let aborted = false;
   const session = {
+    aborted,
+    sessionManager,
     get thinkingLevel() {
       return 'off';
     },
@@ -100,10 +191,14 @@ export async function createAgentSession({ sessionManager }) {
         return { errors: new Map() };
       },
     },
+    emit(ev) {
+      listener(ev);
+    },
     subscribe(cb) {
       listener = cb;
     },
     async prompt(message) {
+      if (child) return runChildPrompt(session, file, message);
       const ts = Date.now();
       fs.appendFileSync(
         file,
@@ -116,12 +211,13 @@ export async function createAgentSession({ sessionManager }) {
         })}\n`,
       );
       fs.appendFileSync(promptsLog, `${JSON.stringify({ file, message, ts })}\n`);
-      listener({ type: 'agent_start' });
+      session.emit({ type: 'agent_start' });
       while (!aborted && !fs.existsSync(releaseFile)) await delay(25);
-      listener({ type: 'agent_settled' });
+      session.emit({ type: 'agent_settled' });
     },
     async abort() {
       aborted = true;
+      session.aborted = true;
     },
     async setModel() {},
     setThinkingLevel() {},

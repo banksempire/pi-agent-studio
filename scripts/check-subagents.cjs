@@ -1,0 +1,491 @@
+const { spawn } = require('node:child_process');
+const fs = require('node:fs');
+const http = require('node:http');
+const net = require('node:net');
+const os = require('node:os');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+
+const PRODUCT_ROOT = path.join(__dirname, '..');
+const STUB_SDK = path.join(PRODUCT_ROOT, 'scripts', 'lib', 'stub-sdk');
+const NEST = path.join(PRODUCT_ROOT, 'src', 'pi-nest', 'src');
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'subagents-'));
+const SESSIONS_ROOT = path.join(TMP, 'sessions');
+const STUB_STATE_DIR = path.join(TMP, 'stub-state');
+const DB_PATH = path.join(TMP, 'studio.db');
+
+process.env.PI_SDK_DIR = STUB_SDK;
+process.env.PI_STUDIO_SESSIONS = SESSIONS_ROOT;
+process.env.STUB_STATE_DIR = STUB_STATE_DIR;
+
+let failed = false;
+const report = (name, ok, extra = '') => {
+  console.log(`  ${ok ? '✓' : '✗ FAIL'} ${name}${extra ? ` — ${extra}` : ''}`);
+  if (!ok) failed = true;
+};
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.on('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const p = srv.address().port;
+      srv.close(() => resolve(p));
+    });
+  });
+}
+
+function getJson(port, p) {
+  return new Promise((resolve, reject) => {
+    http
+      .get({ host: '127.0.0.1', port, path: p }, (res) => {
+        let out = '';
+        res.on('data', (c) => (out += c));
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(out));
+          } catch {
+            resolve(null);
+          }
+        });
+      })
+      .on('error', reject);
+  });
+}
+
+function postJson(port, p, body) {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify(body ?? {});
+    const req = http.request(
+      {
+        host: '127.0.0.1',
+        port,
+        path: p,
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) },
+      },
+      (res) => {
+        let out = '';
+        res.on('data', (c) => (out += c));
+        res.on('end', () => {
+          try {
+            resolve({ status: res.statusCode, json: JSON.parse(out) });
+          } catch {
+            resolve({ status: res.statusCode, json: null });
+          }
+        });
+      },
+    );
+    req.on('error', reject);
+    req.end(payload);
+  });
+}
+
+function appendChildRule(rule) {
+  fs.mkdirSync(STUB_STATE_DIR, { recursive: true });
+  fs.appendFileSync(path.join(STUB_STATE_DIR, 'subagent-script.jsonl'), `${JSON.stringify(rule)}\n`);
+}
+
+function childPrompts() {
+  const file = path.join(STUB_STATE_DIR, 'subagent-prompts.jsonl');
+  if (!fs.existsSync(file)) return [];
+  return fs
+    .readFileSync(file, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => JSON.parse(l));
+}
+
+function subagentDirs(parent) {
+  const dir = path.join(SESSIONS_ROOT, '_subagents', parent);
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir).filter((e) => fs.existsSync(path.join(dir, e, 'result.json')));
+}
+
+function readChildResults(parent) {
+  const dir = path.join(SESSIONS_ROOT, '_subagents', parent);
+  if (!fs.existsSync(dir)) return [];
+  const out = [];
+  for (const e of fs.readdirSync(dir)) {
+    const f = path.join(dir, e, 'result.json');
+    if (!fs.existsSync(f)) continue;
+    try {
+      out.push(JSON.parse(fs.readFileSync(f, 'utf8')));
+    } catch {}
+  }
+  return out;
+}
+
+async function engineTests() {
+  console.log('workflow engine (pure)');
+  const engine = await import(pathToFileURL(path.join(NEST, 'workflow-engine.mjs')).href);
+  const good = {
+    name: 't',
+    nodes: [
+      { id: 'a', prompt: 'do a' },
+      { id: 'b', needs: ['a'], prompt: 'use {{a}}' },
+      { id: 'c', needs: ['a'], prompt: 'also {{a}}' },
+      { id: 'd', needs: ['b', 'c'], prompt: 'final {{b}} {{c}}' },
+    ],
+  };
+  const v = engine.validateSpec(good);
+  report('valid spec accepted', v.ok, v.error ?? '');
+  if (v.ok) {
+    const waves = engine.wavesFor(v.normalized);
+    report(
+      'waves respect needs',
+      JSON.stringify(waves) === JSON.stringify([['a'], ['b', 'c'], ['d']]),
+      JSON.stringify(waves),
+    );
+    report('output defaults to final node', v.normalized.output === 'd', v.normalized.output);
+  }
+  const cases = [
+    [
+      'duplicate id',
+      {
+        nodes: [
+          { id: 'a', prompt: 'x' },
+          { id: 'a', prompt: 'y' },
+        ],
+      },
+      'duplicate',
+    ],
+    ['unknown need', { nodes: [{ id: 'a', prompt: 'x', needs: ['zz'] }] }, "unknown node 'zz'"],
+    [
+      'cycle',
+      {
+        nodes: [
+          { id: 'a', prompt: 'x', needs: ['b'] },
+          { id: 'b', prompt: 'y', needs: ['a'] },
+        ],
+      },
+      'cycle',
+    ],
+    ['unknown ref', { nodes: [{ id: 'a', prompt: 'see {{ghost}}' }] }, "unknown node '{{ghost}}'"],
+    [
+      'ref without needs',
+      {
+        nodes: [
+          { id: 'a', prompt: 'x' },
+          { id: 'b', prompt: 'use {{a}}' },
+        ],
+      },
+      'does not list it in needs',
+    ],
+    ['item without forEach', { nodes: [{ id: 'a', prompt: 'item {{item}}' }] }, 'without forEach'],
+    [
+      'forEach not in needs',
+      {
+        nodes: [
+          { id: 'a', prompt: 'x' },
+          { id: 'b', forEach: 'a', prompt: 'go {{item}}' },
+        ],
+      },
+      'must also be listed in needs',
+    ],
+    ['bad output', { nodes: [{ id: 'a', prompt: 'x' }], output: 'zz' }, 'unknown'],
+    ['self need', { nodes: [{ id: 'a', prompt: 'x', needs: ['a'] }] }, 'cannot need itself'],
+  ];
+  for (const [name, spec, expect] of cases) {
+    const r = engine.validateSpec(spec);
+    report(`rejects: ${name}`, !r.ok && r.error.includes(expect), r.error ?? 'accepted');
+  }
+  const split = engine.splitForEachEntries('a.ts\n- b.ts\n2. c.ts\n\na.ts');
+  report(
+    'forEach split: lines, markers, dedupe',
+    JSON.stringify(split) === JSON.stringify(['a.ts', 'b.ts', 'c.ts']),
+    JSON.stringify(split),
+  );
+  const splitJson = engine.splitForEachEntries('["x","y"]');
+  report(
+    'forEach split: json array',
+    JSON.stringify(splitJson) === JSON.stringify(['x', 'y']),
+    JSON.stringify(splitJson),
+  );
+  const long = engine.splitForEachEntries(Array.from({ length: 30 }, (_, i) => `n${i}`).join('\n'));
+  report('forEach split: capped at 16', long.length === 16, String(long.length));
+
+  const results = new Map([['a', { status: 'completed', text: 'RESULT-A' }]]);
+  report(
+    'interpolation replaces refs',
+    engine.interpolatePrompt('before {{a}} after', results) === 'before RESULT-A after',
+  );
+  report(
+    'interpolation keeps {{item}} for later',
+    engine.interpolatePrompt('item {{item}} ref {{a}}', results) === 'item {{item}} ref RESULT-A',
+  );
+  report(
+    'missing ref yields placeholder',
+    engine.interpolatePrompt('{{zz}}', results) === '[no result from zz]',
+  );
+  report('applyItem', engine.applyItem('audit {{item}} now', 'f.ts') === 'audit f.ts now');
+
+  const { finalAnswerFromTurns } = await import(pathToFileURL(path.join(NEST, 'subagents.mjs')).href);
+  const fa = finalAnswerFromTurns([
+    { text: 'thinking out loud', hasToolCalls: false },
+    { text: '', hasToolCalls: true },
+    { text: 'partial', hasToolCalls: false },
+    { text: 'final answer', hasToolCalls: false },
+  ]);
+  report('final answer = text after last tool call', fa === 'partial\nfinal answer', JSON.stringify(fa));
+  const faNoTools = finalAnswerFromTurns([{ text: 'direct', hasToolCalls: false }]);
+  report('final answer without tool calls', faNoTools === 'direct');
+  const faEmpty = finalAnswerFromTurns([{ text: '', hasToolCalls: true }]);
+  report('empty after tool call -> empty', faEmpty === '');
+}
+
+async function managerTests() {
+  console.log('sub-agent manager (stub sdk)');
+  const { createSubagentManager, SUBAGENTS_DIRNAME } = await import(
+    pathToFileURL(path.join(NEST, 'subagents.mjs')).href
+  );
+  const stub = await import(pathToFileURL(path.join(STUB_SDK, 'dist', 'index.js')).href);
+  report('SUBAGENTS_DIRNAME', SUBAGENTS_DIRNAME === '_subagents');
+
+  const parent = 'parent-1.jsonl';
+  const parentId = path.join(SESSIONS_ROOT, '--tmp--', parent);
+  const parentSession = {
+    model: stub.STUB_RUNTIME_MODELS[0],
+    thinkingLevel: 'off',
+    modelRuntime: {
+      getAvailableSnapshot: () => stub.STUB_RUNTIME_MODELS,
+      getAvailable: async () => stub.STUB_RUNTIME_MODELS,
+    },
+    sessionManager: { getCwd: () => TMP },
+  };
+  const manager = createSubagentManager({
+    sessionsRoot: SESSIONS_ROOT,
+    getSession: (id) => (id === parentId ? parentSession : null),
+    limits: { globalMax: 4, providerMax: 4, modelMax: 2 },
+  });
+
+  const tools = manager.toolsFor(parentId);
+  report('tools: subagent + workflow registered', tools.map((t) => t.name).join(',') === 'subagent,workflow');
+
+  appendChildRule({ match: 'list the routes', reply: 'src/a.ts\nsrc/b.ts' });
+  const runs = await manager.runTasks(parentId, [
+    { prompt: 'list the routes' },
+    { prompt: 'audit the config file' },
+  ]);
+  report(
+    'both tasks completed',
+    runs.every((r) => r.status === 'completed'),
+    JSON.stringify(runs.map((r) => [r.label, r.status, r.error])),
+  );
+  report('task result = stub reply', runs[1].result === 'stub sub-agent result: audit the config file');
+  const dirs = subagentDirs('parent-1');
+  report('result.json written per child', dirs.length === 2, String(dirs.length));
+  const transcriptOk = dirs.every((d) =>
+    fs.existsSync(path.join(SESSIONS_ROOT, '_subagents', 'parent-1', d, 'transcript.jsonl')),
+  );
+  report('transcript.jsonl written per child', transcriptOk);
+  const listed = manager.list({});
+  report('list() finds runs', listed.length === 2, String(listed.length));
+  report(
+    'list() status completed',
+    listed.every((r) => r.status === 'completed'),
+  );
+
+  appendChildRule({ match: 'repair me', behavior: 'tool-then-empty' });
+  const [repairRun] = await manager.runTasks(parentId, [{ prompt: 'repair me' }]);
+  report(
+    'repair re-prompt recovers result',
+    repairRun.status === 'completed' && repairRun.result.startsWith('stub sub-agent result'),
+    `${repairRun.status}:${repairRun.error}`,
+  );
+  const repairChildPrompts = childPrompts().filter(
+    (p) => p.message.includes('repair me') || p.message.includes('final answer'),
+  );
+  report(
+    'child was prompted twice (task + repair)',
+    repairChildPrompts.length === 2,
+    String(repairChildPrompts.length),
+  );
+
+  appendChildRule({ match: 'explode', behavior: 'fail' });
+  const [failRun] = await manager.runTasks(parentId, [{ prompt: 'explode now' }]);
+  report(
+    'failing child surfaces error',
+    failRun.status === 'failed' && failRun.error === 'stub child failure',
+  );
+
+  const wf = {
+    name: 'audit',
+    nodes: [
+      { id: 'scan', prompt: 'list the routes' },
+      { id: 'audit', needs: ['scan'], forEach: 'scan', prompt: 'audit {{item}} closely' },
+      { id: 'verify', needs: ['audit'], prompt: 'verify these findings: {{audit}}' },
+    ],
+  };
+  const result = await manager.runWorkflow(parentId, wf, {});
+  report('workflow completes', result.ok, result.error);
+  report(
+    'workflow output is the verify node result',
+    result.output.includes('verify these findings'),
+    result.output.slice(0, 80),
+  );
+  report('workflow node lines', result.nodes.length === 3, JSON.stringify(result.nodes));
+  const wfResults = readChildResults('parent-1');
+  const auditResults = wfResults.filter((r) => String(r.label).startsWith('audit:audit#'));
+  report(
+    'forEach fanned out to 2 audit children',
+    auditResults.length === 2,
+    JSON.stringify(auditResults.map((r) => r.label)),
+  );
+  report(
+    'audit children carried {{item}} from scan',
+    auditResults.some((r) => r.result.includes('src/a.ts')) &&
+      auditResults.some((r) => r.result.includes('src/b.ts')),
+    JSON.stringify(auditResults.map((r) => r.result)),
+  );
+
+  let threw = '';
+  try {
+    await manager.runWorkflow(parentId, { nodes: [{ id: 'a', prompt: 'x', needs: ['a'] }] }, {});
+  } catch (e) {
+    threw = String(e?.message ?? e);
+  }
+  report('invalid workflow spec rejected before spawn', threw.includes('cannot need itself'), threw);
+
+  appendChildRule({ match: 'hang tight', behavior: 'hang' });
+  const hangPromise = manager.runTasks(parentId, [{ prompt: 'hang tight forever' }]);
+  await delay(300);
+  const liveList = manager.list({});
+  report(
+    'running child visible in list',
+    liveList.some((r) => r.label === 'task-1' && r.status === 'running'),
+    JSON.stringify(liveList.map((r) => [r.label, r.status])),
+  );
+  const runningIds = liveList.filter((r) => r.status === 'running').map((r) => r.id);
+  report('exactly one running child', runningIds.length === 1, JSON.stringify(runningIds));
+  const gcRunning = manager.gc({ all: true, dryRun: true });
+  report(
+    'gc skips running children',
+    gcRunning.removed.every((r) => !runningIds.includes(r.id)),
+    JSON.stringify(gcRunning.removed.map((r) => r.id)),
+  );
+  manager.abortForParent(parentId);
+  const [hangRun] = await hangPromise;
+  report('abort marks child aborted', hangRun.status === 'aborted', `${hangRun.status}:${hangRun.error}`);
+
+  const dry = manager.gc({ session: parentId, dryRun: true });
+  const totalDisk = subagentDirs('parent-1').length;
+  report(
+    'gc dry-run counts all terminal runs',
+    dry.ok && dry.removed.length === totalDisk,
+    `${dry.removed.length}/${totalDisk}`,
+  );
+  report('gc dry-run leaves files', subagentDirs('parent-1').length === totalDisk);
+  const wipe = manager.gc({ session: parentId });
+  report('gc removes session subtree', wipe.ok && wipe.removed.length === dry.removed.length);
+  report(
+    'gc actually freed the dirs',
+    subagentDirs('parent-1').length === 0,
+    String(subagentDirs('parent-1').length),
+  );
+  report('journal-free list after gc', manager.list({}).length === 0);
+
+  const noTarget = manager.gc({});
+  report('gc without target refused', !noTarget.ok);
+
+  return { manager, parentId };
+}
+
+async function httpTests() {
+  console.log('backend http surface');
+  const port = await freePort();
+  const child = spawn('node', ['src/pi-studio/server/index.mjs'], {
+    cwd: PRODUCT_ROOT,
+    env: {
+      ...process.env,
+      PI_STUDIO_PORT: String(port),
+      PI_STUDIO_HOST: '127.0.0.1',
+      PI_STUDIO_SESSIONS: SESSIONS_ROOT,
+      PI_STUDIO_CWD: TMP,
+      PI_STUDIO_DB_PATH: DB_PATH,
+      PI_SDK_DIR: STUB_SDK,
+      STUB_STATE_DIR,
+    },
+    stdio: [
+      'ignore',
+      fs.openSync(path.join(TMP, 'http-backend.log'), 'a'),
+      fs.openSync(path.join(TMP, 'http-backend.log'), 'a'),
+    ],
+  });
+  try {
+    let up = false;
+    for (let i = 0; i < 90 && !up; i++) {
+      try {
+        const h = await getJson(port, '/api/health');
+        up = h?.ok === true;
+      } catch {}
+      if (!up) await delay(250);
+    }
+    report('backend healthy', up);
+    if (!up) return;
+    fs.mkdirSync(path.join(SESSIONS_ROOT, '--tmp--'), { recursive: true });
+    fs.writeFileSync(
+      path.join(SESSIONS_ROOT, '--tmp--', '2025-real-session.jsonl'),
+      `${JSON.stringify({ type: 'session', id: 's', timestamp: new Date().toISOString(), cwd: TMP })}\n`,
+    );
+    fs.mkdirSync(path.join(SESSIONS_ROOT, '_subagents', 'hidden', 'child-1'), { recursive: true });
+    fs.writeFileSync(path.join(SESSIONS_ROOT, '_subagents', 'hidden', 'child-1', 'transcript.jsonl'), '{}\n');
+    fs.writeFileSync(
+      path.join(SESSIONS_ROOT, '_subagents', 'hidden', 'child-1', 'result.json'),
+      `${JSON.stringify({ id: 'child-1', status: 'completed', label: 'hidden-run', result: 'secret', prompt: 'p', startedAt: Date.now(), finishedAt: Date.now() })}\n`,
+    );
+
+    const sessions = await getJson(port, '/api/sessions');
+    const files = (sessions?.sessions ?? []).map((s) => s.file ?? '');
+    report(
+      'chat list hides _subagents, shows real sessions',
+      files.some((f) => f.includes('2025-real-session')) && files.every((f) => !f.includes('_subagents')),
+      JSON.stringify(files),
+    );
+
+    const runs = await getJson(port, '/api/subagents');
+    report(
+      'GET /api/subagents lists disk runs',
+      runs?.runs?.length === 1 && runs.runs[0].label === 'hidden-run',
+      JSON.stringify(runs?.runs?.map((r) => r.label)),
+    );
+
+    const filtered = await getJson(port, '/api/subagents?session=--tmp--%2Fnone.jsonl');
+    report('GET /api/subagents?session filters', filtered?.runs?.length === 0);
+
+    const refused = await postJson(port, '/api/subagents/gc', {});
+    report('gc without target → 400', refused.status === 400, String(refused.status));
+
+    const dry = await postJson(port, '/api/subagents/gc', { all: true, dryRun: true });
+    report(
+      'gc dry-run via http',
+      dry.status === 200 && dry.json.removed.length === 1,
+      JSON.stringify(dry.json?.removed),
+    );
+    report(
+      'dry run did not delete',
+      fs.existsSync(path.join(SESSIONS_ROOT, '_subagents', 'hidden', 'child-1', 'result.json')),
+    );
+
+    const wiped = await postJson(port, '/api/subagents/gc', { all: true });
+    report('gc via http deletes', wiped.status === 200 && wiped.json.removed.length === 1);
+    report(
+      'subagents dir empty after gc',
+      !fs.existsSync(path.join(SESSIONS_ROOT, '_subagents', 'hidden', 'child-1')),
+    );
+  } finally {
+    child.kill('SIGTERM');
+    await delay(300);
+    if (!child.killed) child.kill('SIGKILL');
+  }
+}
+
+(async () => {
+  console.log('check:subagents');
+  await engineTests();
+  await managerTests();
+  await httpTests();
+  console.log(failed ? 'check:subagents FAILED' : 'check:subagents OK');
+  process.exit(failed ? 1 : 0);
+})();

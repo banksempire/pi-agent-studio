@@ -11,6 +11,7 @@ import { createLocalClient } from '../../pi-nest/src/local-client.mjs';
 import { applyImplicitNewChatDefault } from '../../pi-nest/src/models.mjs';
 import { AgentRegistry, WATCHDOG_INTERVAL_MS } from '../../pi-nest/src/registry.mjs';
 import { computeNextDue, Scheduler } from '../../pi-nest/src/scheduler.mjs';
+import { createSubagentManager, SUBAGENTS_DIRNAME } from '../../pi-nest/src/subagents.mjs';
 import { normalizeJobInput, payloadFromInput, validateJob } from './job-input.mjs';
 import { createMessageQueue, normalizeAttachments } from './message-queue.mjs';
 import { createPeakHoursStore } from './peak-hours.mjs';
@@ -37,6 +38,7 @@ const RESUME_MODE =
 
 let registry = null;
 let journal = null;
+let subagents = null;
 let client;
 if (process.env.PI_STUDIO_CLIENT_MODULE) {
   const mod = await import(pathToFileURL(process.env.PI_STUDIO_CLIENT_MODULE).href);
@@ -47,6 +49,15 @@ if (process.env.PI_STUDIO_CLIENT_MODULE) {
     legacyStatesPath: LEGACY_STATES_PATH,
   });
   registry = new AgentRegistry({ journal });
+  subagents = createSubagentManager({
+    sessionsRoot: SESSIONS_ROOT,
+    getSession: (id) => registry.liveSession(id),
+    limits: journal.loadSchedulerConfig(),
+  });
+  registry.setSubagents(subagents);
+  const sweptChildren = subagents.sweepInterrupted();
+  if (sweptChildren > 0)
+    console.log(`[backend] marked ${sweptChildren} sub-agent run(s) interrupted from previous boot`);
   client = createLocalClient(registry);
 }
 const messageQueue = createMessageQueue({ client, journal, emit: (ev) => emit(ev) });
@@ -822,7 +833,7 @@ async function sessionCwdCounts() {
     return counts;
   }
   for (const dirEntry of dirs) {
-    if (!dirEntry.isDirectory()) continue;
+    if (!dirEntry.isDirectory() || dirEntry.name === SUBAGENTS_DIRNAME) continue;
     const dir = path.join(SESSIONS_ROOT, dirEntry.name);
     let files = [];
     try {
@@ -1660,6 +1671,26 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (p === '/api/subagents' && req.method === 'GET') {
+      if (!subagents) return sendJson(res, 503, { error: 'sub-agents unavailable (stub client mode)' });
+      const session = url.searchParams.get('session');
+      sendJson(res, 200, { runs: subagents.list({ session }) });
+      return;
+    }
+
+    if (p === '/api/subagents/gc' && req.method === 'POST') {
+      if (!subagents) return sendJson(res, 503, { error: 'sub-agents unavailable (stub client mode)' });
+      const body = await readBody(req);
+      const r = subagents.gc({
+        session: body?.session ?? null,
+        before: body?.before ?? null,
+        all: body?.all === true,
+        dryRun: body?.dryRun === true,
+      });
+      sendJson(res, r.ok ? 200 : 400, r);
+      return;
+    }
+
     if (p === '/api/abort' && req.method === 'POST') {
       const { file } = await readBody(req);
       await client.abort({ agentId: file });
@@ -1681,6 +1712,7 @@ const server = createServer(async (req, res) => {
       if (!journal.saveSchedulerConfig(patch))
         return sendJson(res, 500, { error: 'failed to persist scheduler config' });
       scheduler.setLimits(patch);
+      subagents?.setLimits(patch);
       sendJson(res, 200, { config: scheduler.stats().limits });
       return;
     }
@@ -2096,7 +2128,7 @@ async function watchSessionFiles() {
     return;
   }
   for (const dirEntry of dirs) {
-    if (!dirEntry.isDirectory()) continue;
+    if (!dirEntry.isDirectory() || dirEntry.name === SUBAGENTS_DIRNAME) continue;
     const dir = path.join(SESSIONS_ROOT, dirEntry.name);
     let files = [];
     try {
@@ -2121,7 +2153,7 @@ async function listSessionFiles() {
   }
   const files = [];
   for (const dirEntry of await readdir(SESSIONS_ROOT, { withFileTypes: true })) {
-    if (!dirEntry.isDirectory()) continue;
+    if (!dirEntry.isDirectory() || dirEntry.name === SUBAGENTS_DIRNAME) continue;
     const dir = path.join(SESSIONS_ROOT, dirEntry.name);
     for (const f of await readdir(dir)) {
       if (f.endsWith('.jsonl')) files.push(path.join(dir, f));
@@ -2237,7 +2269,11 @@ async function syncSessionDirs() {
   } catch {
     return;
   }
-  const dirs = new Set(entries.filter((e) => e.isDirectory()).map((e) => path.join(SESSIONS_ROOT, e.name)));
+  const dirs = new Set(
+    entries
+      .filter((e) => e.isDirectory() && e.name !== SUBAGENTS_DIRNAME)
+      .map((e) => path.join(SESSIONS_ROOT, e.name)),
+  );
   for (const [dir, w] of sessionDirWatchers) {
     if (!dirs.has(dir)) {
       try {

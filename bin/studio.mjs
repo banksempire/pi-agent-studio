@@ -17,6 +17,7 @@ import {
   cmdStatus,
   cmdUp,
 } from './lib/stack.mjs';
+import { cmdSubagents } from './lib/subagents.mjs';
 import { makeOut } from './lib/ui.mjs';
 
 const VERSION = JSON.parse(
@@ -45,6 +46,10 @@ commands:
   logs [service] [-f] [-n N]  tail managed service logs
   agents                    live agents on this instance's backend
   abort <agent-id>          abort one agent
+  subagents ls [--session <id>]
+                            list sub-agent runs (and their saved results)
+  subagents gc [--session <id>] [--before <30m|2h|1d|iso-ts>] [--all] [--dry-run]
+                            delete sub-agent transcripts+results from disk
   jobs list                 scheduled jobs on this instance's backend
   jobs add <name> …         add a job (--at <time> | --cron <expr> | --nonpeak
                             with --model — daily, scheduler-picked in
@@ -268,6 +273,11 @@ async function main() {
       const inst = resolveInstance(instanceId);
       if (!positional[0]) throw new CliError('abort requires an agent id', 2);
       await cmdAbort(out, inst, positional[0]);
+      return 0;
+    }
+    case 'subagents': {
+      const inst = resolveInstance(instanceId);
+      await cmdSubagents(out, inst, args);
       return 0;
     }
     case 'jobs': {

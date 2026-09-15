@@ -499,6 +499,7 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
       label: 'Workflow',
       description: [
         'Run a deterministic multi-step workflow of read-only sub-agents from a JSON spec.',
+        'Every node MUST specify model and thinking explicitly - the call fails otherwise; no defaults are applied.',
         'Nodes run in dependency order (needs edges); nodes sharing a dependency wave run in parallel.',
         'A node prompt can reference upstream results with {{nodeId}}; a node with forEach splits an upstream result',
         'into entries and runs once per entry with {{item}}. Deterministic: the engine executes the plan, no runtime replanning.',
@@ -507,14 +508,14 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
         'workflow: run a JSON-defined DAG of sub-agents (parallel waves, result references, forEach fan-out)',
       promptGuidelines: [
         'For multi-step plans with dependencies, prefer the workflow tool over ad-hoc subagent calls - it is deterministic and each node result is saved for review.',
-        'Validate the plan shape before calling: node ids unique, needs acyclic, references existing nodes.',
+        'Validate the plan shape before calling: node ids unique, needs acyclic, references existing nodes, model and thinking present on every node.',
       ],
       parameters: typebox.Type.Object({
         spec: typebox.Type.Object(
           {},
           {
             description:
-              'Workflow spec: { name?, output?, nodes: [{ id, prompt, needs?: string[], forEach?: nodeId, model?, thinking?, cwd?, role?, onFailure?: "fail"|"continue" }] }',
+              'Workflow spec: { name?, output?, nodes: [{ id, prompt, model (required), thinking (required), needs?: string[], forEach?: nodeId, cwd?, role?, onFailure?: "fail"|"continue" }] }',
             additionalProperties: true,
           },
         ),

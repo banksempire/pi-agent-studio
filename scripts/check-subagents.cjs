@@ -127,10 +127,10 @@ async function engineTests() {
   const good = {
     name: 't',
     nodes: [
-      { id: 'a', prompt: 'do a' },
-      { id: 'b', needs: ['a'], prompt: 'use {{a}}' },
-      { id: 'c', needs: ['a'], prompt: 'also {{a}}' },
-      { id: 'd', needs: ['b', 'c'], prompt: 'final {{b}} {{c}}' },
+      { id: 'a', prompt: 'do a', model: 'stub-pro', thinking: 'off' },
+      { id: 'b', needs: ['a'], prompt: 'use {{a}}', model: 'stub-pro', thinking: 'off' },
+      { id: 'c', needs: ['a'], prompt: 'also {{a}}', model: 'stub-pro', thinking: 'off' },
+      { id: 'd', needs: ['b', 'c'], prompt: 'final {{b}} {{c}}', model: 'stub-pro', thinking: 'off' },
     ],
   };
   const v = engine.validateSpec(good);
@@ -149,65 +149,91 @@ async function engineTests() {
       'duplicate id',
       {
         nodes: [
-          { id: 'a', prompt: 'x' },
-          { id: 'a', prompt: 'y' },
+          { id: 'a', prompt: 'x', model: 'm', thinking: 'off' },
+          { id: 'a', prompt: 'y', model: 'm', thinking: 'off' },
         ],
       },
       'duplicate',
     ],
-    ['unknown need', { nodes: [{ id: 'a', prompt: 'x', needs: ['zz'] }] }, "unknown node 'zz'"],
+    [
+      'unknown need',
+      { nodes: [{ id: 'a', prompt: 'x', needs: ['zz'], model: 'm', thinking: 'off' }] },
+      "unknown node 'zz'",
+    ],
     [
       'cycle',
       {
         nodes: [
-          { id: 'a', prompt: 'x', needs: ['b'] },
-          { id: 'b', prompt: 'y', needs: ['a'] },
+          { id: 'a', prompt: 'x', needs: ['b'], model: 'm', thinking: 'off' },
+          { id: 'b', prompt: 'y', needs: ['a'], model: 'm', thinking: 'off' },
         ],
       },
       'cycle',
     ],
-    ['unknown ref', { nodes: [{ id: 'a', prompt: 'see {{ghost}}' }] }, "unknown node '{{ghost}}'"],
+    [
+      'unknown ref',
+      { nodes: [{ id: 'a', prompt: 'see {{ghost}}', model: 'm', thinking: 'off' }] },
+      "unknown node '{{ghost}}'",
+    ],
     [
       'ref without needs',
       {
         nodes: [
-          { id: 'a', prompt: 'x' },
-          { id: 'b', prompt: 'use {{a}}' },
+          { id: 'a', prompt: 'x', model: 'm', thinking: 'off' },
+          { id: 'b', prompt: 'use {{a}}', model: 'm', thinking: 'off' },
         ],
       },
       'does not list it in needs',
     ],
-    ['item without forEach', { nodes: [{ id: 'a', prompt: 'item {{item}}' }] }, 'without forEach'],
+    [
+      'item without forEach',
+      { nodes: [{ id: 'a', prompt: 'item {{item}}', model: 'm', thinking: 'off' }] },
+      'without forEach',
+    ],
     [
       'forEach not in needs',
       {
         nodes: [
-          { id: 'a', prompt: 'x' },
-          { id: 'b', forEach: 'a', prompt: 'go {{item}}' },
+          { id: 'a', prompt: 'x', model: 'm', thinking: 'off' },
+          { id: 'b', forEach: 'a', prompt: 'go {{item}}', model: 'm', thinking: 'off' },
         ],
       },
       'must also be listed in needs',
     ],
-    ['bad output', { nodes: [{ id: 'a', prompt: 'x' }], output: 'zz' }, 'unknown'],
-    ['self need', { nodes: [{ id: 'a', prompt: 'x', needs: ['a'] }] }, 'cannot need itself'],
+    [
+      'bad output',
+      { nodes: [{ id: 'a', prompt: 'x', model: 'm', thinking: 'off' }], output: 'zz' },
+      'unknown',
+    ],
+    [
+      'self need',
+      { nodes: [{ id: 'a', prompt: 'x', needs: ['a'], model: 'm', thinking: 'off' }] },
+      'cannot need itself',
+    ],
     [
       'bad thinking level',
-      { nodes: [{ id: 'a', prompt: 'x', thinking: 'banana' }] },
+      { nodes: [{ id: 'a', prompt: 'x', model: 'm', thinking: 'banana' }] },
       'thinking must be one of',
     ],
+    ['missing model', { nodes: [{ id: 'a', prompt: 'x', thinking: 'off' }] }, 'model is required'],
+    ['missing thinking', { nodes: [{ id: 'a', prompt: 'x', model: 'm' }] }, 'thinking is required'],
   ];
   for (const [name, spec, expect] of cases) {
     const r = engine.validateSpec(spec);
     report(`rejects: ${name}`, !r.ok && r.error.includes(expect), r.error ?? 'accepted');
   }
-  const vThink = engine.validateSpec({ nodes: [{ id: 'a', prompt: 'x', thinking: 'high' }] });
+  const vThink = engine.validateSpec({ nodes: [{ id: 'a', prompt: 'x', model: 'm', thinking: 'high' }] });
   report(
     'thinking level normalized to node',
     vThink.ok && vThink.normalized.nodes[0].thinking === 'high',
     JSON.stringify(vThink.normalized?.nodes?.[0]?.thinking),
   );
   const vPlain = engine.validateSpec({ nodes: [{ id: 'a', prompt: 'x' }] });
-  report('thinking absent normalizes to null', vPlain.ok && vPlain.normalized.nodes[0].thinking === null);
+  report(
+    'bare node rejected: no defaults',
+    !vPlain.ok && vPlain.error.includes('model is required'),
+    vPlain.error ?? 'accepted',
+  );
   const split = engine.splitForEachEntries('a.ts\n- b.ts\n2. c.ts\n\na.ts');
   report(
     'forEach split: lines, markers, dedupe',
@@ -342,9 +368,22 @@ async function managerTests() {
   const wf = {
     name: 'audit',
     nodes: [
-      { id: 'scan', prompt: 'list the routes' },
-      { id: 'audit', needs: ['scan'], forEach: 'scan', prompt: 'audit {{item}} closely' },
-      { id: 'verify', needs: ['audit'], prompt: 'verify these findings: {{audit}}' },
+      { id: 'scan', prompt: 'list the routes', model: 'stub-pro', thinking: 'off' },
+      {
+        id: 'audit',
+        needs: ['scan'],
+        forEach: 'scan',
+        prompt: 'audit {{item}} closely',
+        model: 'stub-pro',
+        thinking: 'off',
+      },
+      {
+        id: 'verify',
+        needs: ['audit'],
+        prompt: 'verify these findings: {{audit}}',
+        model: 'stub-pro',
+        thinking: 'off',
+      },
     ],
   };
   const result = await manager.runWorkflow(parentId, wf, {});
@@ -371,7 +410,11 @@ async function managerTests() {
 
   let threw = '';
   try {
-    await manager.runWorkflow(parentId, { nodes: [{ id: 'a', prompt: 'x', needs: ['a'] }] }, {});
+    await manager.runWorkflow(
+      parentId,
+      { nodes: [{ id: 'a', prompt: 'x', needs: ['a'], model: 'stub-pro', thinking: 'off' }] },
+      {},
+    );
   } catch (e) {
     threw = String(e?.message ?? e);
   }
@@ -482,7 +525,7 @@ async function managerTests() {
   appendChildRule({ match: 'think hard', behavior: 'reply', reply: 'thought about it' });
   const rHigh = await manager.runWorkflow(parentId, {
     name: 'think',
-    nodes: [{ id: 'a', prompt: 'think hard', thinking: 'high' }],
+    nodes: [{ id: 'a', prompt: 'think hard', model: 'stub-pro', thinking: 'high' }],
   });
   report('node thinking=high runs', rHigh.ok, rHigh.error);
   report(
@@ -495,7 +538,7 @@ async function managerTests() {
 
   const rXhigh = await manager.runWorkflow(parentId, {
     name: 'tx',
-    nodes: [{ id: 'a', prompt: 'never runs', thinking: 'xhigh' }],
+    nodes: [{ id: 'a', prompt: 'never runs', model: 'stub-pro', thinking: 'xhigh' }],
   });
   report(
     'unsupported level fails with model id in error',

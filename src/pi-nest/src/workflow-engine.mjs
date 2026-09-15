@@ -30,16 +30,13 @@ export function validateSpec(spec) {
     if (typeof raw.prompt !== 'string' || !raw.prompt.trim()) {
       return { ok: false, error: `node '${raw.id}' needs a non-empty prompt` };
     }
-    if (raw.model !== undefined && typeof raw.model !== 'string') {
-      return { ok: false, error: `node '${raw.id}': model must be a string` };
+    if (typeof raw.model !== 'string' || !raw.model.trim()) {
+      return { ok: false, error: `node '${raw.id}': model is required (no default is applied)` };
     }
-    if (raw.cwd !== undefined && (typeof raw.cwd !== 'string' || !raw.cwd.trim())) {
-      return { ok: false, error: `node '${raw.id}': cwd must be a non-empty string` };
+    if (raw.thinking === undefined) {
+      return { ok: false, error: `node '${raw.id}': thinking is required (no default is applied)` };
     }
-    if (raw.role !== undefined && typeof raw.role !== 'string') {
-      return { ok: false, error: `node '${raw.id}': role must be a string` };
-    }
-    if (raw.thinking !== undefined && !THINKING_LEVELS.includes(raw.thinking)) {
+    if (!THINKING_LEVELS.includes(raw.thinking)) {
       return {
         ok: false,
         error: `node '${raw.id}': thinking must be one of ${THINKING_LEVELS.join('|')}`,
@@ -112,10 +109,10 @@ export function validateSpec(spec) {
         prompt: raw.prompt,
         needs,
         forEach,
-        model: raw.model ?? null,
+        model: raw.model,
         cwd: raw.cwd ?? null,
         role: raw.role ?? null,
-        thinking: raw.thinking ?? null,
+        thinking: raw.thinking,
         onFailure: raw.onFailure ?? 'fail',
       })),
     },

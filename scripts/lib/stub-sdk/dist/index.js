@@ -9,6 +9,7 @@ const promptsLog = path.join(stateDir, 'prompts.jsonl');
 const childPromptsLog = path.join(stateDir, 'subagent-prompts.jsonl');
 const releaseFile = path.join(stateDir, 'release');
 const childScriptFile = path.join(stateDir, 'subagent-script.jsonl');
+const childSessionsLog = path.join(stateDir, 'subagent-sessions.jsonl');
 
 export const BUILTIN_SLASH_COMMANDS = [];
 
@@ -170,16 +171,18 @@ async function runChildPrompt(session, file, message) {
   session.emit({ type: 'agent_settled' });
 }
 
-export async function createAgentSession({ sessionManager }) {
+export async function createAgentSession({ sessionManager, thinkingLevel }) {
   const file = sessionManager.file;
   const child = isChildSession(sessionManager);
+  let curThinking = thinkingLevel ?? 'off';
+  if (child) fs.appendFileSync(childSessionsLog, `${JSON.stringify({ file, thinkingLevel: curThinking })}\n`);
   let listener = () => {};
   let aborted = false;
   const session = {
     aborted,
     sessionManager,
     get thinkingLevel() {
-      return 'off';
+      return curThinking;
     },
     get sessionFile() {
       return file;
@@ -227,7 +230,9 @@ export async function createAgentSession({ sessionManager }) {
       session.aborted = true;
     },
     async setModel() {},
-    setThinkingLevel() {},
+    setThinkingLevel(level) {
+      curThinking = level;
+    },
     async compact() {
       return { ok: true };
     },

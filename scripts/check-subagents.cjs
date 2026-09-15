@@ -190,11 +190,24 @@ async function engineTests() {
     ],
     ['bad output', { nodes: [{ id: 'a', prompt: 'x' }], output: 'zz' }, 'unknown'],
     ['self need', { nodes: [{ id: 'a', prompt: 'x', needs: ['a'] }] }, 'cannot need itself'],
+    [
+      'bad thinking level',
+      { nodes: [{ id: 'a', prompt: 'x', thinking: 'banana' }] },
+      'thinking must be one of',
+    ],
   ];
   for (const [name, spec, expect] of cases) {
     const r = engine.validateSpec(spec);
     report(`rejects: ${name}`, !r.ok && r.error.includes(expect), r.error ?? 'accepted');
   }
+  const vThink = engine.validateSpec({ nodes: [{ id: 'a', prompt: 'x', thinking: 'high' }] });
+  report(
+    'thinking level normalized to node',
+    vThink.ok && vThink.normalized.nodes[0].thinking === 'high',
+    JSON.stringify(vThink.normalized?.nodes?.[0]?.thinking),
+  );
+  const vPlain = engine.validateSpec({ nodes: [{ id: 'a', prompt: 'x' }] });
+  report('thinking absent normalizes to null', vPlain.ok && vPlain.normalized.nodes[0].thinking === null);
   const split = engine.splitForEachEntries('a.ts\n- b.ts\n2. c.ts\n\na.ts');
   report(
     'forEach split: lines, markers, dedupe',
@@ -455,6 +468,68 @@ async function managerTests() {
     wipe2.removed.length === 1 && !fs.existsSync(path.join(SESSIONS_ROOT, '_subagents', 'parent-2')),
     JSON.stringify(wipe2.removed.map((r) => r.id)),
   );
+
+  console.log('thinking levels');
+  const childSessions = () => {
+    const file = path.join(STUB_STATE_DIR, 'subagent-sessions.jsonl');
+    if (!fs.existsSync(file)) return [];
+    return fs
+      .readFileSync(file, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+  };
+  appendChildRule({ match: 'think hard', behavior: 'reply', reply: 'thought about it' });
+  const rHigh = await manager.runWorkflow(parentId, {
+    name: 'think',
+    nodes: [{ id: 'a', prompt: 'think hard', thinking: 'high' }],
+  });
+  report('node thinking=high runs', rHigh.ok, rHigh.error);
+  report(
+    'child session created with thinking high',
+    childSessions().some((s) => s.thinkingLevel === 'high'),
+    JSON.stringify(childSessions().map((s) => s.thinkingLevel)),
+  );
+  const highMeta = readChildResults('parent-1').find((r) => r.label === 'think:a');
+  report('result.json records thinking level', highMeta?.thinking === 'high', String(highMeta?.thinking));
+
+  const rXhigh = await manager.runWorkflow(parentId, {
+    name: 'tx',
+    nodes: [{ id: 'a', prompt: 'never runs', thinking: 'xhigh' }],
+  });
+  report(
+    'unsupported level fails with model id in error',
+    !rXhigh.ok && rXhigh.error.includes("unsupported thinking level 'xhigh' for model stub-pro"),
+    rXhigh.error,
+  );
+  report(
+    'unsupported level spawned zero sessions',
+    !childSessions().some((s) => s.thinkingLevel === 'xhigh'),
+  );
+
+  const [miniLow] = await manager.runTasks(parentId, [
+    { prompt: 'mini low probe', model: 'stub/stub-mini', thinking: 'low' },
+  ]);
+  report(
+    'non-reasoning model rejects low',
+    miniLow.status === 'failed' && miniLow.error === "unsupported thinking level 'low' for model stub-mini",
+    miniLow.error,
+  );
+  const [miniOff] = await manager.runTasks(parentId, [
+    { prompt: 'mini off probe', model: 'stub/stub-mini', thinking: 'off' },
+  ]);
+  report('explicit off accepted on non-reasoning model', miniOff.status === 'completed', miniOff.error);
+
+  const [defaultTask] = await manager.runTasks(parentId, [{ prompt: 'default thinking probe' }]);
+  const defaultMeta = readChildResults('parent-1').find((r) => r.id === defaultTask.id);
+  report('thinking unset records null', defaultMeta?.thinking === null, String(defaultMeta?.thinking));
+  report(
+    'no child ever created at unsupported level',
+    childSessions().length > 0 && childSessions().every((s) => s.thinkingLevel !== 'xhigh'),
+  );
+
+  manager.gc({ session: parentId });
+  report('thinking test runs cleaned up', !fs.existsSync(path.join(SESSIONS_ROOT, '_subagents', 'parent-1')));
 
   return { manager, parentId };
 }

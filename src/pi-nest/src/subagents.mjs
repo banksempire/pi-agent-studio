@@ -2,12 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { SlotGovernor } from './governor.mjs';
-import { sdk, textOf, typebox } from './sdk-bridge.mjs';
+import { sdk, supportedThinkingLevels, textOf, typebox } from './sdk-bridge.mjs';
 import {
   applyItem,
   interpolatePrompt,
   MAX_TASKS,
   splitForEachEntries,
+  THINKING_LEVELS,
   validateSpec,
   wavesFor,
 } from './workflow-engine.mjs';
@@ -247,6 +248,7 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
             status: run.status,
             prompt: run.prompt,
             model: run.model ?? null,
+            thinking: run.thinking ?? null,
             cwd: run.cwd ?? null,
             result: run.result ?? '',
             error: run.error ?? '',
@@ -274,6 +276,7 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
       role: t.role ?? null,
       prompt: t.prompt,
       model: t.model ?? null,
+      thinking: t.thinking ?? null,
       cwd: t.cwd ?? null,
       status: 'queued',
       result: '',
@@ -289,7 +292,18 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
           run.error = `unknown model '${run.model}'`;
           return Promise.resolve();
         }
-        return runOne(run, { parentSession: parent, modelRuntime: parent.modelRuntime, model, onUpdate });
+        if (run.thinking && !supportedThinkingLevels(model).includes(run.thinking)) {
+          run.status = 'failed';
+          run.error = `unsupported thinking level '${run.thinking}' for model ${model?.id ?? 'unknown'}`;
+          return Promise.resolve();
+        }
+        return runOne(run, {
+          parentSession: parent,
+          modelRuntime: parent.modelRuntime,
+          model,
+          thinkingLevel: run.thinking ?? undefined,
+          onUpdate,
+        });
       }),
     );
     return built;
@@ -316,6 +330,14 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
           results.set(nodeId, { status: 'failed', text: '', error: `unknown model '${node.model}'` });
           continue;
         }
+        if (node.thinking && !supportedThinkingLevels(model).includes(node.thinking)) {
+          results.set(nodeId, {
+            status: 'failed',
+            text: '',
+            error: `unsupported thinking level '${node.thinking}' for model ${model?.id ?? 'unknown'}`,
+          });
+          continue;
+        }
         const launch = (suffix, item) => {
           const prompt = applyItem(interpolatePrompt(node.prompt, results), item ?? '');
           const run = {
@@ -326,6 +348,7 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
             role: node.role ?? null,
             prompt,
             model: node.model ?? null,
+            thinking: node.thinking ?? null,
             cwd: node.cwd ?? null,
             nodeId,
             status: 'queued',
@@ -338,6 +361,7 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
             parentSession: parent,
             modelRuntime: parent.modelRuntime,
             model,
+            thinkingLevel: node.thinking ?? undefined,
             onUpdate,
           }).then(() => {
             if (!instances.has(nodeId)) instances.set(nodeId, []);
@@ -440,6 +464,11 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
                 description: 'Model id override (e.g. anthropic/claude-haiku). Default: this session model',
               }),
             ),
+            thinking: typebox.Type.Optional(
+              typebox.Type.String({
+                description: `Thinking effort: ${THINKING_LEVELS.join('|')}. Must be supported by the model; default: off`,
+              }),
+            ),
             cwd: typebox.Type.Optional(
               typebox.Type.String({
                 description: 'Working directory for the sub-agent. Default: this session cwd',
@@ -485,7 +514,7 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
           {},
           {
             description:
-              'Workflow spec: { name?, output?, nodes: [{ id, prompt, needs?: string[], forEach?: nodeId, model?, cwd?, role?, onFailure?: "fail"|"continue" }] }',
+              'Workflow spec: { name?, output?, nodes: [{ id, prompt, needs?: string[], forEach?: nodeId, model?, thinking?, cwd?, role?, onFailure?: "fail"|"continue" }] }',
             additionalProperties: true,
           },
         ),
@@ -534,6 +563,7 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
       status: runs.get(childId)?.status ?? meta.status ?? 'unknown',
       role: meta.role ?? null,
       model: meta.model ?? null,
+      thinking: meta.thinking ?? null,
       prompt: String(meta.prompt ?? '').slice(0, 120),
       error: meta.error ?? '',
       resultPreview: String(meta.result ?? '').slice(0, RESULT_PREVIEW_CHARS),
@@ -581,6 +611,7 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
         status: run.status,
         role: run.role ?? null,
         model: run.model ?? null,
+        thinking: run.thinking ?? null,
         prompt: String(run.prompt ?? '').slice(0, 120),
         error: run.error ?? '',
         resultPreview: '',

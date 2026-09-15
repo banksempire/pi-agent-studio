@@ -2,6 +2,7 @@ export const MAX_SPEC_BYTES = 64 * 1024;
 export const MAX_NODES = 32;
 export const MAX_FANOUT = 16;
 export const MAX_TASKS = 16;
+export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
 const ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/;
 const REF_RE = /\{\{\s*([^{}]+?)\s*\}\}/g;
@@ -37,6 +38,12 @@ export function validateSpec(spec) {
     }
     if (raw.role !== undefined && typeof raw.role !== 'string') {
       return { ok: false, error: `node '${raw.id}': role must be a string` };
+    }
+    if (raw.thinking !== undefined && !THINKING_LEVELS.includes(raw.thinking)) {
+      return {
+        ok: false,
+        error: `node '${raw.id}': thinking must be one of ${THINKING_LEVELS.join('|')}`,
+      };
     }
     if (raw.onFailure !== undefined && raw.onFailure !== 'fail' && raw.onFailure !== 'continue') {
       return { ok: false, error: `node '${raw.id}': onFailure must be 'fail' or 'continue'` };
@@ -108,6 +115,7 @@ export function validateSpec(spec) {
         model: raw.model ?? null,
         cwd: raw.cwd ?? null,
         role: raw.role ?? null,
+        thinking: raw.thinking ?? null,
         onFailure: raw.onFailure ?? 'fail',
       })),
     },

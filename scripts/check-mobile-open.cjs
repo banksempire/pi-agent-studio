@@ -359,18 +359,21 @@ const composerIsFocused = (page) =>
         (await page.locator('.welcome-m-cta').count()) === 1 &&
         (await page.locator('.welcome-d').count()) === 0,
     );
-    const chatScrollerBg = await page.evaluate(() => {
+    const chatScrollerGuard = await page.evaluate(() => {
       const probe = document.createElement('div');
       probe.className = 'chat-messages';
       document.body.appendChild(probe);
-      const c = getComputedStyle(probe).backgroundColor;
+      const s = getComputedStyle(probe);
+      const out = { bg: s.backgroundColor, padTop: parseFloat(s.paddingTop) };
       probe.remove();
-      return c;
+      return out;
     });
     report(
-      'mobile: chat scroller carries an opaque background (blocks the iOS scroll edge blur)',
-      chatScrollerBg !== 'rgba(0, 0, 0, 0)' && chatScrollerBg !== 'transparent',
-      chatScrollerBg,
+      'mobile: chat scroller opaque bg + empty top band clear of the iOS edge blur',
+      chatScrollerGuard.bg !== 'rgba(0, 0, 0, 0)' &&
+        chatScrollerGuard.bg !== 'transparent' &&
+        chatScrollerGuard.padTop >= 40,
+      JSON.stringify(chatScrollerGuard),
     );
 
     report('no console/page errors', errors.length === 0, errors.join('; '));

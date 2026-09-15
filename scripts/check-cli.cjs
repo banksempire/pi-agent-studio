@@ -790,12 +790,79 @@ async function main() {
     const webAfterDown = await portServing(webPort);
     report('web port released after down', webAfterDown === false, '');
 
+    const occupiedPort = await freePortAbove(8600);
+    const occupier = spawn(
+      'node',
+      ['-e', `require('http').createServer(() => {}).listen(${occupiedPort}, '127.0.0.1')`],
+      { stdio: 'ignore', detached: true },
+    );
+    occupier.unref();
+    await delay(400);
+    const collisionUp = studio(['-i', ID, 'up', 'backend'], {
+      env: { ...env, PI_STUDIO_PORT: String(occupiedPort) },
+      expect: 4,
+      label: 'up backend on held port',
+    });
+    report(
+      'up refuses to re-wire the backend onto a port held by a foreign process (exit 4)',
+      collisionUp.status === 4 && /held by foreign pid/.test(collisionUp.stderr),
+      collisionUp.stderr.slice(0, 120),
+    );
+    try {
+      process.kill(occupier.pid, 'SIGKILL');
+    } catch {}
+    await delay(200);
+
     const pairUp = studio(['-i', ID, 'up', 'backend'], { env, expect: 0, label: 'up backend' });
     report(
       'up backend works standalone',
       pairUp.status === 0 && pidfile('backend')?.pid != null,
       pairUp.stderr,
     );
+
+    const rogueId = 'check2';
+    const roguePair = path.join(BASE, 'check2pair');
+    fs.mkdirSync(roguePair, { recursive: true });
+    fs.writeFileSync(
+      path.join(CFG, 'instances', `${rogueId}.json`),
+      `${JSON.stringify({ createdAt: Date.now(), id: rogueId, pairRoot: roguePair, webPort: 0 }, null, 2)}\n`,
+    );
+    const rogueStateDir = path.join(roguePair, '.studio', 'state', 'pids');
+    fs.mkdirSync(rogueStateDir, { recursive: true });
+    const liveBackendRec = pidfile('backend');
+    const roguePidfile = {
+      service: 'backend',
+      instance: rogueId,
+      pid: liveBackendRec.pid,
+      port: liveBackendRec.port,
+    };
+    fs.writeFileSync(path.join(rogueStateDir, 'backend.json'), `${JSON.stringify(roguePidfile)}\n`);
+    const rogueKill = studio(['-i', rogueId, 'kill', 'backend', '--yes'], {
+      expect: 5,
+      label: 'rogue cross-instance kill',
+    });
+    const stillAlive = await getJson(backendPort, '/api/health').catch(() => null);
+    report(
+      'kill refuses to terminate a backend whose identity belongs to another instance (exit 5)',
+      rogueKill.status === 5 && /refused/.test(rogueKill.stderr) && stillAlive?.ok === true,
+      `${rogueKill.stderr.slice(0, 100)} alive=${!!stillAlive?.ok}`,
+    );
+    fs.writeFileSync(
+      path.join(rogueStateDir, 'backend.json'),
+      `${JSON.stringify({ ...roguePidfile, pid: roguePidfile.pid + 900000 })}\n`,
+    );
+    const rogueKill2 = studio(['-i', rogueId, 'kill', 'backend', '--yes'], {
+      expect: 0,
+      label: 'rogue kill with dead pid (incident replay)',
+    });
+    const stillAlive2 = await getJson(backendPort, '/api/health').catch(() => null);
+    report(
+      'poisoned-port pidfile cannot lure a kill onto a live foreign backend (incident replay)',
+      rogueKill2.status === 0 && stillAlive2?.ok === true && pidfile('backend')?.pid === liveBackendRec.pid,
+      `alive=${!!stillAlive2?.ok}`,
+    );
+    fs.rmSync(path.join(CFG, 'instances', `${rogueId}.json`), { force: true });
+    fs.rmSync(roguePair, { recursive: true, force: true });
 
     const fullUp = studio(['-i', ID, 'up'], { env, expect: 0, label: 'up full for cascade' });
     report('up full stack brings web back', fullUp.status === 0, fullUp.stderr);

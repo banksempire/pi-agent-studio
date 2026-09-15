@@ -45,6 +45,7 @@ Run as `npm run studio -- …` from this repo or `node pi-agent-studio/bin/studi
 |---|---|
 | studio CLI itself | `check:cli` |
 | chat composer: send/stop/queue buttons, drafts | `check:queue`, `check:send-stop`, `check:drafts` |
+| new chat creation (CTA → first prompt, memory-only session promoted on `session_upsert`, no "Session not found" flash) | `check:newchat` |
 | gateway message queue (flush-on-idle, edit-hold gate, TTL, crash durability) | `check:msgqueue` |
 | chat windows, tabs, cross-window behavior | `check:crosswin` |
 | session list, sync, states | `check:sync`, `check:states` |

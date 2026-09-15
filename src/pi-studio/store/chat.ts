@@ -1091,13 +1091,15 @@ function mergeSessionPage(allRaws: SessionInfo[], fullList: boolean): void {
     ? raws.map((raw) => sessionFromRaw(raw, prev.get(raw.file)))
     : (() => {
         const kept: ChatSession[] = [];
+        const mergedFiles = new Set<string>();
         for (const s of state.sessions) {
           if (!s.onDisk) continue;
+          mergedFiles.add(s.file);
           const raw = rawsByFile.get(s.file);
           kept.push(raw ? sessionFromRaw(raw, s) : s);
         }
         for (const raw of raws) {
-          if (prev.has(raw.file)) continue;
+          if (mergedFiles.has(raw.file)) continue;
           kept.push(sessionFromRaw(raw, prev.get(raw.file)));
         }
         return kept;

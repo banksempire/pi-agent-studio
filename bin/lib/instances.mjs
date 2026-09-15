@@ -5,7 +5,15 @@ import { fileURLToPath } from 'node:url';
 
 export const PRODUCT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const SF_ROOT = path.join(path.dirname(PRODUCT_ROOT), 'StudioFramework');
+export const QS_ROOT = path.join(path.dirname(PRODUCT_ROOT), 'quant-studio');
 export const RESERVED_PORTS = [7492, 7494];
+
+export function workspaceHooksDir() {
+  const segs = PRODUCT_ROOT.split(path.sep);
+  const bi = segs.indexOf('.branch');
+  const wsRoot = bi > 0 ? segs.slice(0, bi).join(path.sep) : path.dirname(PRODUCT_ROOT);
+  return path.join(wsRoot, 'hooks');
+}
 export const SERVICE_NAMES = ['backend', 'web'];
 export const BACKEND_WATCH_PATHS = ['src/pi-nest', 'src/pi-studio/server'];
 

@@ -11,12 +11,14 @@ import {
   loadInstance,
   PRODUCT_ROOT,
   pidfilePath,
+  QS_ROOT,
   RESERVED_PORTS,
   removeInstance,
   SF_ROOT,
   saveInstance,
   validId,
   webPortsInUse,
+  workspaceHooksDir,
   worktreesRoot,
 } from './instances.mjs';
 import {
@@ -426,33 +428,29 @@ async function doctorInstance(inst, results) {
   }
 }
 
-function guardHooksDir() {
-  return path.join(PRODUCT_ROOT, 'hooks');
-}
-
 export async function cmdGuard(out, { action = 'status' } = {}) {
-  const hooksDir = guardHooksDir();
+  const hooksDir = workspaceHooksDir();
   if (action === 'install') {
     for (const f of ['pre-commit', 'pre-push']) {
       const p = path.join(hooksDir, f);
       if (fs.existsSync(p)) fs.chmodSync(p, 0o755);
     }
-    for (const repo of [PRODUCT_ROOT, SF_ROOT]) {
+    for (const repo of [PRODUCT_ROOT, SF_ROOT, QS_ROOT]) {
       git(['config', 'core.hooksPath', hooksDir], repo);
       out.line(`${okSym} ${path.basename(repo)} → core.hooksPath ${hooksDir}`);
     }
     return;
   }
-  for (const repo of [PRODUCT_ROOT, SF_ROOT]) {
+  for (const repo of [PRODUCT_ROOT, SF_ROOT, QS_ROOT]) {
     const cur = git(['config', 'core.hooksPath'], repo, { allowFail: true });
     out.line(`${path.basename(repo)}: ${cur ?? '(not set) — studio guard install'}`);
   }
 }
 
 function guardCheck(results) {
-  const hooksDir = guardHooksDir();
+  const hooksDir = workspaceHooksDir();
   let missing = false;
-  for (const repo of [PRODUCT_ROOT, SF_ROOT]) {
+  for (const repo of [PRODUCT_ROOT, SF_ROOT, QS_ROOT]) {
     const cur = git(['config', 'core.hooksPath'], repo, { allowFail: true });
     if (cur === hooksDir) {
       results.push({ scope: 'guard', name: path.basename(repo), level: 'ok', detail: 'hooks active' });

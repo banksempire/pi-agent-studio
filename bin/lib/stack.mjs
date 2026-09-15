@@ -329,30 +329,37 @@ async function tryAdopt(out, instance, service) {
   return null;
 }
 
-async function ensureBackend(out, instance, { sessionsDir, used, ports, spawned }) {
+async function ensureBackend(out, instance, { sessionsDir, used, ports, spawned, opts = {} }) {
   const adopted = await tryAdopt(out, instance, 'backend');
   if (adopted) {
     ports.backend = adopted.port;
     return;
   }
-  const port = await resolveServicePort(instance, 'backend', {}, used);
+  const port = await resolveServicePort(instance, 'backend', opts, used);
   used.add(port);
   const repo = instanceRepoRoot(instance);
   const statesPath = instanceStatesPath(instance);
-  const env = {
-    PI_STUDIO_HOST: process.env.PI_STUDIO_HOST ?? '127.0.0.1',
-    PI_STUDIO_PORT: String(port),
-    PI_STUDIO_SESSIONS: sessionsDir,
-    PI_STUDIO_CWD: instance.cwd ?? instance.pairRoot,
-    PI_STUDIO_SPILL_PATH: path.join(instanceStateDir(instance.id), 'backend-spill.json'),
-    PI_STUDIO_DB_PATH: path.join(instanceStateDir(instance.id), 'studio.db'),
-  };
-  if (statesPath) env.PI_STUDIO_STATES_PATH = statesPath;
+  const args = [
+    '--heapsnapshot-near-heap-limit=2',
+    'src/pi-studio/server/index.mjs',
+    '--port',
+    String(port),
+    '--host',
+    '127.0.0.1',
+    '--sessions',
+    sessionsDir,
+    '--cwd',
+    instance.cwd ?? instance.pairRoot,
+    '--db',
+    path.join(instanceStateDir(instance.id), 'studio.db'),
+    '--spill',
+    path.join(instanceStateDir(instance.id), 'backend-spill.json'),
+  ];
+  if (statesPath) args.push('--states', statesPath);
   const pid = spawnDetached({
     cmd: 'node',
-    args: ['--heapsnapshot-near-heap-limit=2', 'src/pi-studio/server/index.mjs'],
+    args,
     cwd: repo,
-    env,
     logFile: logPath(instance.id, 'backend'),
     pidfile: pidfilePath(instance.id, 'backend'),
     record: { service: 'backend', instance: instance.id, port, sessionsDir },
@@ -428,10 +435,9 @@ async function ensureWeb(out, instance, { used, ports, spawned, opts }) {
       '--strictPort',
     ],
     cwd: repo,
-    env: { PI_API_PROXY: `http://127.0.0.1:${ports.backend}` },
     logFile: logPath(instance.id, 'web'),
     pidfile: pidfilePath(instance.id, 'web'),
-    record: { service: 'web', instance: instance.id, port, host },
+    record: { service: 'web', instance: instance.id, port, host, backendPort: ports.backend },
   });
   spawned.push(pid);
   out.event({
@@ -499,7 +505,7 @@ async function upLocked(out, instance, opts = {}) {
   out.event({ event: 'begin', instance: instance.id });
   try {
     if (!only || only === 'backend') {
-      await ensureBackend(out, instance, { sessionsDir, used, ports, spawned });
+      await ensureBackend(out, instance, { sessionsDir, used, ports, spawned, opts });
     }
     if (!only || only === 'web') {
       await ensureWeb(out, instance, { used, ports, spawned, opts });
@@ -646,20 +652,9 @@ async function downLocked(out, instance, opts = {}) {
   }
 }
 
-const FINISHER_STRIP_ENV = [
-  'PI_STUDIO_SESSIONS',
-  'PI_STUDIO_PORT',
-  'PI_STUDIO_HOST',
-  'PI_STUDIO_DB_PATH',
-  'PI_STUDIO_SPILL_PATH',
-  'PI_STUDIO_CWD',
-  'PI_STUDIO_STATES_PATH',
-];
-
 function spawnRestartFinisher(instance, oldPid, graceMs) {
   const cli = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'studio.mjs');
   const env = { ...process.env };
-  for (const key of FINISHER_STRIP_ENV) delete env[key];
   const child = spawn(
     process.execPath,
     [

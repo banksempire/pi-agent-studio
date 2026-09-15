@@ -291,6 +291,35 @@ async function main() {
       '',
     );
 
+    const procEnviron = (pid) =>
+      fs.existsSync(`/proc/${pid}/environ`)
+        ? fs.readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0')
+        : [];
+    const injectedWiring = (pid) =>
+      procEnviron(pid).filter((v) =>
+        /^(PI_STUDIO_HOST|PI_STUDIO_SESSIONS|PI_STUDIO_CWD|PI_STUDIO_DB_PATH|PI_STUDIO_SPILL_PATH|PI_STUDIO_STATES_PATH)=/.test(
+          v,
+        ),
+      );
+    const backendInjected = injectedWiring(backendRec?.pid);
+    report(
+      'backend is wired via argv — CLI injects no wiring env',
+      backendRec?.pid > 0 && backendInjected.length === 0,
+      backendInjected.join(' '),
+    );
+    const webInjected = procEnviron(webRec?.pid).filter((v) => /^PI_API_PROXY=/.test(v));
+    report(
+      'web proxy target comes from the pidfile record — no PI_API_PROXY injected',
+      webRec?.pid > 0 && webInjected.length === 0,
+      webInjected.join(' '),
+    );
+    const viaWeb = await getJson(webPort, '/api/health');
+    report(
+      '/api proxies through web to the argv-wired backend',
+      !!viaWeb?.ok,
+      JSON.stringify(viaWeb)?.slice(0, 80),
+    );
+
     const phAdd = studio(
       [
         '-i',
@@ -819,6 +848,26 @@ async function main() {
       'PI_STUDIO_STRICT allows explicit -i up',
       strictExplicit.status === 0 && pidfile('backend')?.pid != null,
       strictExplicit.stderr.slice(0, 120),
+    );
+
+    const argvPort = await freePortAbove(8800);
+    const preArgvDown = studio(['-i', ID, 'down', '--yes'], { expect: 0, label: 'down before argv test' });
+    const argvUp = studio(['-i', ID, 'up', 'backend', '--port', `backend=${argvPort}`], {
+      env,
+      expect: 0,
+      label: 'up backend --port',
+    });
+    report(
+      'CLI --port overrides ambient env for service wiring (args > env)',
+      preArgvDown.status === 0 && argvUp.status === 0 && pidfile('backend')?.port === argvPort,
+      `${pidfile('backend')?.port} vs ${argvPort} · ${argvUp.stderr.slice(0, 80)}`,
+    );
+    const argvHealth = await getJson(argvPort, '/api/health');
+    const envPortGone = !(await portServing(backendPort));
+    report(
+      'backend binds the argv port; the ambient env port stays dead (args > env in the service)',
+      !!argvHealth?.ok && envPortGone,
+      `argv ok=${!!argvHealth?.ok} env port serving=${!envPortGone}`,
     );
 
     const rmRes = studio(['worktree', 'rm', ID, '--purge', '--yes'], { expect: 0, label: 'worktree rm' });

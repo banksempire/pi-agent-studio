@@ -11,30 +11,39 @@ import { createLocalClient } from '../../pi-nest/src/local-client.mjs';
 import { applyImplicitNewChatDefault } from '../../pi-nest/src/models.mjs';
 import { AgentRegistry, WATCHDOG_INTERVAL_MS } from '../../pi-nest/src/registry.mjs';
 import { computeNextDue, Scheduler } from '../../pi-nest/src/scheduler.mjs';
+import { configureSessionPaths } from '../../pi-nest/src/sdk-bridge.mjs';
 import { createSubagentManager, SUBAGENTS_DIRNAME } from '../../pi-nest/src/subagents.mjs';
 import { normalizeJobInput, payloadFromInput, validateJob } from './job-input.mjs';
 import { createMessageQueue, normalizeAttachments } from './message-queue.mjs';
 import { createPeakHoursStore } from './peak-hours.mjs';
+import { flagOrEnv } from './service-args.mjs';
 import { createSessionStates } from './session-states.mjs';
 
-const PORT = Number(process.env.PI_STUDIO_PORT ?? 7494);
-const HOST = process.env.PI_STUDIO_HOST ?? '127.0.0.1';
-const NEW_CHAT_CWD = process.env.PI_STUDIO_CWD ?? '/workspace/sf';
-const SESSIONS_ROOT = process.env.PI_STUDIO_SESSIONS ?? path.join(os.homedir(), '.pi', 'agent', 'sessions');
+const PORT = Number(flagOrEnv('port', 'PI_STUDIO_PORT', 7494));
+const HOST = flagOrEnv('host', 'PI_STUDIO_HOST', '127.0.0.1');
+const NEW_CHAT_CWD = flagOrEnv('cwd', 'PI_STUDIO_CWD', '/workspace/sf');
+const SESSIONS_ROOT = flagOrEnv(
+  'sessions',
+  'PI_STUDIO_SESSIONS',
+  path.join(os.homedir(), '.pi', 'agent', 'sessions'),
+);
 const DRAIN_MS = Number(process.env.PI_STUDIO_DRAIN_MS ?? 45_000);
 const STATE_FALLBACK_DIR = path.join(os.homedir(), '.pi', 'agent');
+const SPILL_PATH = flagOrEnv('spill', 'PI_STUDIO_SPILL_PATH', null);
 const DB_PATH =
-  process.env.PI_STUDIO_DB_PATH ??
-  path.join(
-    process.env.PI_STUDIO_SPILL_PATH ? path.dirname(process.env.PI_STUDIO_SPILL_PATH) : STATE_FALLBACK_DIR,
-    'studio.db',
-  );
-const LEGACY_STATES_PATH =
-  process.env.PI_STUDIO_STATES_PATH ?? path.join(STATE_FALLBACK_DIR, 'studio-session-states.json');
+  flagOrEnv('db', 'PI_STUDIO_DB_PATH', null) ??
+  path.join(SPILL_PATH ? path.dirname(SPILL_PATH) : STATE_FALLBACK_DIR, 'studio.db');
+const LEGACY_STATES_PATH = flagOrEnv(
+  'states',
+  'PI_STUDIO_STATES_PATH',
+  path.join(STATE_FALLBACK_DIR, 'studio-session-states.json'),
+);
 const PEAK_HOURS_PATH =
   process.env.PI_STUDIO_PEAK_HOURS_PATH ?? path.join(path.dirname(DB_PATH), 'peak-hours.json');
 const RESUME_MODE =
   (process.env.PI_STUDIO_RESUME ?? 'on') === 'off' ? 'skip' : (process.env.PI_STUDIO_RESUME_MODE ?? 'nudge');
+
+configureSessionPaths({ sessionsRoot: SESSIONS_ROOT, newChatCwd: NEW_CHAT_CWD });
 
 let registry = null;
 let journal = null;
@@ -45,7 +54,7 @@ if (process.env.PI_STUDIO_CLIENT_MODULE) {
   client = await mod.createClient();
 } else {
   journal = openJournal(DB_PATH, {
-    spillPath: process.env.PI_STUDIO_SPILL_PATH ?? null,
+    spillPath: SPILL_PATH,
     legacyStatesPath: LEGACY_STATES_PATH,
   });
   registry = new AgentRegistry({ journal });

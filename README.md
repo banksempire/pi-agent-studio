@@ -35,7 +35,9 @@ npm run server   # backend (HTTP+SSE + agents in one process): → 127.0.0.1:749
 npm run dev      # frontend: vite → 0.0.0.0:7492 (proxies /api → 7494)
 ```
 
-Open http://localhost:7492. Backend config via env:
+Open http://localhost:7492. Backend config resolves argv > env > default —
+the CLI wires services via argv (`--port`, `--sessions`, `--db`, …) and never
+injects env. For manual/container starts, env works directly:
 `PI_STUDIO_PORT` (7494), `PI_STUDIO_CWD` (new-chat working dir, default
 `/workspace/sf`), `PI_SDK_DIR` (default: global pi install),
 `PI_STUDIO_DRAIN_MS` (grace period for in-flight prompts on SIGTERM,

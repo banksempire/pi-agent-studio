@@ -53,9 +53,15 @@ stack start (persisting it as a tombstone) and wires web to it via ENV.
 | `web` | Persisted in instance config; stable across restarts | Unique across instances; `main` = 7492; `test` conventionally pins 7493 (the exposed test port); never 7494; no other instance may use 7492 |
 | `backend` | Ephemeral; recorded in runtime state for the stack's lifetime | Chosen at `up` from free ports, loopback bind |
 
-Wiring per launch (CLI composes child ENV):
-- backend ← `PI_STUDIO_PORT`, `PI_STUDIO_SESSIONS`, `PI_STUDIO_STATES_PATH`, `PI_STUDIO_SPILL_PATH`
-- web ← `PI_API_PROXY=http://127.0.0.1:<backendPort>`
+Wiring per launch (CLI composes child argv; it never injects env):
+- backend ← `--port`, `--host 127.0.0.1`, `--sessions`, `--cwd`, `--db`,
+  `--spill` (+ `--states` when the instance has one)
+- web ← proxy target via the web pidfile record (`backendPort`, matched by
+  pid inside vite.config.ts); `PI_API_PROXY` stays the manual/container channel
+
+Services resolve argv > env > defaults, so CLI wiring always wins over any
+ambient env, and the child environ stays exactly as the caller set it — agent
+shells spawned from a backend inherit no wiring vars.
 
 Partial restarts (`restart backend`) **reuse the recorded internal port** (the
 stop writes a tombstone pidfile keeping the last port; start prefers it if
@@ -200,20 +206,21 @@ Every tunable resolves through four layers, first hit wins:
 | Layer | Example | Who sets it |
 |:--|:--|:--|
 | 1. CLI args | `studio up --port web=7601 --sessions /tmp/s` | Ad-hoc override; never persisted |
-| 2. Environment | `PI_STUDIO_PORT`, `PI_NEST_PORT`, `PI_NEST_SESSIONS`, … | Shell / container |
+| 2. Environment | `PI_STUDIO_PORT`, `PI_STUDIO_SESSIONS`, … | Shell / container |
 | 3. Instance config | `<workdir>/.studio/config/instances/<id>.json` | `studio init` / `instance set` |
 | 4. Built-in defaults | see §10 table | The services themselves |
 
-- The **services themselves** implement layers 2→4 (ENV ?? default). This
-  keeps the container story pure: run backend/web directly with just ENV
-  vars — no CLI — with identical precedence inside each service.
-- The CLI is a layer-3 manager that materializes instance config into
-  **child-process ENV** at spawn time. It never configures services any other
-  way; one mechanism, no duplicated knobs.
-- Ephemeral internal ports (§3) are also injected this way — the CLI resolves
-  free ports at start and passes them as ENV to the children.
-- In a container with ENV pinned, the CLI's port-picking is skipped entirely
-  (layer 2 wins).
+- The **services themselves** implement argv > env > default. The CLI passes
+  its resolved wiring as **argv** (`--port`, `--sessions`, `--db`, …) — argv
+  beats any ambient env, so a CLI-started service can never be re-wired by
+  inherited `PI_STUDIO_*` values, and its environ stays clean for the agent
+  shells it spawns. ENV remains the direct channel for containerized or
+  fully manual starts (no CLI): pin env, run the service, done.
+- The CLI resolves layers 1→4 itself and materializes the result into child
+  **argv** at spawn time; one mechanism, no duplicated knobs, nothing injected
+  into child env.
+- Ephemeral internal ports (§3) are resolved the same way and passed as argv
+  (`--port`).
 
 ## 7. Command tree
 
@@ -314,25 +321,35 @@ orphan of ours → offer kill (`--fix`); foreign process → exit 4 with owner
 PID/cmdline. The web port is fixed per instance by design (stable URL);
 there is no auto-relocate.
 
-## 10. Service-side ENV surface (approved changes)
+## 10. Service-side config surface
 
-| Change | File | Behavior |
-|:--|:--|:--|
-| `PI_STUDIO_SESSIONS` | `src/pi-nest/src/sdk-bridge.mjs` | `SESSIONS_ROOT = env ?? ~/.pi/agent/sessions` |
-| `PI_STUDIO_HOST` | `src/pi-studio/server/index.mjs` | bind host: `env ?? '127.0.0.1'` (loopback-only; the web /api proxy is the only intended entry) |
-| existing `PI_STUDIO_PORT/SESSIONS/STATES_PATH/CWD` | backend | already supported |
-| existing `PI_API_PROXY` | vite.config.ts proxy target | CLI sets at web spawn |
-| `PI_STUDIO_CACHE_MAX_BYTES` | backend | session-parse cache budget (default 128 MB), LRU whole-file eviction; effective ceiling = max(budget, largest session file) |
-| **new** `PI_STUDIO_DRAIN_MS` | backend + CLI | SIGTERM drain deadline (default 45s); CLI stop grace = deadline + 20s |
-| existing `PI_STUDIO_SPILL_PATH` | backend | legacy: a leftover `backend-spill.json` here is imported into the journal once on boot (CLI pins it inside the instance state dir) |
-| **new** `PI_STUDIO_DB_PATH` | backend | SQLite journal location (default `<state>/studio.db`, derived from the spill path's dir; CLI pins it inside the instance state dir) |
-| **new** `PI_STUDIO_RESUME` / `PI_STUDIO_RESUME_MODE` | backend | `off` disables interrupted-run resume; mode `nudge` (default) / `replay` / `skip` controls how `inflight` rows are resubmitted on boot |
-| **new** `PI_STUDIO_CLIENT_MODULE` | backend | test seam: path to an ESM module exporting `createClient()`; replaces the real agent registry with a stub client (used by the check suites) |
-| **new** `PI_STUDIO_WORKTREES` | CLI only | branch-folder root (default `<main pair root>/.branch`; keep it on the same filesystem as the repos so `node_modules` can be hardlink-copied) |
-| **new** `PI_STUDIO_WEB_HOST` / `PI_STUDIO_WEB_PORT` | CLI only | web bind host / port fallbacks below args and above instance config |
+Every backend tunable resolves argv > env > default (argv flags are what the
+CLI passes; env is the container/manual channel):
 
-Container usage: each service reads `ENV ?? default` directly — the CLI is not
-required in a container; pinning ENV there yields deterministic ports.
+| argv flag | env fallback | default | behavior |
+|:--|:--|:--|:--|
+| `--port` | `PI_STUDIO_PORT` | `7494` | backend bind port |
+| `--host` | `PI_STUDIO_HOST` | `127.0.0.1` | loopback bind; the web /api proxy is the only intended entry |
+| `--sessions` | `PI_STUDIO_SESSIONS` | `~/.pi/agent/sessions` | sessions root (`src/pi-nest/src/sdk-bridge.mjs`, configured via `configureSessionPaths`) |
+| `--cwd` | `PI_STUDIO_CWD` | `/workspace/sf` | new-chat working dir / session-tree root |
+| `--db` | `PI_STUDIO_DB_PATH` | `<spill dir>/studio.db` | SQLite journal location |
+| `--spill` | `PI_STUDIO_SPILL_PATH` | — | legacy: a leftover `backend-spill.json` here is imported into the journal once on boot |
+| `--states` | `PI_STUDIO_STATES_PATH` | `~/.pi/agent/studio-session-states.json` | legacy states import / stub-mode persist |
+| — | `PI_STUDIO_PEAK_HOURS_PATH` | `<db dir>/peak-hours.json` | peak-hours store location |
+| — | `PI_API_PROXY` | `http://127.0.0.1:7494` | web proxy target (manual/container); CLI-spawned webs take it from the pid-matched pidfile record instead |
+| — | `PI_STUDIO_CACHE_MAX_BYTES` | 128 MB | session-parse cache budget, LRU whole-file eviction |
+| — | `PI_STUDIO_DRAIN_MS` | 45000 | SIGTERM drain deadline; CLI stop grace = deadline + 20s |
+| — | `PI_STUDIO_RESUME` / `PI_STUDIO_RESUME_MODE` | `on` / `nudge` | `off` disables interrupted-run resume; mode `nudge` / `replay` / `skip` |
+| — | `PI_STUDIO_CLIENT_MODULE` | — | test seam: ESM module exporting `createClient()` replaces the registry (check suites; passes to CLI-spawned backends via inherited env) |
+| — | `PI_SDK_DIR` / `PI_REAL_SDK_DIR` / `STUB_*` | — | SDK resolution and stub-SDK state (test seams; inherited, never injected) |
+| CLI only | `PI_STUDIO_WORKTREES` | `<pairRoot>/.branch` | branch-folder root (same filesystem as the repos) |
+| CLI only | `PI_STUDIO_WEB_HOST` / `PI_STUDIO_WEB_PORT` | instance config | web bind host / port fallbacks below args and above instance config |
+
+Container usage: the CLI is the only supported way to start an instance —
+run `studio up` in the container and pass overrides as CLI args. ENV stays
+honored as the container config channel beneath args (argv always wins), so
+pinning ENV there still yields deterministic ports for manually started
+single services.
 
 ## 11. `doctor` checks
 
@@ -457,10 +474,11 @@ SIGKILL restarts identically — same covenant as the prompt queue.
 - **Concurrency**: simultaneous runs go through a governor — a global cap
   (default 2), a per-provider cap (default 2) and a per-model cap (default 1)
   — so bursty schedules can't hammer one provider or drain the container.
+  Caps are journal-backed scheduler config (defaults 2/2/1), edited only in
+  the Scheduler panel's "Concurrent Job" subsection and applied at runtime
+  via `Scheduler.setLimits` — no env vars.
   A due run that can't get a slot stays due and fires when one frees
-  (completion-triggered tick); `jobs run` waits for a slot too. Env knobs:
-  `PI_STUDIO_SCHED_GLOBAL_MAX`, `PI_STUDIO_SCHED_PROVIDER_MAX`,
-  `PI_STUDIO_SCHED_MODEL_MAX` (integers ≥ 1).
+  (completion-triggered tick); `jobs run` waits for a slot too.
 - **Missed periodic runs** (backend down across occurrences): per-job
   `--missed coalesce` (run once on catch-up, default) or `skip` (advance to
   the next occurrence, record a `skipped` run).

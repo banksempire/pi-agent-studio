@@ -19,6 +19,46 @@ function nudgeEmbedded(partial) {
   return `[gateway restart] Your previous reply was cut off mid-generation. Its last generated state was:\n\n<<<\n${partial}\n>>>\n\nContinue from that point without repeating yourself.`;
 }
 
+function salvageHeadFields(line) {
+  const tsMatch = line.match(/"timestamp":"([^"]+)"/);
+  const roleMatch = line.match(/"role":"([^"]+)"/);
+  if (!tsMatch && !roleMatch) return null;
+  const ts = tsMatch ? Date.parse(tsMatch[1]) : NaN;
+  const role = roleMatch?.[1] ?? '';
+  if (!Number.isFinite(ts) && !role) return null;
+  return { ts: Number.isFinite(ts) ? ts : 0, role };
+}
+
+function salvageStraddlingHead(fd, start) {
+  if (start <= 0) return null;
+  try {
+    let lineStart = -1;
+    const backChunk = 8192;
+    const backBuf = Buffer.alloc(backChunk);
+    const backCap = 1024 * 1024;
+    let pos = start;
+    while (pos > 0 && start - pos < backCap) {
+      const readLen = Math.min(backChunk, pos);
+      const readFrom = pos - readLen;
+      readSync(fd, backBuf, 0, readLen, readFrom);
+      const idx = backBuf.subarray(0, readLen).lastIndexOf(0x0a);
+      if (idx >= 0) {
+        lineStart = readFrom + idx;
+        break;
+      }
+      pos = readFrom;
+    }
+    const headFrom = lineStart + 1;
+    const headLen = Math.min(start - headFrom, 4096);
+    if (headLen <= 0) return null;
+    const headBuf = Buffer.alloc(headLen);
+    readSync(fd, headBuf, 0, headLen, headFrom);
+    return salvageHeadFields(headBuf.toString('utf8'));
+  } catch {
+    return null;
+  }
+}
+
 function readTranscriptTail(file) {
   let fd = null;
   try {
@@ -35,6 +75,16 @@ function readTranscriptTail(file) {
     let lastTs = 0;
     let lastUserTs = 0;
     let lastAssistant = null;
+    if (start > 0) {
+      const salvaged = salvageStraddlingHead(fd, start);
+      if (salvaged) {
+        if (salvaged.ts > lastTs) lastTs = salvaged.ts;
+        if (salvaged.role === 'user' && salvaged.ts > lastUserTs) lastUserTs = salvaged.ts;
+        if (salvaged.role === 'assistant' && salvaged.ts > (lastAssistant?.ts ?? 0)) {
+          lastAssistant = { ts: salvaged.ts, stopReason: '' };
+        }
+      }
+    }
     for (const line of lines.slice(from)) {
       let e;
       try {
@@ -73,8 +123,8 @@ function classifyResume(row, tail, resumeMode) {
     return { kind: 'skip', reason: 'session advanced while the gateway was down' };
   }
   const userPresent = tail.lastUserTs >= startedAt - RESUME_SLACK_MS;
-  if (!userPresent) return { kind: 'replay' };
   const assistantOnDisk = !!tail.lastAssistant && tail.lastAssistant.ts >= startedAt - RESUME_SLACK_MS;
+  if (!userPresent && !assistantOnDisk) return { kind: 'replay' };
   if (row.partialText && !assistantOnDisk) return { kind: 'nudge', text: nudgeEmbedded(row.partialText) };
   if (assistantOnDisk) return { kind: 'nudge', text: NUDGE_SHORT };
   return { kind: 'nudge', text: NUDGE_NONE };

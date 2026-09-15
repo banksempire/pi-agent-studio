@@ -94,6 +94,8 @@ async function main() {
     const A4 = sessionFile('cls-replay');
     const A5 = sessionFile('cls-advanced');
     const A6 = sessionFile('cls-queued');
+    const A7 = sessionFile('cls-window');
+    const A8 = sessionFile('cls-straddle');
     const j = openJournal(db('cls'));
     const now = Date.now();
     const seed = (file, status, message, extra = {}) => {
@@ -119,26 +121,46 @@ async function main() {
     ]);
     seed(A5, 'inflight', 'adv-orig');
     seed(A6, 'queued', 'queued-msg');
+    const bigChunk = 'x'.repeat(40 * 1024);
+    writeTranscript(A7, [
+      entry('u0', 'user', 'old task', now - 120_000),
+      entry('a0', 'assistant', 'done', now - 119_000, { stopReason: 'stop' }),
+      entry('u1', 'user', 'window-orig', now),
+      entry('a1', 'assistant', bigChunk, now + 1_000, { stopReason: 'aborted' }),
+      entry('a2', 'assistant', bigChunk, now + 2_000, { stopReason: 'aborted' }),
+    ]);
+    seed(A7, 'inflight', 'window-orig');
+    writeTranscript(A8, [
+      entry('u0', 'user', 'old task', now - 120_000),
+      entry('a0', 'assistant', 'done', now - 119_000, { stopReason: 'stop' }),
+      entry('u1', 'user', 'straddle-orig', now),
+      entry('a1', 'assistant', 'y'.repeat(70 * 1024), now + 5_000, { stopReason: 'aborted' }),
+    ]);
+    seed(A8, 'inflight', 'straddle-orig');
     j.close();
 
     const j2 = openJournal(db('cls'));
-    report('journal rows survive a close/reopen crash-sim', j2.pendingCount() === 6);
+    report('journal rows survive a close/reopen crash-sim', j2.pendingCount() === 8);
     const r = new AgentRegistry({ journal: j2 });
     const f1 = fakeSession();
     const f2 = fakeSession();
     const f3 = fakeSession();
     const f4 = fakeSession();
     const f6 = fakeSession();
+    const f7 = fakeSession();
+    const f8 = fakeSession();
     r.attach(A1, f1);
     r.attach(A2, f2);
     r.attach(A3, f3);
     r.attach(A4, f4);
     r.attach(A6, f6);
+    r.attach(A7, f7);
+    r.attach(A8, f8);
     const counts = await r.recover();
     await ticks();
     report(
       'recovery classifies the resume matrix',
-      counts.resumed === 3 && counts.replayed === 2 && counts.skipped === 1,
+      counts.resumed === 5 && counts.replayed === 2 && counts.skipped === 1,
       JSON.stringify(counts),
     );
     report(
@@ -164,13 +186,23 @@ async function main() {
     );
     report('session advanced while down: prompt skipped', r.state(A5).queueDepth === 0);
     report('queued rows replay verbatim', f6.prompts[0] === 'queued-msg', f6.prompts[0] ?? 'no prompt');
+    report(
+      'windowed-out user entry nudges instead of verbatim re-prompt',
+      f7.prompts[0]?.includes('Continue exactly where it stopped') && f7.prompts[0] !== 'window-orig',
+      f7.prompts[0] ?? 'no prompt',
+    );
+    report(
+      'straddling tail entry is salvaged for classification',
+      f8.prompts[0]?.includes('Continue exactly where it stopped') && f8.prompts[0] !== 'straddle-orig',
+      f8.prompts[0] ?? 'no prompt',
+    );
     const stillPending = j2.pendingItems();
     report(
       'skipped rows are dropped, resumed rows go back to inflight',
-      stillPending.length === 5 && stillPending.every((x) => x.status === 'inflight'),
+      stillPending.length === 7 && stillPending.every((x) => x.status === 'inflight'),
       JSON.stringify(stillPending.map((x) => [x.sessionFile.split('/').pop(), x.status])),
     );
-    for (const f of [f1, f2, f3, f4, f6]) f.abort();
+    for (const f of [f1, f2, f3, f4, f6, f7, f8]) f.abort();
     await ticks();
     report('settled prompts remove their journal rows', j2.pendingCount() === 0);
     j2.close();

@@ -24,6 +24,7 @@
     "check:sse": "node scripts/check-sse-flood.cjs",
     "check:states": "node scripts/check-session-states.cjs",
     "check:sync": "node scripts/check-session-sync.cjs",
+    "check:newchat": "node scripts/check-new-chat.cjs",
     "check:pinned": "node scripts/check-pinned.cjs",
     "check:pagination": "node scripts/check-chat-pagination.cjs",
     "check:restart": "node scripts/check-gateway-restart.cjs",

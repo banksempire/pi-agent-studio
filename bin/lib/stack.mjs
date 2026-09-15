@@ -176,6 +176,27 @@ function portFromProxy(env) {
   return m ? Number(m[1]) : null;
 }
 
+function argvFlag(argv, name) {
+  if (!Array.isArray(argv)) return null;
+  for (let i = 0; i < argv.length - 1; i++) {
+    if (argv[i] === `--${name}`) return argv[i + 1];
+  }
+  return null;
+}
+
+function identityMatches(proc, instance) {
+  const env = proc.environ ?? {};
+  const expectedDb = path.join(instanceStateDir(instance.id), 'studio.db');
+  const expectedCwd = instance.cwd ?? instance.pairRoot;
+  for (const hint of [env.PI_STUDIO_DB_PATH, argvFlag(proc.argv, 'db')]) {
+    if (hint && path.resolve(hint) !== path.resolve(expectedDb)) return false;
+  }
+  for (const hint of [env.PI_STUDIO_CWD, argvFlag(proc.argv, 'cwd')]) {
+    if (hint && path.resolve(hint) !== path.resolve(expectedCwd)) return false;
+  }
+  return true;
+}
+
 export function attributeProcesses(instances = null) {
   const insts = (instances ?? listInstances().map((id) => loadInstance(id))).filter(Boolean);
   const listeners = listenPortsByPid();
@@ -217,6 +238,7 @@ export function attributeProcesses(instances = null) {
         const rec = readPidfile(pidfilePath(inst.id, 'backend'));
         const matches =
           proc.service === 'backend' &&
+          identityMatches(proc, inst) &&
           ((gwEnv && gwEnv === (inst.backendPort ?? rec?.port)) ||
             (proxyEnv && proxyEnv === (inst.backendPort ?? rec?.port)));
         if (matches) {
@@ -301,7 +323,7 @@ async function tryAdopt(out, instance, service) {
     if (!health.ok) continue;
     if (service === 'web' && port !== instance.webPort) continue;
     if (service === 'backend') {
-      const db = cand.environ?.PI_STUDIO_DB_PATH;
+      const db = cand.environ?.PI_STUDIO_DB_PATH ?? argvFlag(cand.argv, 'db');
       const expected = path.join(instanceStateDir(instance.id), 'studio.db');
       if (!db || path.resolve(db) !== path.resolve(expected)) continue;
     }
@@ -329,30 +351,44 @@ async function tryAdopt(out, instance, service) {
   return null;
 }
 
-async function ensureBackend(out, instance, { sessionsDir, used, ports, spawned }) {
+async function ensureBackend(out, instance, { sessionsDir, used, ports, spawned, opts = {} }) {
   const adopted = await tryAdopt(out, instance, 'backend');
   if (adopted) {
     ports.backend = adopted.port;
     return;
   }
-  const port = await resolveServicePort(instance, 'backend', {}, used);
+  const port = await resolveServicePort(instance, 'backend', opts, used);
+  const holderPid = pidHoldingPort(listenPortsByPid(), port);
+  if (holderPid) {
+    throw new CliError(
+      `backend port ${port} is held by foreign pid ${holderPid} — refusing to re-wire onto it`,
+      4,
+    );
+  }
   used.add(port);
   const repo = instanceRepoRoot(instance);
   const statesPath = instanceStatesPath(instance);
-  const env = {
-    PI_STUDIO_HOST: process.env.PI_STUDIO_HOST ?? '127.0.0.1',
-    PI_STUDIO_PORT: String(port),
-    PI_STUDIO_SESSIONS: sessionsDir,
-    PI_STUDIO_CWD: instance.cwd ?? instance.pairRoot,
-    PI_STUDIO_SPILL_PATH: path.join(instanceStateDir(instance.id), 'backend-spill.json'),
-    PI_STUDIO_DB_PATH: path.join(instanceStateDir(instance.id), 'studio.db'),
-  };
-  if (statesPath) env.PI_STUDIO_STATES_PATH = statesPath;
+  const args = [
+    '--heapsnapshot-near-heap-limit=2',
+    'src/pi-studio/server/index.mjs',
+    '--port',
+    String(port),
+    '--host',
+    '127.0.0.1',
+    '--sessions',
+    sessionsDir,
+    '--cwd',
+    instance.cwd ?? instance.pairRoot,
+    '--db',
+    path.join(instanceStateDir(instance.id), 'studio.db'),
+    '--spill',
+    path.join(instanceStateDir(instance.id), 'backend-spill.json'),
+  ];
+  if (statesPath) args.push('--states', statesPath);
   const pid = spawnDetached({
     cmd: 'node',
-    args: ['--heapsnapshot-near-heap-limit=2', 'src/pi-studio/server/index.mjs'],
+    args,
     cwd: repo,
-    env,
     logFile: logPath(instance.id, 'backend'),
     pidfile: pidfilePath(instance.id, 'backend'),
     record: { service: 'backend', instance: instance.id, port, sessionsDir },
@@ -428,10 +464,9 @@ async function ensureWeb(out, instance, { used, ports, spawned, opts }) {
       '--strictPort',
     ],
     cwd: repo,
-    env: { PI_API_PROXY: `http://127.0.0.1:${ports.backend}` },
     logFile: logPath(instance.id, 'web'),
     pidfile: pidfilePath(instance.id, 'web'),
-    record: { service: 'web', instance: instance.id, port, host },
+    record: { service: 'web', instance: instance.id, port, host, backendPort: ports.backend },
   });
   spawned.push(pid);
   out.event({
@@ -499,7 +534,7 @@ async function upLocked(out, instance, opts = {}) {
   out.event({ event: 'begin', instance: instance.id });
   try {
     if (!only || only === 'backend') {
-      await ensureBackend(out, instance, { sessionsDir, used, ports, spawned });
+      await ensureBackend(out, instance, { sessionsDir, used, ports, spawned, opts });
     }
     if (!only || only === 'web') {
       await ensureWeb(out, instance, { used, ports, spawned, opts });
@@ -597,7 +632,27 @@ async function stopService(out, instance, service, attributed, { immediate = fal
     });
     return;
   }
+  let stopped = 0;
+  let refused = 0;
   for (const t of targets) {
+    if (!identityMatches(t, instance)) {
+      refused += 1;
+      appendAudit(instance.id, {
+        action: 'note',
+        reason: 'terminate-refused-foreign-identity',
+        service,
+        pid: t.pid,
+        caller: process.argv.slice(1).join(' '),
+      });
+      out.event({
+        event: 'refused',
+        instance: instance.id,
+        service,
+        pid: t.pid,
+        message: `${paint('cyan', `${instance.id}/${service}`)}  ${warnSym} refusing to terminate pid ${t.pid}: its identity belongs to another instance`,
+      });
+      continue;
+    }
     appendAudit(instance.id, {
       action: 'terminate',
       reason: immediate ? 'kill' : 'stop',
@@ -605,14 +660,21 @@ async function stopService(out, instance, service, attributed, { immediate = fal
       pid: t.pid,
       caller: process.argv.slice(1).join(' '),
     });
-    const stopped = await terminate(t.pid, GRACE[service] ?? 8000, immediate);
+    const stoppedOk = await terminate(t.pid, GRACE[service] ?? 8000, immediate);
+    if (stoppedOk) stopped += 1;
     out.event({
-      event: stopped ? 'stopped' : 'failed',
+      event: stoppedOk ? 'stopped' : 'failed',
       instance: instance.id,
       service,
       pid: t.pid,
-      message: `${paint('cyan', `${instance.id}/${service}`)}  ${stopped ? okSym : errSym} stopped pid ${t.pid}`,
+      message: `${paint('cyan', `${instance.id}/${service}`)}  ${stoppedOk ? okSym : errSym} stopped pid ${t.pid}`,
     });
+  }
+  if (refused > 0 && stopped === 0 && targets.length > 0) {
+    throw new CliError(
+      `refused: ${refused} target(s) of ${instance.id}/${service} belong to another instance`,
+      5,
+    );
   }
   const file = pidfilePath(instance.id, service);
   const rec = readPidfile(file);
@@ -646,20 +708,9 @@ async function downLocked(out, instance, opts = {}) {
   }
 }
 
-const FINISHER_STRIP_ENV = [
-  'PI_STUDIO_SESSIONS',
-  'PI_STUDIO_PORT',
-  'PI_STUDIO_HOST',
-  'PI_STUDIO_DB_PATH',
-  'PI_STUDIO_SPILL_PATH',
-  'PI_STUDIO_CWD',
-  'PI_STUDIO_STATES_PATH',
-];
-
 function spawnRestartFinisher(instance, oldPid, graceMs) {
   const cli = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'studio.mjs');
   const env = { ...process.env };
-  for (const key of FINISHER_STRIP_ENV) delete env[key];
   const child = spawn(
     process.execPath,
     [

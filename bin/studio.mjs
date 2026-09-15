@@ -98,7 +98,9 @@ options:
   --yes                     skip guard prompts (backend restart/kill)
 
 config precedence: CLI args > environment (PI_STUDIO_*) > instance
-config (<pair-root>/.studio/config/instances/) > built-in defaults`;
+config (<pair-root>/.studio/config/instances/) > built-in defaults. Services
+are wired via argv, never via injected env: their environ stays exactly as
+the caller set it, and each service resolves argv > env > defaults`;
 
 function parseRest(rest, valueFlags = []) {
   const positional = [];

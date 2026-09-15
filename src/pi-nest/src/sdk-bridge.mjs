@@ -6,9 +6,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export const SESSIONS_ROOT =
+export let SESSIONS_ROOT =
   process.env.PI_STUDIO_SESSIONS ?? path.join(os.homedir(), '.pi', 'agent', 'sessions');
-export const NEW_CHAT_CWD = process.env.PI_STUDIO_CWD ?? '/workspace/sf';
+export let NEW_CHAT_CWD = process.env.PI_STUDIO_CWD ?? '/workspace/sf';
+
+export function configureSessionPaths({ sessionsRoot, newChatCwd } = {}) {
+  if (sessionsRoot) SESSIONS_ROOT = sessionsRoot;
+  if (newChatCwd) NEW_CHAT_CWD = newChatCwd;
+}
 
 export function findSdkDir() {
   if (process.env.PI_SDK_DIR && existsSync(process.env.PI_SDK_DIR)) return process.env.PI_SDK_DIR;

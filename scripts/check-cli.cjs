@@ -8,6 +8,11 @@ const path = require('node:path');
 const PRODUCT_ROOT = path.join(__dirname, '..');
 const SF_ROOT = path.join(path.dirname(PRODUCT_ROOT), 'StudioFramework');
 const BIN = path.join(PRODUCT_ROOT, 'bin', 'studio.mjs');
+const workspaceHooksDir = () => {
+  const segs = PRODUCT_ROOT.split(path.sep);
+  const bi = segs.indexOf('.branch');
+  return path.join(bi > 0 ? segs.slice(0, bi).join(path.sep) : path.dirname(PRODUCT_ROOT), 'hooks');
+};
 const RUN_ID = `studio-cli-check-${process.pid}-${Date.now()}`;
 const TMPROOT = path.join(os.tmpdir(), 'studio-cli-check');
 const BASE = path.join(TMPROOT, RUN_ID);
@@ -152,7 +157,7 @@ async function main() {
   }
   fs.mkdirSync(WT, { recursive: true });
 
-  const HOOKS = path.join(PRODUCT_ROOT, 'hooks');
+  const HOOKS = workspaceHooksDir();
   const scratch = path.join(BASE, 'guard-scratch');
   fs.mkdirSync(scratch, { recursive: true });
   run('git', ['init', '-q', '-b', 'main'], scratch);
@@ -245,7 +250,7 @@ async function main() {
     );
 
     const pairRepo = path.join(PAIR, 'pi-agent-studio');
-    const hookGit = ['-c', `core.hooksPath=${path.join(PRODUCT_ROOT, 'hooks')}`];
+    const hookGit = ['-c', `core.hooksPath=${workspaceHooksDir()}`];
     fs.writeFileSync(path.join(pairRepo, 'lintprobe.mjs'), 'const x = "double";\n');
     sh('git', [...hookGit, 'add', 'lintprobe.mjs'], { cwd: pairRepo });
     const b1 = run('git', [...hookGit, 'commit', '-qm', 'lint probe'], pairRepo);

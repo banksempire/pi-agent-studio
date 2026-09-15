@@ -73,9 +73,9 @@ commands:
                             toggle a window
   doctor [--fix]            diagnostics; --fix clears stale pidfiles + orphans,
                             installs the git guard hooks when missing
-  guard [install|status]    install/inspect core.hooksPath on both repos
-                            (pre-commit: main-branch rule + biome gate;
-                            pre-push: typecheck)
+  guard [install|status]    install/inspect core.hooksPath on all three repos
+                            (workspace-level hooks dir; pre-commit: main-branch
+                            rule + biome gate; pre-push: typecheck)
   clean [--snapshots] [--pidfiles] [--instances]
   open                      open this instance's web URL
   init                      register the pair root in cwd as an instance

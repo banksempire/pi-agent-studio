@@ -270,9 +270,9 @@ studio [-i <instance>] <command> …        # auto-detects instance from CWD's p
                               registry) only sweeps orphans inside its own
                               pair roots — another registry's services are
                               never killed
-  guard [install|status]      install/inspect core.hooksPath on both repos
-                              (pre-commit: main-branch rule + biome gate;
-                              pre-push: typecheck)
+  guard [install|status]      install/inspect core.hooksPath on all three repos
+                              (workspace-level hooks dir; pre-commit:
+                              main-branch rule + biome gate; pre-push: typecheck)
   clean [--snapshots] [--pidfiles] [--instances]
   open [--path /]             open the instance's web URL (human review step)
   help | --version

@@ -880,12 +880,10 @@ function makeReporter() {
           const max = el.scrollHeight - el.clientHeight;
           const sep = window.__t13?.sep ?? null;
           const row = window.__t13?.row ?? null;
-          const padTop = parseFloat(getComputedStyle(el).paddingTop) || 0;
           return {
             scrollTop: el.scrollTop,
             max,
             distFromTop: el.scrollTop + max,
-            padTop: Math.round(padTop),
             sepTop: sep ? Math.round(sep.getBoundingClientRect().top - lr.top) : -1,
             rowTop: row ? Math.round(row.getBoundingClientRect().top - lr.top) : -1,
             sepH: sep ? Math.round(sep.getBoundingClientRect().height) : -1,
@@ -897,31 +895,25 @@ function makeReporter() {
       await delay(600);
       await inB((el) => {
         const lr = el.getBoundingClientRect();
-        const padTop = parseFloat(getComputedStyle(el).paddingTop) || 0;
         const tops = Array.from(el.querySelectorAll('.chat-sep')).map((s) => ({
           s,
           t: s.getBoundingClientRect().top - lr.top,
         }));
-        if (!tops.some((x) => Math.abs(x.t - padTop) < 2)) {
-          const next = tops.find((x) => x.t >= padTop + 2);
-          if (next) el.scrollTop += Math.round(next.t - padTop);
+        if (!tops.some((x) => Math.abs(x.t) < 2)) {
+          const next = tops.find((x) => x.t >= 2);
+          if (next) el.scrollTop += Math.round(next.t);
         }
       });
       await delay(600);
       const pin = await inB((el) => {
         const lr = el.getBoundingClientRect();
-        const padTop = parseFloat(getComputedStyle(el).paddingTop) || 0;
         const sep = Array.from(el.querySelectorAll('.chat-sep')).find(
-          (s) => Math.abs(s.getBoundingClientRect().top - lr.top - padTop) < 2,
+          (s) => Math.abs(s.getBoundingClientRect().top - lr.top) < 2,
         );
         if (!sep) return null;
         const row = sep.nextElementSibling;
         const expected = Math.round(
-          row.getBoundingClientRect().top -
-            lr.top +
-            el.scrollTop -
-            padTop -
-            sep.getBoundingClientRect().height,
+          row.getBoundingClientRect().top - lr.top + el.scrollTop - sep.getBoundingClientRect().height,
         );
         window.__t13 = { sep, row };
         sep.click();
@@ -933,8 +925,8 @@ function makeReporter() {
       const jumpOk =
         pin !== null &&
         Math.abs(afterPin.scrollTop - pinExpected) <= 3 &&
-        Math.abs(afterPin.sepTop - afterPin.padTop) <= 2 &&
-        Math.abs(afterPin.rowTop - afterPin.padTop - afterPin.sepH) <= 2;
+        Math.abs(afterPin.sepTop) <= 2 &&
+        Math.abs(afterPin.rowTop - afterPin.sepH) <= 2;
       why.push(
         `pinnedJump:${jumpOk ? 'ok' : `BAD sepTop:${afterPin.sepTop} rowTop:${afterPin.rowTop} sepH:${afterPin.sepH} scrollTop:${afterPin.scrollTop} (want ${pinExpected})`}`,
       );
@@ -947,13 +939,8 @@ function makeReporter() {
         if (!sep) return null;
         const row = sep.nextElementSibling;
         const lr = el.getBoundingClientRect();
-        const padTop = parseFloat(getComputedStyle(el).paddingTop) || 0;
         const off = Math.round(
-          row.getBoundingClientRect().top -
-            lr.top +
-            el.scrollTop -
-            padTop -
-            sep.getBoundingClientRect().height,
+          row.getBoundingClientRect().top - lr.top + el.scrollTop - sep.getBoundingClientRect().height,
         );
         window.__t13 = { sep, row };
         sep.click();
@@ -967,10 +954,10 @@ function makeReporter() {
       const topOk =
         first !== null &&
         Math.abs(afterTop1.scrollTop - firstOffset) <= 3 &&
-        Math.abs(afterTop1.sepTop - afterTop1.padTop) <= 2 &&
-        Math.abs(afterTop1.rowTop - afterTop1.padTop - afterTop1.sepH) <= 2 &&
+        Math.abs(afterTop1.sepTop) <= 2 &&
+        Math.abs(afterTop1.rowTop - afterTop1.sepH) <= 2 &&
         Math.abs(afterTop2.scrollTop - afterTop1.scrollTop) <= 3 &&
-        afterTop1.distFromTop < 200;
+        afterTop1.distFromTop < 150;
       why.push(
         `topJump:${topOk ? 'ok' : `BAD sepTop:${afterTop1.sepTop} rowTop:${afterTop1.rowTop} scrollTop:${afterTop1.scrollTop}→${afterTop2.scrollTop} (want ≈${firstOffset}, stable)`}`,
       );

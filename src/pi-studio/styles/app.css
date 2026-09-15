@@ -27,7 +27,7 @@
   min-height: 0;
   overflow-y: auto;
   overflow-anchor: none;
-  padding: 44px 20px 12px;
+  padding: 0 20px 12px;
   display: flex;
   flex-direction: column-reverse;
   background: var(--sf-panel-bg);

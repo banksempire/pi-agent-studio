@@ -389,15 +389,26 @@ async function managerTests() {
     fs.existsSync(longPath) && (JSON.parse(fs.readFileSync(longPath, 'utf8')).result ?? '').length > 4000,
   );
 
-  const unknownExec = await subTool.execute('exec-3', {
-    tasks: [{ prompt: 'path probe unknown-model', model: 'nope/missing' }],
-  });
-  const unknownText = unknownExec.content[0].text;
+  const unknownExec = await subTool
+    .execute('exec-3', {
+      tasks: [{ prompt: 'path probe unknown-model', model: 'nope/missing' }],
+    })
+    .then(
+      (v) => v,
+      (e) => e,
+    );
+  const unknownText = String(unknownExec.message ?? unknownExec?.content?.[0]?.text ?? '');
+  report(
+    'total failure throws error result for red display',
+    unknownExec instanceof Error && unknownText.includes("[task-1] failed: unknown model 'nope/missing'"),
+    unknownText.slice(0, 80),
+  );
   report(
     'run without disk artifact omits phantom path',
     !unknownText.includes('result.json'),
-    (unknownText.split('\n')[2] ?? '').slice(0, 80),
+    unknownText.slice(0, 80),
   );
+  report('completed runs do not throw', shortExec && !shortExec.isError, '');
 
   console.log('subagent live feed');
   const feedUpdates = [];
@@ -431,6 +442,26 @@ async function managerTests() {
     lastFeed.includes('thinking: thinking part two longer') &&
       lastFeed.includes('text: streamed final answer'),
     lastFeed.slice(-140),
+  );
+
+  const wfTool = tools.find((t) => t.name === 'workflow');
+  appendChildRule({ match: 'explode quietly', behavior: 'fail' });
+  const wfFail = await wfTool
+    .execute('exec-4', {
+      spec: {
+        name: 'failspec',
+        nodes: [{ id: 'a', prompt: 'explode quietly', model: 'stub-pro', thinking: 'off' }],
+      },
+    })
+    .then(
+      (v) => v,
+      (e) => e,
+    );
+  const wfFailText = String(wfFail.message ?? wfFail?.content?.[0]?.text ?? '');
+  report(
+    'failed workflow throws error result for red display',
+    wfFail instanceof Error && wfFailText.includes("workflow 'failspec' did not complete"),
+    wfFailText.slice(0, 80),
   );
 
   const wf = {

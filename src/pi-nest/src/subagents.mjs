@@ -567,8 +567,10 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
             return r.result ? `${head}\n${truncate(r.result, TOOL_RESULT_CAP, onDisk ? file : '')}` : head;
           })
           .join('\n\n');
+        const text = `sub-agents: ${done} completed, ${failed} failed\n\n${body}`;
+        if (done === 0 && failed > 0) throw new Error(text);
         return {
-          content: [{ type: 'text', text: `sub-agents: ${done} completed, ${failed} failed\n\n${body}` }],
+          content: [{ type: 'text', text }],
         };
       },
     });
@@ -613,7 +615,9 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
           truncate(r.output, TOOL_RESULT_CAP, outputFiles[0] ?? ''),
         ];
         if (outputFiles.length > 0) body.push('', `full results on disk: ${outputFiles.join(' ')}`);
-        return { content: [{ type: 'text', text: `${head}\n${body.join('\n')}` }] };
+        const text = `${head}\n${body.join('\n')}`;
+        if (!r.ok) throw new Error(text);
+        return { content: [{ type: 'text', text }] };
       },
     });
 

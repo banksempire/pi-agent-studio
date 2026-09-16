@@ -778,6 +778,94 @@ function getJson(port, p) {
     report('image-only box cleared after flush', (await boxes.count()) === 0);
 
     await runUntilStop();
+    await input.fill('');
+    const pasteImages = async (n, name) => {
+      await page.evaluate(
+        ([png, count, label]) => {
+          const dt = new DataTransfer();
+          for (let i = 0; i < count; i++) {
+            const bytes = Uint8Array.from(atob(png), (c) => c.charCodeAt(0));
+            dt.items.add(new File([bytes], `${label}-${i}.png`, { type: 'image/png' }));
+          }
+          document
+            .querySelector('.chat-input')
+            .dispatchEvent(
+              new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }),
+            );
+        },
+        [PNG.toString('base64'), n, name],
+      );
+    };
+    await pasteImages(1, 'clip');
+    let pastedChip = false;
+    for (let i = 0; i < 30; i++) {
+      if ((await page.locator('.chat-attach-chip').count()) === 1) {
+        pastedChip = true;
+        break;
+      }
+      await delay(250);
+    }
+    report('pasting a clipboard image (Ctrl+V) attaches it as a chip', pastedChip);
+    await input.fill('pasted clip');
+    await clickWhenVisible(queueBtn);
+    await delay(400);
+    await idleUntilSend();
+    let pasteFlush = null;
+    for (let i = 0; i < 40; i++) {
+      pasteFlush = readPrompts().find((p) => p.agentId === F && p.message === 'pasted clip');
+      if (pasteFlush) break;
+      await delay(250);
+    }
+    report(
+      'pasted image queues and flushes to the backend with the image attached',
+      !!pasteFlush && pasteFlush.images === 1 && pasteFlush.interrupt === false,
+      JSON.stringify(pasteFlush),
+    );
+    await delay(1000);
+    report('pasted-image box cleared after flush', (await boxes.count()) === 0);
+
+    await runUntilStop();
+    await input.fill('keep me');
+    await page.evaluate(() => {
+      const dt = new DataTransfer();
+      dt.setData('text/plain', ' injected');
+      document
+        .querySelector('.chat-input')
+        .dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    });
+    await delay(300);
+    report(
+      'text-only paste is left to the browser (no chips, input untouched by the handler)',
+      (await page.locator('.chat-attach-chip').count()) === 0 && (await input.inputValue()) === 'keep me',
+    );
+    await input.fill('');
+    await pasteImages(6, 'cap');
+    let capChips = 0;
+    for (let i = 0; i < 40; i++) {
+      capChips = await page.locator('.chat-attach-chip').count();
+      if (capChips === 4) break;
+      await delay(250);
+    }
+    await delay(500);
+    const capErr = await page.evaluate(() => {
+      const el = document.querySelector('.chat-banner--error');
+      return el ? (el.textContent || '').trim() : '';
+    });
+    report(
+      'pasting more than four images stops at the 4-image cap with an error banner',
+      capChips === 4 && capErr.includes('At most 4 images per message.'),
+      `chips:${capChips} banner:${capErr}`,
+    );
+    while ((await page.locator('.chat-attach-remove').count()) > 0) {
+      await page.locator('.chat-attach-remove').first().click();
+      await delay(150);
+    }
+    report(
+      'pasted attachments can be removed chip by chip',
+      (await page.locator('.chat-attach-chip').count()) === 0,
+    );
+
+    await runUntilStop();
     await input.fill('via enter');
     await delay(300);
     const promptsBeforeEnter = readPrompts().filter((p) => p.agentId === F).length;

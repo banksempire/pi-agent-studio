@@ -766,11 +766,9 @@ function pickImages() {
   fileInput.value?.click();
 }
 
-async function onFilesChosen(e: Event) {
-  const el = e.target as HTMLInputElement | null;
-  const files = el?.files ? Array.from(el.files) : [];
-  if (el) el.value = '';
-  if (files.length) store.noteChatInteraction(props.sessionId);
+async function attachFiles(files: File[]) {
+  if (!files.length) return;
+  store.noteChatInteraction(props.sessionId);
   for (const f of files) {
     if (attachments.value.length >= 4) {
       setSessionError(props.sessionId, 'At most 4 images per message.');
@@ -786,6 +784,33 @@ async function onFilesChosen(e: Event) {
       );
     }
   }
+}
+
+async function onFilesChosen(e: Event) {
+  const el = e.target as HTMLInputElement | null;
+  const files = el?.files ? Array.from(el.files) : [];
+  if (el) el.value = '';
+  await attachFiles(files);
+}
+
+function pastedImageFiles(dt: DataTransfer | null): File[] {
+  const items = dt?.items;
+  if (!items) return [];
+  const out: File[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (item.kind !== 'file' || !item.type.startsWith('image/')) continue;
+    const f = item.getAsFile();
+    if (f) out.push(f);
+  }
+  return out;
+}
+
+function onPaste(e: ClipboardEvent) {
+  const files = pastedImageFiles(e.clipboardData);
+  if (!files.length) return;
+  e.preventDefault();
+  void attachFiles(files);
 }
 
 function removeAttachment(i: number) {
@@ -1180,6 +1205,7 @@ watch(
           :disabled="!!composerBlock"
           @keydown="onKeydown"
           @input="onComposerInput"
+          @paste="onPaste"
         />
         <div class="chat-composer-actions">
           <button

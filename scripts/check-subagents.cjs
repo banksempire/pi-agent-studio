@@ -365,6 +365,40 @@ async function managerTests() {
     failRun.status === 'failed' && failRun.error === 'stub child failure',
   );
 
+  console.log('tool result disk paths');
+  const subTool = tools.find((t) => t.name === 'subagent');
+  const shortExec = await subTool.execute('exec-1', { tasks: [{ prompt: 'path probe short' }] });
+  const shortText = shortExec.content[0].text;
+  const shortMeta = readChildResults('parent-1').find((r) => r.prompt === 'path probe short');
+  const shortPath = path.join(SESSIONS_ROOT, '_subagents', 'parent-1', shortMeta.id, 'result.json');
+  report('tool result names absolute result path', shortText.includes(shortPath), shortPath);
+  report('named path exists on disk', fs.existsSync(shortPath));
+
+  appendChildRule({ match: 'path probe long', reply: 'x'.repeat(6000) });
+  const longExec = await subTool.execute('exec-2', { tasks: [{ prompt: 'path probe long' }] });
+  const longText = longExec.content[0].text;
+  const longMeta = readChildResults('parent-1').find((r) => r.prompt === 'path probe long');
+  const longPath = path.join(SESSIONS_ROOT, '_subagents', 'parent-1', longMeta.id, 'result.json');
+  report(
+    'truncation marker carries the path',
+    longText.includes(`[truncated - full result: ${longPath}]`),
+    `len=${longText.length}`,
+  );
+  report(
+    'full result persisted beyond cap',
+    fs.existsSync(longPath) && (JSON.parse(fs.readFileSync(longPath, 'utf8')).result ?? '').length > 4000,
+  );
+
+  const unknownExec = await subTool.execute('exec-3', {
+    tasks: [{ prompt: 'path probe unknown-model', model: 'nope/missing' }],
+  });
+  const unknownText = unknownExec.content[0].text;
+  report(
+    'run without disk artifact omits phantom path',
+    !unknownText.includes('result.json'),
+    (unknownText.split('\n')[2] ?? '').slice(0, 80),
+  );
+
   const wf = {
     name: 'audit',
     nodes: [
@@ -394,6 +428,11 @@ async function managerTests() {
     result.output.slice(0, 80),
   );
   report('workflow node lines', result.nodes.length === 3, JSON.stringify(result.nodes));
+  report(
+    'workflow reports output file on disk',
+    (result.outputFiles ?? []).length === 1 && fs.existsSync(result.outputFiles[0]),
+    JSON.stringify(result.outputFiles),
+  );
   const wfResults = readChildResults('parent-1');
   const auditResults = wfResults.filter((r) => String(r.label).startsWith('audit:audit#'));
   report(

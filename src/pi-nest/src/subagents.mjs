@@ -87,9 +87,10 @@ export function createAnswerCollector() {
   };
 }
 
-function truncate(text, cap = TOOL_RESULT_CAP) {
+function truncate(text, cap = TOOL_RESULT_CAP, location = '') {
   const t = String(text ?? '');
-  return t.length <= cap ? t : `${t.slice(0, cap)}\n… [truncated, full result on disk]`;
+  if (t.length <= cap) return t;
+  return `${t.slice(0, cap)}\n… [truncated - full result: ${location || 'not persisted'}]`;
 }
 
 export function createSubagentManager({ sessionsRoot, getSession = () => null, limits = {} } = {}) {
@@ -123,6 +124,10 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
 
   function baseDir(parentAgentId) {
     return path.join(sessionsRoot, SUBAGENTS_DIRNAME, parentFolderId(parentAgentId));
+  }
+
+  function resultPathFor(run) {
+    return path.join(baseDir(run.parent), run.id, 'result.json');
   }
 
   function childSession(run, parentSession, modelRuntime, model, thinkingLevel) {
@@ -433,6 +438,7 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
         (output?.status !== 'completed' ? `output node '${norm.output}' did not complete` : ''),
       output: output?.text ?? '',
       nodes: nodeLines,
+      outputFiles: (instances.get(norm.output) ?? []).map((r) => resultPathFor(r)),
     };
   }
 
@@ -484,8 +490,10 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
         const failed = runs.length - done;
         const body = runs
           .map((r) => {
-            const head = `[${r.label}] ${r.status}${r.error ? `: ${r.error}` : ''}`;
-            return r.result ? `${head}\n${truncate(r.result)}` : head;
+            const file = resultPathFor(r);
+            const onDisk = existsSync(file);
+            const head = `[${r.label}] ${r.status}${r.error ? `: ${r.error}` : ''}${onDisk ? ` - full result: ${file}` : ''}`;
+            return r.result ? `${head}\n${truncate(r.result, TOOL_RESULT_CAP, onDisk ? file : '')}` : head;
           })
           .join('\n\n');
         return {
@@ -525,14 +533,16 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
         const head = r.ok
           ? `workflow '${r.name}' completed`
           : `workflow '${r.name}' did not complete: ${r.error}`;
+        const outputFiles = (r.outputFiles ?? []).filter((f) => existsSync(f));
         const body = [
           `nodes:`,
           ...r.nodes.map((l) => `  ${l}`),
           '',
           `output (${r.name}/${r.ok ? 'ok' : 'incomplete'}):`,
-          truncate(r.output),
-        ].join('\n');
-        return { content: [{ type: 'text', text: `${head}\n${body}` }] };
+          truncate(r.output, TOOL_RESULT_CAP, outputFiles[0] ?? ''),
+        ];
+        if (outputFiles.length > 0) body.push('', `full results on disk: ${outputFiles.join(' ')}`);
+        return { content: [{ type: 'text', text: `${head}\n${body.join('\n')}` }] };
       },
     });
 

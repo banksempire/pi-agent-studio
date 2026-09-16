@@ -399,6 +399,40 @@ async function managerTests() {
     (unknownText.split('\n')[2] ?? '').slice(0, 80),
   );
 
+  console.log('subagent live feed');
+  const feedUpdates = [];
+  appendChildRule({ match: 'feed probe stream', behavior: 'stream', reply: 'streamed final answer' });
+  const [feedRun] = await manager.runTasks(parentId, [{ prompt: 'feed probe stream' }], {
+    onUpdate: (u) => {
+      const t = u?.content?.[0]?.text;
+      if (t) feedUpdates.push(t);
+    },
+  });
+  report(
+    'feed child completes without feed leaking into answer',
+    feedRun.status === 'completed' && feedRun.result === 'streamed final answer',
+    `${feedRun.status}:${feedRun.error}:${feedRun.result}`,
+  );
+  report(
+    'feed carries status transitions',
+    feedUpdates.some((t) => t.startsWith('[task-1] queued')) &&
+      feedUpdates.some((t) => t.startsWith('[task-1] running')) &&
+      feedUpdates.some((t) => t.startsWith('[task-1] completed')),
+    JSON.stringify(feedUpdates.map((t) => t.split('\n')[0])),
+  );
+  report(
+    'feed streams live child thinking',
+    feedUpdates.some((t) => t.includes('thinking: thinking part')),
+    (feedUpdates.find((t) => t.includes('thinking')) ?? '').split('\n').slice(0, 2).join(' | '),
+  );
+  const lastFeed = feedUpdates[feedUpdates.length - 1] ?? '';
+  report(
+    'feed commits child activity lines cumulatively',
+    lastFeed.includes('thinking: thinking part two longer') &&
+      lastFeed.includes('text: streamed final answer'),
+    lastFeed.slice(-140),
+  );
+
   const wf = {
     name: 'audit',
     nodes: [

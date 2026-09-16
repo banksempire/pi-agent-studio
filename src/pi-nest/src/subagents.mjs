@@ -20,6 +20,10 @@ const REPAIR_PROMPT =
   'You used tools but never produced a final answer. Respond now with a concise, self-contained summary of your findings. Do not use tools.';
 const RESULT_PREVIEW_CHARS = 400;
 const TOOL_RESULT_CAP = 4000;
+const FEED_LINE_CHARS = 160;
+const FEED_MAX_LINES = 40;
+const FEED_MAX_CHARS = 8000;
+const FEED_TICK_MS = 400;
 
 const SUBAGENT_CONTRACT = [
   'You are a focused sub-agent spawned by a coordinator.',
@@ -113,13 +117,62 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
     if (set.size === 0) byParent.delete(run.parent);
   }
 
-  function report(run, onUpdate) {
-    if (!onUpdate) return;
-    try {
-      onUpdate({
-        content: [{ type: 'text', text: `[${run.label}] ${run.status}${run.error ? `: ${run.error}` : ''}` }],
-      });
-    } catch {}
+  function feedLine(kind, text) {
+    const t = String(text ?? '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!t) return kind;
+    return `${kind}: ${t.slice(0, FEED_LINE_CHARS)}`;
+  }
+
+  function createFeed(label, onUpdate) {
+    let lines = [];
+    let live = '';
+    let status = '';
+    let timer = null;
+    const render = () => {
+      const body = [...lines, ...(live ? [live] : [])].join('\n');
+      const trimmed = body.length > FEED_MAX_CHARS ? body.slice(-FEED_MAX_CHARS) : body;
+      return trimmed ? `[${label}] ${status}\n${trimmed}` : `[${label}] ${status}`;
+    };
+    const send = () => {
+      if (!onUpdate) return;
+      try {
+        onUpdate({ content: [{ type: 'text', text: render() }] });
+      } catch {}
+    };
+    const schedule = () => {
+      if (timer) return;
+      timer = setTimeout(() => {
+        timer = null;
+        send();
+      }, FEED_TICK_MS);
+      timer.unref?.();
+    };
+    return {
+      status(next) {
+        status = next;
+        send();
+      },
+      live(kind, text) {
+        live = feedLine(kind, text);
+        schedule();
+      },
+      commit(kind, text) {
+        live = '';
+        const line = feedLine(kind, text);
+        if (!line || lines[lines.length - 1] === line) return;
+        lines.push(line);
+        if (lines.length > FEED_MAX_LINES) lines = lines.slice(-FEED_MAX_LINES);
+        send();
+      },
+      stop() {
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+      },
+    };
   }
 
   function baseDir(parentAgentId) {
@@ -156,17 +209,34 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
     });
   }
 
-  function subscribeChild(session, collected) {
+  function subscribeChild(session, collected, feed) {
     session.subscribe((ev) => {
-      if (ev.type !== 'message_end') return;
-      collected.push(ev.message);
+      if (ev.type === 'message_end') {
+        collected.push(ev.message);
+        if (!feed || ev.message?.role !== 'assistant') return;
+        const blocks = Array.isArray(ev.message.content) ? ev.message.content : [];
+        for (const block of blocks) {
+          if (block?.type === 'thinking') feed.commit('thinking', block.thinking);
+          else if (block?.type === 'text') feed.commit('text', block.text);
+          else if (block?.type === 'toolCall')
+            feed.commit(block.toolName ?? 'tool', JSON.stringify(block.arguments ?? {}));
+        }
+      } else if (ev.type === 'message_update' && feed && ev.message?.role === 'assistant') {
+        const blocks = Array.isArray(ev.message.content) ? ev.message.content : [];
+        const last = blocks[blocks.length - 1] ?? null;
+        if (last?.type === 'thinking') feed.live('thinking', last.thinking);
+        else if (last?.type === 'text') feed.live('text', last.text);
+        else if (last?.type === 'toolCall')
+          feed.live(last.toolName ?? 'tool', JSON.stringify(last.arguments ?? {}));
+      }
     });
   }
 
   async function runOne(run, { parentSession, modelRuntime, model, thinkingLevel, onUpdate }) {
     track(run);
+    const feed = createFeed(run.label, onUpdate);
     run.status = 'queued';
-    report(run, onUpdate);
+    feed.status(run.status);
     const slot = await governor.waitForSlot(modelKeyOf(model));
     if (run.status === 'aborted') {
       run.error = run.error || 'parent aborted while queued';
@@ -174,18 +244,18 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
       run.finishedAt = Date.now();
       release(run);
       writeResultFile(run);
-      report(run, onUpdate);
+      feed.status(run.status);
       return;
     }
     let child = null;
     try {
       run.status = 'running';
       run.startedAt = Date.now();
-      report(run, onUpdate);
+      feed.status(run.status);
       child = await childSession(run, parentSession, modelRuntime, model, thinkingLevel);
       run.childSession = child.session;
       const collected = createAnswerCollector();
-      subscribeChild(child.session, collected);
+      subscribeChild(child.session, collected, feed);
       let timedOut = false;
       const timer = setTimeout(() => {
         timedOut = true;
@@ -233,7 +303,8 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
         } catch {}
       }
       writeResultFile(run);
-      report(run, onUpdate);
+      feed.stop();
+      feed.status(run.status);
     }
   }
 

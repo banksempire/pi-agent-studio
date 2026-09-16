@@ -165,6 +165,25 @@ async function runChildPrompt(session, file, message) {
     session.emit({ type: 'agent_settled' });
     return;
   }
+  if (behavior === 'stream') {
+    session.emit({
+      type: 'message_update',
+      message: assistantMessage([{ type: 'thinking', thinking: 'thinking part one' }]),
+    });
+    await delay(30);
+    session.emit({
+      type: 'message_update',
+      message: assistantMessage([{ type: 'thinking', thinking: 'thinking part two longer' }]),
+    });
+    const msg = assistantMessage([
+      { type: 'thinking', thinking: 'thinking part two longer' },
+      { type: 'text', text: reply },
+    ]);
+    appendEntry(file, msg);
+    session.emit({ type: 'message_end', message: msg });
+    session.emit({ type: 'agent_settled' });
+    return;
+  }
   const msg = assistantMessage([{ type: 'text', text: reply }]);
   appendEntry(file, msg);
   session.emit({ type: 'message_end', message: msg });

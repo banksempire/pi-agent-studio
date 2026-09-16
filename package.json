@@ -31,6 +31,7 @@
     "check:cli": "node scripts/check-cli.cjs",
     "check:registry": "node scripts/check-registry-drain.cjs",
     "check:stream-scroll": "node scripts/check-stream-scroll.cjs",
+    "check:bubble-anchor": "node scripts/check-bubble-anchor.cjs",
     "check:backend-restart": "node scripts/check-backend-restart.cjs",
     "check:restart-selfkill": "node scripts/check-restart-selfkill.cjs",
     "check:modelapi": "node scripts/check-model-api.cjs",

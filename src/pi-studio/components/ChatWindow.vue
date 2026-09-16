@@ -43,7 +43,24 @@ function noteVisit() {
 
 const open = computed(() => openGroupsOf(props.sessionId));
 function toggle(id: string) {
+  const el = listEl.value;
+  const header = el?.querySelector<HTMLElement>(`[data-toggle-id="${CSS.escape(id)}"]`) ?? null;
+  const beforeTop = header ? header.getBoundingClientRect().top : null;
   setOpenGroup(props.sessionId, id, !open.value[id]);
+  nextTick(() => {
+    if (!el) return;
+    if (header?.isConnected && beforeTop !== null) {
+      const delta = header.getBoundingClientRect().top - beforeTop;
+      if (delta) {
+        const max = Math.max(0, el.scrollHeight - el.clientHeight);
+        const target = clampScroll(max, el.scrollTop + delta);
+        const s = scrollScale;
+        el.scrollTop = s === null ? target : Math.round(target * s) / s;
+      }
+    }
+    const { max, distFromTop } = posInfo(el);
+    chatScrollOf(props.sessionId).sticky = distFromTop > max - STICKY_ZONE;
+  });
 }
 
 const mdCache = new WeakMap<DisplayMessage, { text: string; html: string }>();
@@ -1023,7 +1040,7 @@ watch(
                   part.group.id === 'compact' && !part.group.wip ? 'chat-compacting--failed' : '',
                 ]"
               >
-                <div class="chat-work-head" @click="toggle(part.group.id)">
+                <div class="chat-work-head" :data-toggle-id="part.group.id" @click="toggle(part.group.id)">
                   <span class="chat-work-toggle"><SvgIcon :name="open[part.group.id] ? '▾' : '▸'" /></span>
                   <template v-if="part.group.wip && part.group.latest">
                     <span class="chat-ab-name">{{ part.group.latest.name }}</span>
@@ -1043,7 +1060,7 @@ watch(
                     class="chat-ab-sub"
                     :class="subClass(b)"
                   >
-                    <div class="chat-ab-sub-head" @click="toggle(b.key)">
+                    <div class="chat-ab-sub-head" :data-toggle-id="b.key" @click="toggle(b.key)">
                       <span class="chat-ab-sub-toggle"><SvgIcon :name="open[b.key] ? '▾' : '▸'" /></span>
                       <span class="chat-ab-sub-name">{{ b.name }}</span>
                       <span class="chat-ab-sub-time">{{ b.live ? fmtSec(now - b.startTs) : fmtSec(b.durMs) }}</span>
@@ -1102,6 +1119,7 @@ watch(
           <div
             v-else-if="item.kind === 'summary'"
             class="chat-work chat-summary-ab"
+            :data-toggle-id="'sum-' + item.msg.id"
             @click="toggle('sum-' + item.msg.id)"
           >
             <div class="chat-work-head">

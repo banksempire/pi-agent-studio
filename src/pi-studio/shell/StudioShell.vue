@@ -38,6 +38,9 @@ function onAction(e: FrameworkAction) {
     case 'open-jobs':
       store.openJobs();
       break;
+    case 'about':
+      aboutOpen.value = true;
+      break;
     case 'edit-job':
       if (store.selectedJob) store.openJobEditor(store.selectedJob.id);
       break;
@@ -93,6 +96,23 @@ const renameDoc = computed(
 
 const confirmDoc = computed(() => confirmDocument());
 
+const aboutOpen = ref(false);
+const aboutDoc = computed<PopupDocument>(() => ({
+  title: 'About pi-agent-studio',
+  sections: [
+    {
+      fields: [
+        {
+          key: 'text',
+          type: 'info',
+          text: 'pi-agent-studio — browser UI for pi agents, sessions and scheduled jobs.',
+        },
+      ],
+    },
+  ],
+  actions: [{ id: 'ok', label: 'OK', tone: 'accent', close: true }],
+}));
+
 const peakEntry = ref<PeakHourEntry | null>(null);
 watch(
   () => dialogs.peakDialog.open,
@@ -126,6 +146,8 @@ watch(
         :doc="confirmDoc"
         @action="(id) => settleConfirm(id === 'confirm')"
       />
+
+      <PopupDialog v-model:open="aboutOpen" :doc="aboutDoc" />
 
       <PeakHoursDialog
         v-if="dialogs.peakDialog.open"

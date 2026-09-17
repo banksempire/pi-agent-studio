@@ -565,9 +565,9 @@ function writeSessionFile(name) {
 
     const saveBtn = page.locator('.je-save');
     const disabledAtStart = await saveBtn.isDisabled();
-    await page.locator('.je-input[placeholder="nightly maintenance"]').fill('check-suite job');
+    await page.locator('[data-field="name"] input').fill('check-suite job');
     const disabledAfterName = await saveBtn.isDisabled();
-    await page.locator('.je-textarea').fill('run checks');
+    await page.locator('[data-field="message"] textarea').fill('run checks');
     const enabledAfterAll = await saveBtn.isEnabled();
     report(
       'save stays disabled until required fields are filled',
@@ -578,7 +578,7 @@ function writeSessionFile(name) {
     await page.locator('input[type="datetime-local"]').fill('2020-01-01T00:00');
     await delay(150);
     const pastHint = await page.evaluate(() =>
-      [...document.querySelectorAll('.je-hint--warn')].some((h) =>
+      [...document.querySelectorAll('.je-hint--warn, .sf-form-hint--warn')].some((h) =>
         (h.textContent ?? '').includes('run immediately'),
       ),
     );
@@ -612,8 +612,8 @@ function writeSessionFile(name) {
 
     await page.locator('.jobs-add').click();
     await page.locator('.sf-dialog-title', { hasText: 'New job' }).waitFor({ timeout: 10000 });
-    await page.locator('.je-input[placeholder="nightly maintenance"]').fill('builder probe');
-    await page.locator('.je-textarea').fill('probe message');
+    await page.locator('[data-field="name"] input').fill('builder probe');
+    await page.locator('[data-field="message"] textarea').fill('probe message');
     await delay(150);
 
     const modeBtn = (t) => page.locator('.je-sched-seg .sf-pill-item', { hasText: t });
@@ -797,7 +797,7 @@ function writeSessionFile(name) {
 
     const advDefaults = await page.evaluate(() => {
       const seg = document.querySelector('.je-adv-seg');
-      const label = seg?.closest('.je-ctrl')?.querySelector('.je-label')?.textContent ?? '';
+      const label = seg?.closest('[data-field]')?.querySelector('.sf-form-label')?.textContent?.trim() ?? '';
       return {
         visible: !!seg,
         label,
@@ -818,7 +818,7 @@ function writeSessionFile(name) {
     await delay(200);
     const offPeakBlocked = {
       disabled: await saveBtn.isDisabled(),
-      hint: await page.locator('.je-form-hint').textContent(),
+      hint: await page.locator('.sf-form-footnote').textContent(),
       cronInputGone: (await page.locator('input[placeholder="0 9 * * *"]').count()) === 0,
       boxModel: await page.locator('.je-offpeak-box .je-mono').textContent(),
     };
@@ -1293,11 +1293,11 @@ function writeSessionFile(name) {
         return el ? Math.round(el.getBoundingClientRect().height * 10) / 10 : null;
       };
       return {
-        name: h('#je-name'),
+        name: h('[data-field="name"] input'),
         runAt: h('#je-runat'),
         cwd: h('#je-cwd'),
         modelBtn: h('.je-model-btn'),
-        message: h('.je-textarea'),
+        message: h('[data-field="message"] textarea'),
       };
     });
     report(

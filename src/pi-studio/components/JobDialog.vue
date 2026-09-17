@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import Dialog from '@sf/components/Dialog.vue';
 import Menu from '@sf/components/Menu.vue';
 import MultiSelectGroup from '@sf/components/MultiSelectGroup.vue';
 import PillSelector from '@sf/components/PillSelector.vue';
+import PopupDialog from '@sf/components/PopupDialog.vue';
 import type { MenuNodeDef } from '@sf/types/layout';
+import type { PopupAction, PopupDocument, PopupField, PopupValues } from '@sf/types/popup';
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import type { PeriodicPatternState } from '../cronInfo';
 import { checkCron, cronToPattern, describeCron, nextCronRuns, patternToCron } from '../cronInfo';
@@ -258,9 +259,9 @@ const currentCron = computed(() => {
 const offpeak = computed(() => schedKind.value === 'advanced' && advancedKind.value === 'offpeak');
 
 const modelNote = computed(() => {
-  if (form.targetMode === 'new') return 'applied to each run\u2019s fresh session';
-  if (form.targetMode === 'reuse') return 'applied when this job\u2019s per-cwd session is first created';
-  return 'not applied \u2014 an existing session keeps its own model';
+  if (form.targetMode === 'new') return 'applied to each run’s fresh session';
+  if (form.targetMode === 'reuse') return 'applied when this job’s per-cwd session is first created';
+  return 'not applied — an existing session keeps its own model';
 });
 
 const cronOk = computed(() => checkCron(currentCron.value).ok);
@@ -286,8 +287,7 @@ const problems = computed<string[]>(() => {
     list.push('a valid cron expression');
   if (schedKind.value === 'periodic' && pattern.value === 'weekly' && periodic.days.length === 0)
     list.push('at least one weekday');
-  if (offpeak.value && !form.model.trim())
-    list.push('a model (off-peak waits on that model\u2019s peak windows)');
+  if (offpeak.value && !form.model.trim()) list.push('a model (off-peak waits on that model’s peak windows)');
   if (form.targetMode === 'file' && !form.sessionFile) list.push('target session');
   if (form.targetMode !== 'file' && !form.cwd.trim()) list.push('working directory');
   if (!form.message.trim()) list.push('message');
@@ -392,144 +392,184 @@ function fmtRel(ms: number | null): string {
           : `${Math.round(mins / 1440)}d`;
   return diff >= 0 ? `in ${human}` : `${human} ago`;
 }
+const dialogValues = computed({
+  get: (): PopupValues => ({
+    name: form.name,
+    schedKind: schedKind.value,
+    pattern: pattern.value,
+    advancedKind: advancedKind.value,
+    everyMinutes: periodic.everyMinutes,
+    atMinute: periodic.atMinute,
+    monthDay: periodic.monthDay,
+    hour: periodic.hour,
+    minute: periodic.minute,
+    missedPolicy: form.missedPolicy,
+    message: form.message,
+  }),
+  set: (next) => {
+    if (next.name !== undefined) form.name = String(next.name);
+    if (next.schedKind !== undefined && next.schedKind !== schedKind.value)
+      setKind(next.schedKind as SchedKind);
+    if (next.pattern !== undefined && next.pattern !== pattern.value)
+      pattern.value = next.pattern as BuilderPattern;
+    if (next.advancedKind !== undefined && next.advancedKind !== advancedKind.value) {
+      advancedKind.value = next.advancedKind as 'cron' | 'offpeak';
+    }
+    if (next.everyMinutes !== undefined) periodic.everyMinutes = Number(next.everyMinutes);
+    if (next.atMinute !== undefined) periodic.atMinute = Number(next.atMinute);
+    if (next.monthDay !== undefined) periodic.monthDay = Number(next.monthDay);
+    if (next.hour !== undefined) periodic.hour = Number(next.hour);
+    if (next.minute !== undefined) periodic.minute = Number(next.minute);
+    if (next.missedPolicy !== undefined) form.missedPolicy = next.missedPolicy as 'coalesce' | 'skip';
+    if (next.message !== undefined) form.message = String(next.message);
+  },
+});
+
+const dialogActions = computed((): PopupAction[] => [
+  ...(editing
+    ? [
+        {
+          id: 'delete',
+          label: 'Delete',
+          tone: 'danger' as const,
+          align: 'left' as const,
+          disabled: busy.value,
+          class: 'je-delete',
+        },
+      ]
+    : []),
+  { id: 'cancel', label: 'Cancel', close: true, disabled: busy.value, class: 'je-cancel' },
+  {
+    id: 'save',
+    label: busy.value ? 'Saving…' : editing ? 'Save changes' : 'Create job',
+    tone: 'accent',
+    disabled: !canSave.value,
+    title: saveHint.value,
+    class: 'je-save',
+  },
+]);
+
+const dialogDoc = computed<PopupDocument>(() => {
+  const schedule: PopupField[] = [
+    { key: 'schedKind', type: 'pills', class: 'je-sched-seg', options: SCHED_KIND_PILL },
+  ];
+  if (schedKind.value === 'once') {
+    schedule.push({ key: 'runAtLocal', type: 'slot', label: 'Run at' });
+  } else if (schedKind.value === 'advanced') {
+    schedule.push({
+      key: 'advancedKind',
+      type: 'pills',
+      label: 'Type',
+      class: 'je-adv-seg',
+      options: ADVANCED_KIND_PILL,
+    });
+    if (advancedKind.value === 'cron') {
+      schedule.push({
+        key: 'cron',
+        type: 'slot',
+        label: 'Cron expression',
+        labelNote: 'min hour dom month dow · server-local time',
+      });
+    } else {
+      schedule.push({ key: 'offpeak', type: 'slot' });
+    }
+  } else {
+    schedule.push({
+      key: 'pattern',
+      type: 'pills',
+      label: 'Repeat',
+      class: 'je-periodic-seg',
+      options: PERIODIC_PILL,
+    });
+    if (pattern.value === 'minutes') {
+      schedule.push({ key: 'every', type: 'slot', label: 'Run every' });
+    } else if (pattern.value === 'hourly') {
+      schedule.push({
+        key: 'atMinute',
+        type: 'pills',
+        label: 'At minute past the hour',
+        class: 'je-atmin-seg',
+        options: hourlyPill.value,
+      });
+    } else if (pattern.value === 'weekly') {
+      schedule.push({ key: 'days', type: 'slot', label: 'On days' });
+    }
+    if (pattern.value !== 'minutes' && pattern.value !== 'hourly') {
+      schedule.push({ key: 'time', type: 'slot', label: pattern.value === 'monthly' ? 'On day' : 'At time' });
+    }
+    schedule.push({
+      key: 'missedPolicy',
+      type: 'pills',
+      label: 'If a run was missed while the backend was down',
+      options: MISSED_POLICY_PILL,
+    });
+  }
+  return {
+    title: dialogTitle.value,
+    sections: [
+      {
+        fields: [
+          {
+            key: 'name',
+            type: 'input',
+            label: 'Job name',
+            placeholder: 'nightly maintenance',
+            spellcheck: false,
+          },
+        ],
+      },
+      { title: 'Schedule', fields: schedule, extraSlot: 'schedule-extra' },
+      {
+        title: 'Model',
+        note: modelNote.value,
+        fields: [{ key: 'model', type: 'slot', label: 'Model override' }],
+      },
+      { title: 'Session', fields: [{ key: 'session', type: 'slot' }] },
+      {
+        title: 'Message',
+        fields: [
+          {
+            key: 'message',
+            type: 'textarea',
+            rows: 5,
+            placeholder:
+              'What the agent should do each time this job fires — e.g. “run the full check suite and summarize failures.”',
+          },
+        ],
+      },
+    ],
+    actions: dialogActions.value,
+  };
+});
 </script>
 
 <template>
-  <Dialog
+  <PopupDialog
+    v-model:values="dialogValues"
+    :doc="dialogDoc"
     :open="true"
-    :title="dialogTitle"
     wide
-    :close-on-backdrop="!busy"
-    :close-on-escape="!busy"
+    :busy="busy"
+    :error="error"
+    :foot-note="saveHint"
+    :disable-close="busy"
+    @action="(id) => (id === 'save' ? save() : id === 'delete' ? remove() : undefined)"
     @close="onRequestClose"
   >
-    <div v-if="src" class="je-meta">
-      <span class="je-mono je-meta-id" :title="src.id">{{ src.id }}</span>
-      <span>created {{ fmtAbs(src.createdAt) }}</span>
-      <span>by {{ src.createdBy || '—' }}</span>
-      <span v-if="src.enabled">next run {{ fmtRel(src.nextDue) }}</span>
-      <span v-else class="je-paused">paused</span>
-      <span v-if="src.lastRun">
-        last {{ src.lastRun.status }} {{ fmtRel(src.lastRun.finishedAt ?? src.lastRun.queuedAt) }}
-      </span>
-    </div>
-
-    <div class="je-section">
-      <div class="je-field">
-        <label class="je-label" for="je-name">Job name</label>
-        <input id="je-name" v-model="form.name" class="je-input" placeholder="nightly maintenance" />
+    <template #preamble>
+      <div v-if="src" class="je-meta">
+        <span class="je-mono je-meta-id" :title="src.id">{{ src.id }}</span>
+        <span>created {{ fmtAbs(src.createdAt) }}</span>
+        <span>by {{ src.createdBy || '—' }}</span>
+        <span v-if="src.enabled">next run {{ fmtRel(src.nextDue) }}</span>
+        <span v-else class="je-paused">paused</span>
+        <span v-if="src.lastRun">
+          last {{ src.lastRun.status }} {{ fmtRel(src.lastRun.finishedAt ?? src.lastRun.queuedAt) }}
+        </span>
       </div>
-    </div>
+    </template>
 
-    <div class="je-section">
-      <h3 class="je-section-title">Schedule</h3>
-      <PillSelector
-        class="je-sched-seg"
-        :options="SCHED_KIND_PILL"
-        :model-value="schedKind"
-        @update:model-value="(v) => setKind(v as SchedKind)"
-      />
-
-      <div v-if="schedKind === 'periodic'" class="je-ctrl">
-        <span class="je-label">Repeat</span>
-        <PillSelector class="je-periodic-seg" :options="PERIODIC_PILL" v-model="pattern" />
-      </div>
-
-      <div v-if="schedKind === 'once'" class="je-field">
-        <label class="je-label" for="je-runat">Run at</label>
-        <input
-          id="je-runat"
-          v-model="form.runAtLocal"
-          type="datetime-local"
-          class="je-input je-datetime"
-          @click="openPicker"
-        />
-        <span v-if="runAtValid" class="je-hint">{{ fmtAbs(runAtTs) }} · {{ fmtRel(runAtTs) }}</span>
-        <span v-if="runAtPast" class="je-hint je-hint--warn">this time is in the past — it will run immediately</span>
-      </div>
-
-      <template v-else-if="schedKind === 'advanced'">
-        <div class="je-ctrl">
-          <span class="je-label">Type</span>
-          <PillSelector class="je-adv-seg" :options="ADVANCED_KIND_PILL" v-model="advancedKind" />
-        </div>
-        <div v-if="advancedKind === 'cron'" class="je-field">
-          <label class="je-label" for="je-cron">Cron expression <span class="je-label-note">min hour dom month dow · server-local time</span></label>
-          <input
-            id="je-cron"
-            v-model="form.cron"
-            class="je-input je-input--mono"
-            placeholder="0 9 * * *"
-            spellcheck="false"
-          />
-          <span class="je-hint">advanced jobs keep this expression as-is — builder modes rewrite it</span>
-        </div>
-        <div v-else class="je-offpeak-box">
-          <span class="je-offpeak-line">
-            <span class="je-offpeak-title">scheduler-picked · once a day</span>
-            <span class="je-mono">{{ form.model || 'no model picked' }}</span>
-          </span>
-          <span class="je-hint">{{
-            form.model
-              ? `runs at the first moment ${modelButtonText} is outside its peak windows — no fixed time, the scheduler decides`
-              : 'pick the model in the Model section below — peak windows are configured per model'
-          }}</span>
-        </div>
-      </template>
-
-      <template v-else>
-        <div v-if="pattern === 'minutes'" class="je-ctrl">
-          <span class="je-label">Run every</span>
-          <div class="je-ctrl-inline">
-            <PillSelector
-              class="je-every-seg"
-              :options="everyPill"
-              :model-value="periodic.everyMinutes"
-              @update:model-value="periodic.everyMinutes = Number($event)"
-            />
-            <span class="je-unit">min</span>
-          </div>
-        </div>
-
-        <div v-else-if="pattern === 'hourly'" class="je-ctrl">
-          <span class="je-label">At minute past the hour</span>
-          <PillSelector
-            class="je-atmin-seg"
-            :options="hourlyPill"
-            :model-value="periodic.atMinute"
-            @update:model-value="periodic.atMinute = Number($event)"
-          />
-        </div>
-
-        <template v-else>
-          <div v-if="pattern === 'weekly'" class="je-ctrl">
-            <span class="je-label">On days</span>
-            <MultiSelectGroup :options="DOW_OPTIONS" :model-value="periodic.days" @update:model-value="setDays" />
-            <span v-if="periodic.days.length === 0" class="je-hint je-hint--warn">pick at least one day</span>
-          </div>
-
-          <div class="je-ctrl je-ctrl-row">
-            <template v-if="pattern === 'monthly'">
-              <span class="je-label">On day</span>
-              <select v-model.number="periodic.monthDay" class="je-input je-select je-time">
-                <option v-for="d in 31" :key="d" :value="d">{{ d }}</option>
-              </select>
-            </template>
-            <span class="je-label">at</span>
-            <select v-model.number="periodic.hour" class="je-input je-select je-time" title="Hour">
-              <option v-for="h in 24" :key="h" :value="h - 1">{{ pad2(h - 1) }}</option>
-            </select>
-            <span class="je-ctrl-colon">:</span>
-            <select v-model.number="periodic.minute" class="je-input je-select je-time" title="Minute">
-              <option v-for="m in 60" :key="m" :value="m - 1">{{ pad2(m - 1) }}</option>
-            </select>
-          </div>
-          <span v-if="pattern === 'monthly' && periodic.monthDay > 28" class="je-hint">
-            months without day {{ periodic.monthDay }} skip that run
-          </span>
-        </template>
-      </template>
-
+    <template #schedule-extra>
       <div
         v-if="schedKind !== 'once' && currentCron !== ''"
         class="je-cron-preview"
@@ -554,49 +594,111 @@ function fmtRel(ms: number | null): string {
         </template>
         <span v-else class="je-cron-error">{{ cronErrorText }}</span>
       </div>
+    </template>
 
-      <div v-if="schedKind !== 'once'" class="je-field">
-        <span class="je-label">If a run was missed while the backend was down</span>
-        <PillSelector :options="MISSED_POLICY_PILL" v-model="form.missedPolicy" />
+    <template #field-runAtLocal>
+      <input
+        id="je-runat"
+        v-model="form.runAtLocal"
+        type="datetime-local"
+        class="sf-form-input je-datetime"
+        @click="openPicker"
+      />
+      <span v-if="runAtValid" class="je-hint">{{ fmtAbs(runAtTs) }} · {{ fmtRel(runAtTs) }}</span>
+      <span v-if="runAtPast" class="je-hint je-hint--warn">this time is in the past — it will run immediately</span>
+    </template>
+
+    <template #field-every>
+      <div class="je-ctrl-inline">
+        <PillSelector
+          class="je-every-seg"
+          :options="everyPill"
+          :model-value="periodic.everyMinutes"
+          @update:model-value="periodic.everyMinutes = Number($event)"
+        />
+        <span class="je-unit">min</span>
       </div>
-    </div>
+    </template>
 
-    <div class="je-section">
-      <h3 class="je-section-title">Model <span class="je-section-note">{{ modelNote }}</span></h3>
-      <div class="je-field">
-        <span class="je-label">Model override</span>
-        <div class="je-model-row">
-          <Menu
-            :items="modelMenuItems"
-            :open="modelMenuOpen"
-            title="Change Model"
-            @update:open="(v) => (modelMenuOpen = v)"
-            @select="onModelSelect"
-          >
-            <template #trigger="{ toggle }">
-              <button
-                class="je-model-btn"
-                type="button"
-                :disabled="!modelCatalog"
-                :title="modelError || modelNote"
-                @click="toggle"
-              >
-                <span class="je-model-btn-text">{{
-                  modelCatalog ? modelButtonText : modelError ? 'model list unavailable' : 'loading models…'
-                }}</span>
-              </button>
-            </template>
-          </Menu>
-          <button v-if="form.model" class="je-btn je-model-clear" title="Back to session default" @click="clearModel">
-            ✕
-          </button>
-        </div>
-        <span v-if="modelError" class="je-hint je-hint--warn">{{ modelError }}</span>
+    <template #field-days>
+      <MultiSelectGroup :options="DOW_OPTIONS" :model-value="periodic.days" @update:model-value="setDays" />
+      <span v-if="periodic.days.length === 0" class="je-hint je-hint--warn">pick at least one day</span>
+    </template>
+
+    <template #field-time>
+      <div class="je-ctrl-row">
+        <select
+          v-if="pattern === 'monthly'"
+          v-model.number="periodic.monthDay"
+          class="sf-form-input sf-form-select je-time"
+          title="Day of month"
+        >
+          <option v-for="d in 31" :key="d" :value="d">{{ d }}</option>
+        </select>
+        <span v-if="pattern === 'monthly'" class="je-label">at</span>
+        <select v-model.number="periodic.hour" class="sf-form-input sf-form-select je-time" title="Hour">
+          <option v-for="h in 24" :key="h" :value="h - 1">{{ pad2(h - 1) }}</option>
+        </select>
+        <span class="je-ctrl-colon">:</span>
+        <select v-model.number="periodic.minute" class="sf-form-input sf-form-select je-time" title="Minute">
+          <option v-for="m in 60" :key="m" :value="m - 1">{{ pad2(m - 1) }}</option>
+        </select>
       </div>
-    </div>
+      <span v-if="pattern === 'monthly' && periodic.monthDay > 28" class="je-hint">
+        months without day {{ periodic.monthDay }} skip that run
+      </span>
+    </template>
 
-    <div class="je-section">
-      <h3 class="je-section-title">Session</h3>
+    <template #field-cron>
+      <input
+        id="je-cron"
+        v-model="form.cron"
+        class="sf-form-input sf-form-input--mono"
+        placeholder="0 9 * * *"
+        spellcheck="false"
+      />
+      <span class="je-hint">advanced jobs keep this expression as-is — builder modes rewrite it</span>
+    </template>
+
+    <template #field-offpeak>
+      <div class="je-offpeak-box">
+        <span class="je-offpeak-line">
+          <span class="je-offpeak-title">scheduler-picked · once a day</span>
+          <span class="je-mono">{{ form.model || 'no model picked' }}</span>
+        </span>
+        <span class="je-hint">{{
+          form.model
+            ? `runs at the first moment ${modelButtonText} is outside its peak windows — no fixed time, the scheduler decides`
+            : 'pick the model in the Model section below — peak windows are configured per model'
+        }}</span>
+      </div>
+    </template>
+
+    <template #field-model>
+      <div class="je-model-row">
+        <Menu
+          :items="modelMenuItems"
+          :open="modelMenuOpen"
+          title="Change Model"
+          @update:open="(v) => (modelMenuOpen = v)"
+          @select="onModelSelect"
+        >
+          <template #trigger="{ toggle }">
+            <button class="je-model-btn" type="button" :disabled="!modelCatalog" :title="modelError || modelNote" @click="toggle">
+              <span class="je-model-btn-text">{{
+                modelCatalog ? modelButtonText : modelError ? 'model list unavailable' : 'loading models…'
+              }}</span>
+            </button>
+          </template>
+        </Menu>
+        <button v-if="form.model" class="je-btn je-model-clear" title="Back to session default" @click="clearModel">
+          ✕
+        </button>
+      </div>
+      <span v-if="modelError" class="je-hint je-hint--warn">{{ modelError }}</span>
+    </template>
+
+    <template #field-session>
       <div class="je-cards">
         <button
           v-for="opt in TARGET_OPTIONS"
@@ -611,63 +713,33 @@ function fmtRel(ms: number | null): string {
         </button>
       </div>
       <div v-if="form.targetMode === 'file'" class="je-field">
-        <label class="je-label" for="je-session">Session</label>
         <input
           v-if="store.sessions.length > 8"
           v-model="sessionFilter"
-          class="je-input je-session-filter"
+          class="sf-form-input je-session-filter"
           placeholder="filter sessions…"
         />
-        <select id="je-session" v-model="form.sessionFile" class="je-input je-select">
+        <select id="je-session" v-model="form.sessionFile" class="sf-form-input sf-form-select">
           <option v-if="filteredSessions.length === 0" :value="form.sessionFile">no match for “{{ sessionFilter }}”</option>
           <option v-for="s in filteredSessions" :key="s.file" :value="s.file">{{ s.label }}</option>
         </select>
       </div>
       <div v-else class="je-field">
-        <label class="je-label" for="je-cwd">Working directory</label>
-        <input id="je-cwd" v-model="form.cwd" class="je-input je-input--mono" placeholder="/workspace/sf" />
-      </div>
-    </div>
-
-    <div class="je-section">
-      <h3 class="je-section-title">Message</h3>
-      <div class="je-field">
-        <textarea
-          v-model="form.message"
-          class="je-input je-textarea"
-          rows="5"
-          placeholder="What the agent should do each time this job fires — e.g. “run the full check suite and summarize failures.”"
+        <input
+          id="je-cwd"
+          v-model="form.cwd"
+          class="sf-form-input sf-form-input--mono"
+          placeholder="/workspace/sf"
+          spellcheck="false"
         />
       </div>
-    </div>
-
-    <div class="je-form-msg">
-      <span v-if="error" class="je-error">{{ error }}</span>
-      <span v-else-if="saveHint" class="je-form-hint">{{ saveHint }}</span>
-    </div>
-
-    <template #actions>
-      <button v-if="editing" class="sf-dialog-btn sf-dialog-btn--danger je-delete" type="button" :disabled="busy" @click="remove">
-        Delete
-      </button>
-      <span class="je-actions-space" />
-      <button class="sf-dialog-btn je-cancel" type="button" :disabled="busy" @click="onRequestClose">
-        Cancel
-      </button>
-      <button
-        class="sf-dialog-btn sf-dialog-btn--accent je-save"
-        type="button"
-        :disabled="!canSave"
-        :title="saveHint"
-        @click="save"
-      >
-        {{ busy ? 'Saving…' : editing ? 'Save changes' : 'Create job' }}
-      </button>
     </template>
-  </Dialog>
+
+  </PopupDialog>
 </template>
 
 <style scoped>
+
 .je-meta {
   display: flex;
   align-items: baseline;
@@ -686,87 +758,15 @@ function fmtRel(ms: number | null): string {
   color: var(--sf-status-warn);
 }
 
-.je-section {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  padding: 10px 0;
-  border-top: 1px solid var(--sf-border);
-}
-.je-section:first-of-type {
-  border-top: none;
-  padding-top: 2px;
-}
-.je-section-title {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--sf-text-muted);
-}
-.je-section-note {
-  font-weight: 400;
-  text-transform: none;
-  letter-spacing: normal;
-  opacity: 0.8;
-}
-
 .je-field {
   display: flex;
   flex-direction: column;
   gap: 5px;
   min-width: 0;
 }
-.je-label {
-  font-size: 12px;
-  color: var(--sf-text-muted);
-}
 .je-label-note {
   font-size: 11px;
   opacity: 0.75;
-}
-
-.je-input {
-  width: 100%;
-  height: 36px;
-  box-sizing: border-box;
-  padding: 7px 10px;
-  border-radius: var(--sf-radius-sm);
-  border: 1px solid var(--sf-border);
-  background: rgba(0, 0, 0, 0.15);
-  color: var(--sf-text);
-  font-size: 14px;
-  font-family: var(--sf-font);
-  outline: none;
-}
-.je-input:focus-visible {
-  outline: none;
-  border-color: var(--sf-accent);
-}
-.je-input--mono {
-  font-family: var(--sf-mono, monospace);
-}
-.je-textarea {
-  resize: vertical;
-  height: auto;
-  min-height: 90px;
-  line-height: 1.45;
-}
-.je-select {
-  appearance: none;
-  -webkit-appearance: none;
-  padding-right: 32px;
-  cursor: pointer;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='%23858585' stroke-width='1.5' fill='none' stroke-linecap='round'/></svg>");
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-  background-size: 10px 6px;
-}
-.je-select option,
-.je-select optgroup {
-  background-color: #252526;
-  color: #cccccc;
 }
 .je-time {
   width: auto;
@@ -784,16 +784,6 @@ function fmtRel(ms: number | null): string {
   font-size: 13px;
   cursor: pointer;
 }
-@media (hover: hover) {
-  .je-btn:hover {
-    box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);
-    color: var(--sf-text-bright);
-  }
-}
-.je-hint {
-  font-size: 12px;
-  opacity: 0.65;
-}
 .je-datetime {
   -webkit-appearance: none;
   appearance: none;
@@ -809,21 +799,20 @@ function fmtRel(ms: number | null): string {
   display: none;
   -webkit-appearance: none;
 }
-@media (hover: hover) {
-  .je-datetime:hover {
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none'><rect x='3' y='5' width='18' height='16' rx='2' stroke='%23e0e0e0' stroke-width='2'/><path d='M8 3v4M16 3v4M3 10h18' stroke='%23e0e0e0' stroke-width='2' stroke-linecap='round'/></svg>");
-  }
+
+.je-label {
+  font-size: 12px;
+  color: var(--sf-text-muted);
 }
+
+.je-hint {
+  font-size: 12px;
+  opacity: 0.65;
+}
+
 .je-hint--warn {
   color: var(--sf-status-warn);
   opacity: 1;
-}
-
-.je-ctrl {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  min-width: 0;
 }
 .je-ctrl-row {
   flex-direction: row;
@@ -952,11 +941,6 @@ function fmtRel(ms: number | null): string {
   cursor: pointer;
   font-family: var(--sf-font);
 }
-@media (hover: hover) {
-  .je-card:hover {
-    background: var(--sf-hover-overlay);
-  }
-}
 .je-card--on {
   background: var(--sf-accent-soft, rgba(96, 165, 250, 0.12));
   border-color: var(--sf-accent);
@@ -995,11 +979,6 @@ function fmtRel(ms: number | null): string {
   font-family: var(--sf-font);
   cursor: pointer;
 }
-@media (hover: hover) {
-  .je-model-btn:hover:not(:disabled) {
-    border-color: var(--sf-accent);
-  }
-}
 .je-model-btn:disabled {
   opacity: 0.55;
   cursor: default;
@@ -1008,27 +987,5 @@ function fmtRel(ms: number | null): string {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.je-form-msg {
-  min-height: 18px;
-  font-size: 12px;
-}
-.je-error {
-  color: var(--sf-danger);
-  word-break: break-word;
-}
-.je-form-hint {
-  opacity: 0.55;
-}
-
-.je-actions-space {
-  flex: 1;
-}
-.je-delete {
-  margin-right: auto;
-}
-.je-mono {
-  font-family: var(--sf-mono, monospace);
 }
 </style>

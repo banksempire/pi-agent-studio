@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import Dialog from '@sf/components/Dialog.vue';
+import PopupDialog from '@sf/components/PopupDialog.vue';
 import SvgIcon from '@sf/components/SvgIcon.vue';
 import Table from '@sf/components/Table.vue';
+import type { PopupDocument } from '@sf/types/popup';
 import type { TableColumn } from '@sf/types/table';
 import { computed, onMounted, ref } from 'vue';
+import { requestConfirm } from '../confirm';
 import { fmtRelative, fmtTime, scheduleText, targetText } from '../jobText';
 import type { JobInfo } from '../store/chat';
 import { useChatStore } from '../store/chat';
@@ -104,6 +106,7 @@ async function toggle(row: Record<string, unknown>) {
   const job = row.job as JobInfo;
   if (!job.enabled && runsOnActivation(job)) {
     confirmJob.value = job;
+    confirmOpen.value = true;
     return;
   }
   await setEnabled(job, !job.enabled);
@@ -112,8 +115,33 @@ async function toggle(row: Record<string, unknown>) {
 async function confirmActivate() {
   const job = confirmJob.value;
   confirmJob.value = null;
+  confirmOpen.value = false;
   if (job) await setEnabled(job, true);
 }
+
+const confirmOpen = ref(false);
+const confirmDoc = computed(
+  (): PopupDocument => ({
+    title: 'Run immediately?',
+    sections: [
+      {
+        fields: [
+          {
+            key: 'text',
+            type: 'info',
+            text: `${confirmJob.value?.name ?? ''} was scheduled for ${
+              confirmJob.value ? fmtTime(confirmJob.value.runAt) : ''
+            } (${confirmJob.value ? fmtRelative(confirmJob.value.runAt) : ''}) — that time has passed. Re-activating it will run it immediately.`,
+          },
+        ],
+      },
+    ],
+    actions: [
+      { id: 'cancel', label: 'Cancel', close: true, class: 'jobs-confirm-cancel' },
+      { id: 'run', label: 'Run now', tone: 'accent', class: 'jobs-confirm-run' },
+    ],
+  }),
+);
 
 async function runNow(row: Record<string, unknown>) {
   const job = row.job as JobInfo;
@@ -127,7 +155,15 @@ async function runNow(row: Record<string, unknown>) {
 
 async function remove(row: Record<string, unknown>) {
   const job = row.job as JobInfo;
-  if (!window.confirm(`Delete job '${job.name}' and its run history?`)) return;
+  if (
+    !(await requestConfirm({
+      title: 'Delete job?',
+      text: `This deletes '${job.name}' and its run history.`,
+      confirmLabel: 'Delete',
+    }))
+  ) {
+    return;
+  }
   actionError.value = '';
   try {
     await store.deleteJob(job.id);
@@ -221,19 +257,11 @@ onMounted(() => {
 
     <JobDialog v-if="store.jobEditor.open" :job="editorJob" @close="closeDialog" @saved="onSaved" />
 
-    <Dialog :open="confirmJob !== null" title="Run immediately?" @close="confirmJob = null">
-      <p class="jobs-confirm-text">
-        <strong>{{ confirmJob?.name }}</strong> was scheduled for
-        {{ confirmJob ? fmtTime(confirmJob.runAt) : '' }} ({{ confirmJob ? fmtRelative(confirmJob.runAt) : '' }})
-        — that time has passed. Re-activating it will run it immediately.
-      </p>
-      <template #actions>
-        <button class="sf-dialog-btn jobs-confirm-cancel" type="button" @click="confirmJob = null">Cancel</button>
-        <button class="sf-dialog-btn sf-dialog-btn--accent jobs-confirm-run" type="button" @click="confirmActivate">
-          Run now
-        </button>
-      </template>
-    </Dialog>
+    <PopupDialog
+      v-model:open="confirmOpen"
+      :doc="confirmDoc"
+      @action="(id) => (id === 'run' ? confirmActivate() : undefined)"
+    />
   </div>
 </template>
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import Dialog from '@sf/components/Dialog.vue';
-import MultiSelectGroup from '@sf/components/MultiSelectGroup.vue';
+import PopupDialog from '@sf/components/PopupDialog.vue';
+import type { PopupAction, PopupDocument, PopupField, PopupValues } from '@sf/types/popup';
 import { computed, ref } from 'vue';
 import type { PeakHourEntry } from '../peakHours';
 import {
@@ -10,7 +10,6 @@ import {
   DOW_OPTIONS,
   fmtHm,
   OFFSET_OPTIONS,
-  offsetLabel,
   parseHm,
   splitModelKey,
   toLocalMinutes,
@@ -120,6 +119,106 @@ const problems = computed<string[]>(() => {
 
 const canSave = computed(() => problems.value.length === 0 && !busy.value);
 
+const dialogActions = computed((): PopupAction[] => [
+  { id: 'cancel', label: 'Cancel', close: true, disabled: busy.value, class: 'aph-cancel' },
+  {
+    id: 'save',
+    label: busy.value ? 'Saving…' : 'Save',
+    tone: 'accent',
+    disabled: !canSave.value,
+    class: 'aph-save',
+  },
+]);
+
+const dialogDoc = computed<PopupDocument>(() => {
+  const modelField: PopupField = selectable
+    ? {
+        key: 'model',
+        type: 'select',
+        label: 'Model',
+        id: 'aph-model',
+        options: groupedChoices.value.map((g) => ({
+          group: g.provider,
+          options: g.options.map((o) => ({ value: o.key, label: o.label })),
+        })),
+      }
+    : { key: 'model', type: 'slot', label: 'Model' };
+  return {
+    title: dialogTitle.value,
+    sections: [
+      { title: 'Model', fields: [modelField] },
+      {
+        title: 'Peak hour',
+        fields: [
+          { key: 'start', type: 'slot', label: 'Peak start', half: true },
+          { key: 'end', type: 'slot', label: 'Peak end', half: true },
+          { key: 'live', type: 'info', text: liveHint.value, class: 'aph-live' },
+        ],
+      },
+      {
+        title: 'Weekdays',
+        fields: [{ key: 'weekdays', type: 'multi', options: DOW_OPTIONS, class: 'aph-days' }],
+      },
+      {
+        title: 'Timezone',
+        fields: [
+          { key: 'utcOffset', type: 'select', label: 'UTC offset', id: 'aph-tz', options: OFFSET_OPTIONS },
+        ],
+      },
+      {
+        title: 'Note',
+        fields: [
+          {
+            key: 'note',
+            type: 'input',
+            label: 'Note',
+            id: 'aph-note',
+            placeholder: 'rate-limit window',
+            spellcheck: false,
+          },
+          ...(problems.value.length
+            ? [
+                {
+                  key: 'problems',
+                  type: 'info' as const,
+                  text: `needs ${problems.value.join(', ')}`,
+                  class: 'aph-live--warn',
+                  hintTone: 'warn' as const,
+                },
+              ]
+            : []),
+        ],
+      },
+    ],
+    actions: dialogActions.value,
+  };
+});
+
+const dialogValues = computed({
+  get: (): PopupValues => ({
+    model: chosenKey.value,
+    start: startField.value,
+    end: endField.value,
+    weekdays: weekdays.value,
+    utcOffset: utcOffset.value,
+    note: note.value,
+  }),
+  set: (next) => {
+    if (next.model !== undefined) chosenKey.value = String(next.model);
+    if (next.start !== undefined && next.start !== startField.value) onStartTime(String(next.start));
+    if (next.end !== undefined && next.end !== endField.value) onEndTime(String(next.end));
+    if (Array.isArray(next.weekdays)) {
+      const days = next.weekdays.map(Number).sort((a, b) => a - b);
+      if (days.join(',') !== weekdays.value.join(',')) weekdays.value = days;
+    }
+    if (next.utcOffset !== undefined && Number(next.utcOffset) !== utcOffset.value) {
+      utcOffset.value = Number(next.utcOffset);
+      rederiveFieldsFromUtc();
+    }
+    if (next.note !== undefined) note.value = String(next.note);
+  },
+});
+
 function onRequestClose() {
   if (!busy.value) emit('close');
 }
@@ -152,164 +251,53 @@ async function save() {
 </script>
 
 <template>
-  <Dialog
+  <PopupDialog
+    v-model:values="dialogValues"
+    :doc="dialogDoc"
     :open="true"
-    :title="dialogTitle"
-    :close-on-backdrop="!busy"
-    :close-on-escape="!busy"
+    wide
+    :busy="busy"
+    :error="formError"
+    :disable-close="busy"
+    @action="(id) => (id === 'save' ? save() : undefined)"
     @close="onRequestClose"
   >
-    <div class="aph-field">
-      <label v-if="selectable" class="aph-label" for="aph-model">Model</label>
-      <span v-else class="aph-label">Model</span>
-      <select v-if="selectable" id="aph-model" v-model="chosenKey" class="aph-input">
-        <optgroup v-for="g in groupedChoices" :key="g.provider" :label="g.provider">
-          <option v-for="o in g.options" :key="o.key" :value="o.key">{{ o.label }}</option>
-        </optgroup>
-      </select>
-      <template v-else>
-        <div class="aph-model-bound" :title="boundKey">{{ boundKey }}</div>
-        <span v-if="!editing" class="aph-field-note">bound to the model selected in the catalog</span>
-      </template>
-    </div>
-    <div class="aph-times">
-      <div class="aph-field">
-        <label class="aph-label" for="aph-start">Peak start</label>
-        <TimeField
-          id="aph-start"
-          :model-value="startField"
-          @update:model-value="(v) => onStartTime(v)"
-        />
-      </div>
-      <div class="aph-field">
-        <label class="aph-label" for="aph-end">Peak end</label>
-        <TimeField
-          id="aph-end"
-          :model-value="endField"
-          @update:model-value="(v) => onEndTime(v)"
-        />
-      </div>
-    </div>
-    <div class="aph-field">
-      <span class="aph-label">Days</span>
-      <MultiSelectGroup
-        class="aph-days"
-        :options="DOW_OPTIONS"
-        :model-value="weekdays"
-        @update:model-value="(v) => (weekdays = v as number[])"
-      />
-    </div>
-    <div class="aph-field">
-      <label class="aph-label" for="aph-tz">Timezone</label>
-      <select
-        id="aph-tz"
-        v-model.number="utcOffset"
-        class="aph-input"
-        @change="rederiveFieldsFromUtc"
-      >
-        <option v-for="o in OFFSET_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
-      </select>
-    </div>
-    <div class="aph-live" :title="liveHint">{{ liveHint }}</div>
-    <div class="aph-field">
-      <label class="aph-label" for="aph-note">Note</label>
-      <input id="aph-note" v-model="note" class="aph-input" placeholder="rate-limit window">
-    </div>
-    <div v-if="formError" class="aph-error">{{ formError }}</div>
-    <div v-else-if="problems.length" class="aph-live aph-live--warn">
-      needs {{ problems.join(', ') }}
-    </div>
-    <template #actions>
-      <button class="sf-dialog-btn aph-cancel" type="button" :disabled="busy" @click="onRequestClose">
-        Cancel
-      </button>
-      <button
-        class="sf-dialog-btn sf-dialog-btn--accent aph-save"
-        type="button"
-        :disabled="!canSave"
-        @click="save"
-      >
-        {{ busy ? 'Saving…' : 'Save' }}
-      </button>
+    <template #field-start>
+      <TimeField id="aph-start" :model-value="startField" @update:model-value="(v) => onStartTime(v)" />
     </template>
-  </Dialog>
+    <template #field-end>
+      <TimeField id="aph-end" :model-value="endField" @update:model-value="(v) => onEndTime(v)" />
+    </template>
+    <template v-if="!selectable" #field-model>
+      <div class="aph-model-bound" :title="boundKey">{{ boundKey }}</div>
+      <span v-if="!editing" class="aph-field-note">bound to the model selected in the catalog</span>
+    </template>
+  </PopupDialog>
 </template>
 
 <style scoped>
-.aph-field {
+.aph-model-bound {
+  height: 36px;
   display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
+  align-items: center;
+  padding: 7px 10px;
+  border: 1px solid var(--sf-border);
+  border-radius: var(--sf-radius-sm);
+  background: rgba(0, 0, 0, 0.15);
+  color: var(--sf-text);
+  font-family: var(--sf-mono, monospace);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-
-.aph-label {
-  font-size: 12px;
-  color: var(--sf-text-muted);
-}
-
 .aph-field-note {
   font-size: 12px;
   color: var(--sf-text-muted);
 }
-
-.aph-model-bound {
-  min-height: 18px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--sf-text-bright);
-}
-
-.aph-input {
-  width: 100%;
-  height: 36px;
-  box-sizing: border-box;
-  background: rgba(0, 0, 0, 0.15);
-  border: 1px solid var(--sf-border);
-  border-radius: 8px;
-  color: var(--sf-text);
-  font-family: var(--sf-font);
-  font-size: 14px;
-  padding: 5px 7px;
-  outline: none;
-}
-
-#aph-note {
-  font-size: 16px;
-}
-
-.aph-input:focus {
-  border-color: var(--sf-accent);
-}
-
-.aph-times {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
 .aph-live {
+  font-family: var(--sf-mono, monospace);
   font-size: 12px;
   color: var(--sf-text-muted);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.aph-live--warn {
-  color: var(--sf-danger);
-}
-
-.aph-error {
-  padding: 5px 7px;
-  border-radius: var(--sf-radius-sm);
-  font-size: 12px;
-  background: color-mix(in srgb, var(--sf-danger) 14%, transparent);
-  color: var(--sf-danger);
-  word-break: break-word;
 }
 </style>

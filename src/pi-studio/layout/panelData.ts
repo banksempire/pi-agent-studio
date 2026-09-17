@@ -9,6 +9,7 @@ import type {
   TreeNode,
 } from '@sf/types/panel';
 import { computed, reactive, ref, watch } from 'vue';
+import { requestConfirm } from '../confirm';
 import { cronToPattern, describeCron } from '../cronInfo';
 import { fmtTime as fmtJobTime, fmtRelative } from '../jobText';
 import type { ModelCatalogView, ModelInfo } from '../modelInfo';
@@ -748,7 +749,15 @@ async function togglePeakEntry(id: string) {
 async function removePeakEntry(id: string) {
   const entry = store.peakHours.find((e) => e.id === id);
   if (!entry) return;
-  if (!window.confirm(`Delete peak hours for ${entry.key}?`)) return;
+  if (
+    !(await requestConfirm({
+      title: 'Delete peak hours?',
+      text: `This deletes the peak-hours window for ${entry.key}.`,
+      confirmLabel: 'Delete',
+    }))
+  ) {
+    return;
+  }
   peakActionError.value = '';
   try {
     await deletePeakHours(id);

@@ -135,14 +135,13 @@ const dialogDoc = computed<PopupDocument>(() => {
     ? {
         key: 'model',
         type: 'select',
-        label: 'Model',
         id: 'aph-model',
         options: groupedChoices.value.map((g) => ({
           group: g.provider,
           options: g.options.map((o) => ({ value: o.key, label: o.label })),
         })),
       }
-    : { key: 'model', type: 'slot', label: 'Model' };
+    : { key: 'model', type: 'slot' };
   return {
     title: dialogTitle.value,
     sections: [
@@ -171,7 +170,6 @@ const dialogDoc = computed<PopupDocument>(() => {
           {
             key: 'note',
             type: 'input',
-            label: 'Note',
             id: 'aph-note',
             placeholder: 'rate-limit window',
             spellcheck: false,

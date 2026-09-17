@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import Dialog from '@sf/components/Dialog.vue';
+import PopupDialog from '@sf/components/PopupDialog.vue';
 import Framework, { type FrameworkAction } from '@sf/Framework.vue';
 import { registerUtilityMenu } from '@sf/registry';
-import { nextTick, ref, watch } from 'vue';
+import type { PopupDocument, PopupValues } from '@sf/types/popup';
+import { computed, nextTick, ref, watch } from 'vue';
 import PeakHoursDialog from '../components/PeakHoursDialog.vue';
+import { confirmDocument, confirmState, settleConfirm } from '../confirm';
 import { layout } from '../layout/loadLayout';
 import { handlePanelAction, usePanelDialogs } from '../layout/panelData';
 import { refreshModelCatalog } from '../modelInfo';
@@ -50,14 +52,46 @@ function onAction(e: FrameworkAction) {
   }
 }
 
-const renameInput = ref<HTMLInputElement | null>(null);
-
 watch(
   () => dialogs.renameDialog.open,
   (open) => {
-    if (open) void nextTick(() => renameInput.value?.focus());
+    if (open) void nextTick(() => document.getElementById('session-name-input')?.focus());
   },
 );
+
+const renameValues = computed({
+  get: (): PopupValues => ({ name: dialogs.renameDialog.value }),
+  set: (next) => {
+    if (next.name !== undefined) dialogs.renameDialog.value = String(next.name);
+  },
+});
+
+const renameDoc = computed(
+  (): PopupDocument => ({
+    title: 'Rename',
+    sections: [
+      {
+        fields: [
+          {
+            key: 'name',
+            type: 'input',
+            label: 'Session name',
+            placeholder: 'Session name',
+            id: 'session-name-input',
+            inputClass: 'sf-dialog-input',
+            spellcheck: false,
+          },
+        ],
+      },
+    ],
+    actions: [
+      { id: 'cancel', label: 'Cancel', close: true },
+      { id: 'save', label: 'Save', tone: 'danger' },
+    ],
+  }),
+);
+
+const confirmDoc = computed(() => confirmDocument());
 
 const peakEntry = ref<PeakHourEntry | null>(null);
 watch(
@@ -80,27 +114,18 @@ watch(
     @workspace-ready="store.bindWorkspace"
   >
     <template #overlay>
-      <Dialog
-    :open="dialogs.renameDialog.open"
-    title="Rename"
-    @close="dialogs.renameDialog.open = false"
-  >
-    <input
-      ref="renameInput"
-      v-model="dialogs.renameDialog.value"
-      class="sf-dialog-input"
-      placeholder="Session name"
-      @keydown.enter.prevent="dialogs.confirmRename()"
-    />
-    <template #actions>
-      <button class="sf-dialog-btn" type="button" @click="dialogs.renameDialog.open = false">
-        Cancel
-      </button>
-      <button class="sf-dialog-btn sf-dialog-btn--danger" type="button" @click="dialogs.confirmRename()">
-        Save
-      </button>
-    </template>
-  </Dialog>
+      <PopupDialog
+        v-model:open="dialogs.renameDialog.open"
+        v-model:values="renameValues"
+        :doc="renameDoc"
+        @action="(id) => (id === 'save' ? dialogs.confirmRename() : undefined)"
+      />
+
+      <PopupDialog
+        v-model:open="confirmState.open"
+        :doc="confirmDoc"
+        @action="(id) => settleConfirm(id === 'confirm')"
+      />
 
       <PeakHoursDialog
         v-if="dialogs.peakDialog.open"

@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import FormDialog from '@sf/components/FormDialog.vue';
 import Menu from '@sf/components/Menu.vue';
 import MultiSelectGroup from '@sf/components/MultiSelectGroup.vue';
 import PillSelector from '@sf/components/PillSelector.vue';
-import type { FormField, FormSchema, FormValues } from '@sf/types/form';
+import PopupDialog from '@sf/components/PopupDialog.vue';
 import type { MenuNodeDef } from '@sf/types/layout';
+import type { PopupAction, PopupDocument, PopupField, PopupValues } from '@sf/types/popup';
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import type { PeriodicPatternState } from '../cronInfo';
 import { checkCron, cronToPattern, describeCron, nextCronRuns, patternToCron } from '../cronInfo';
@@ -393,7 +393,7 @@ function fmtRel(ms: number | null): string {
   return diff >= 0 ? `in ${human}` : `${human} ago`;
 }
 const dialogValues = computed({
-  get: (): FormValues => ({
+  get: (): PopupValues => ({
     name: form.name,
     schedKind: schedKind.value,
     pattern: pattern.value,
@@ -425,8 +425,32 @@ const dialogValues = computed({
   },
 });
 
-const dialogSchema = computed<FormSchema>(() => {
-  const schedule: FormField[] = [
+const dialogActions = computed((): PopupAction[] => [
+  ...(editing
+    ? [
+        {
+          id: 'delete',
+          label: 'Delete',
+          tone: 'danger' as const,
+          align: 'left' as const,
+          disabled: busy.value,
+          class: 'je-delete',
+        },
+      ]
+    : []),
+  { id: 'cancel', label: 'Cancel', close: true, disabled: busy.value, class: 'je-cancel' },
+  {
+    id: 'save',
+    label: busy.value ? 'Saving…' : editing ? 'Save changes' : 'Create job',
+    tone: 'accent',
+    disabled: !canSave.value,
+    title: saveHint.value,
+    class: 'je-save',
+  },
+]);
+
+const dialogDoc = computed<PopupDocument>(() => {
+  const schedule: PopupField[] = [
     { key: 'schedKind', type: 'pills', class: 'je-sched-seg', options: SCHED_KIND_PILL },
   ];
   if (schedKind.value === 'once') {
@@ -481,12 +505,13 @@ const dialogSchema = computed<FormSchema>(() => {
     });
   }
   return {
+    title: dialogTitle.value,
     sections: [
       {
         fields: [
           {
             key: 'name',
-            type: 'text',
+            type: 'input',
             label: 'Job name',
             placeholder: 'nightly maintenance',
             spellcheck: false,
@@ -513,21 +538,22 @@ const dialogSchema = computed<FormSchema>(() => {
         ],
       },
     ],
+    actions: dialogActions.value,
   };
 });
 </script>
 
 <template>
-  <FormDialog
+  <PopupDialog
     v-model:values="dialogValues"
-    :schema="dialogSchema"
+    :doc="dialogDoc"
     :open="true"
-    :title="dialogTitle"
     wide
     :busy="busy"
     :error="error"
     :foot-note="saveHint"
     :disable-close="busy"
+    @action="(id) => (id === 'save' ? save() : id === 'delete' ? remove() : undefined)"
     @close="onRequestClose"
   >
     <template #preamble>
@@ -709,23 +735,7 @@ const dialogSchema = computed<FormSchema>(() => {
       </div>
     </template>
 
-    <template #actions>
-      <button v-if="editing" class="sf-dialog-btn sf-dialog-btn--danger je-delete" type="button" :disabled="busy" @click="remove">
-        Delete
-      </button>
-      <span class="je-actions-space" />
-      <button class="sf-dialog-btn je-cancel" type="button" :disabled="busy" @click="onRequestClose">Cancel</button>
-      <button
-        class="sf-dialog-btn sf-dialog-btn--accent je-save"
-        type="button"
-        :disabled="!canSave"
-        :title="saveHint"
-        @click="save"
-      >
-        {{ busy ? 'Saving…' : editing ? 'Save changes' : 'Create job' }}
-      </button>
-    </template>
-  </FormDialog>
+  </PopupDialog>
 </template>
 
 <style scoped>

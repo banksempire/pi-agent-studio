@@ -1213,6 +1213,7 @@ function writeSessionFile(name) {
       .first()
       .locator('.sf-tbl-btn[title="Delete job"]')
       .click();
+    await page.locator('.sf-dialog-foot button', { hasText: 'Delete' }).click();
     await delay(400);
     report(
       'delete asks for confirmation and calls the delete endpoint',

@@ -3,6 +3,7 @@ import SvgIcon from '@sf/components/SvgIcon.vue';
 import Table from '@sf/components/Table.vue';
 import type { TableColumn } from '@sf/types/table';
 import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { requestConfirm } from '../confirm';
 import type { ModelCatalogView } from '../modelInfo';
 import { loadModelCatalog } from '../modelInfo';
 import {
@@ -133,7 +134,15 @@ async function toggle(row: Record<string, unknown>) {
 
 async function remove(row: Record<string, unknown>) {
   const e = row.entry as PeakHourEntry;
-  if (!window.confirm(`Delete peak hours for ${e.key}?`)) return;
+  if (
+    !(await requestConfirm({
+      title: 'Delete peak hours?',
+      text: `This deletes the peak-hours window for ${e.key}.`,
+      confirmLabel: 'Delete',
+    }))
+  ) {
+    return;
+  }
   actionError.value = '';
   try {
     await deletePeakHours(e.id);

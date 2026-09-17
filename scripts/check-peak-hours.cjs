@@ -1268,6 +1268,7 @@ async function unitChecks({ report }) {
       .locator('.pht .sf-tbl-row', { hasText: 'stub/stub-pro' })
       .locator('button[title="Delete window"]')
       .click();
+    await page.locator('.sf-dialog-foot button', { hasText: 'Delete' }).click();
     await delay(800);
     const rowsAfterDelete = await page.locator('.pht .sf-tbl-row').count();
     r = await jfetch('/api/peak-hours');
@@ -1813,7 +1814,9 @@ async function unitChecks({ report }) {
     const mFit = await mpage.evaluate(() => {
       const card = document.querySelector('.sf-dialog').getBoundingClientRect();
       const body = document.querySelector('.sf-dialog-body');
-      const inputs = [...document.querySelectorAll('.aph-times input')].map((i) => {
+      const inputs = [
+        ...document.querySelectorAll('[data-field="start"] input, [data-field="end"] input'),
+      ].map((i) => {
         const r = i.getBoundingClientRect();
         return {
           top: Math.round(r.top),
@@ -1828,7 +1831,7 @@ async function unitChecks({ report }) {
         const el = document.querySelector(sel);
         return el ? Math.round(el.getBoundingClientRect().height * 10) / 10 : null;
       };
-      const appearance = getComputedStyle(document.querySelector('.aph-times input')).appearance;
+      const appearance = getComputedStyle(document.querySelector('[data-field="start"] input')).appearance;
       return {
         top: Math.round(card.top * 10) / 10,
         bottom: Math.round(card.bottom * 10) / 10,

@@ -508,11 +508,11 @@ const dialogDoc = computed<PopupDocument>(() => {
     title: dialogTitle.value,
     sections: [
       {
+        title: 'Job name',
         fields: [
           {
             key: 'name',
             type: 'input',
-            label: 'Job name',
             placeholder: 'nightly maintenance',
             spellcheck: false,
           },

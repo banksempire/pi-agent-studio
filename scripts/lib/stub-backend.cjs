@@ -64,7 +64,7 @@ export async function createClient() {
       if (process.env.STUB_PROMPT_LOG) {
         fs.appendFileSync(
           process.env.STUB_PROMPT_LOG,
-          JSON.stringify({ agentId: evt && evt.agentId, message: evt && evt.message, interrupt: evt && evt.interrupt, images: evt && evt.images ? evt.images.length : 0 }) + '\\n',
+          JSON.stringify({ agentId: evt && evt.agentId, message: evt && evt.message, interrupt: evt && evt.interrupt, images: evt && evt.images ? evt.images.length : 0, ts: Date.now() }) + '\\n',
         );
       }
       const ts = Date.now();
@@ -79,7 +79,13 @@ export async function createClient() {
       }
       return { ok: true };
     },
-    async slash({ agentId, command }) {
+    async slash({ agentId, command, args }) {
+      if (process.env.STUB_SLASH_LOG) {
+        fs.appendFileSync(
+          process.env.STUB_SLASH_LOG,
+          JSON.stringify({ agentId, command, args: args ?? '', ts: Date.now() }) + '\\n',
+        );
+      }
       if (command === 'delete') {
         try {
           fs.rmSync(agentId, { force: true });
@@ -89,7 +95,13 @@ export async function createClient() {
       return { ok: true, notice: '' };
     },
     async getModels() {
-      return { ok: true, models: [], default: null, current: null, currentThinkingLevel: null };
+      let models = [];
+      try {
+        const raw = process.env.STUB_MODELS_JSON;
+        if (raw) models = JSON.parse(raw);
+      } catch {}
+      if (!Array.isArray(models)) models = [];
+      return { ok: true, models, default: models[0] ?? null, current: models[0] ?? null, currentThinkingLevel: null };
     },
     async setModel() {
       return { ok: true, notice: '' };

@@ -193,7 +193,7 @@ function spawnSdkBackend(port) {
 
 function uiQueueRows() {
   const db = new DatabaseSync(DB_PATH);
-  const rows = db.prepare('SELECT session_file, message FROM ui_queue ORDER BY id').all();
+  const rows = db.prepare('SELECT session_file, message, kind FROM ui_queue ORDER BY id').all();
   db.close();
   return rows;
 }
@@ -417,6 +417,71 @@ function uiQueueRows() {
       JSON.stringify(Object.keys(all.queues)),
     );
 
+    await setStatus('running');
+    await waitStatus('running');
+    console.log('phase 1b — queued compact keeps FIFO order and is refused mid-run');
+    await enqueue('before compact');
+    const promptsBeforeCompact = readPrompts().filter((p) => p.agentId === F).length;
+    const compactResp = await postJson(backendPort, '/api/queue', { file: F, kind: 'compact' });
+    report(
+      'gateway accepts a queued compact with no message',
+      compactResp.status === 200 && compactResp.body.items.some((m) => m.kind === 'compact' && m.text === ''),
+      JSON.stringify(compactResp.body),
+    );
+    const badKind = await postJson(backendPort, '/api/queue', { file: F, kind: 'explode', message: 'x' });
+    report('gateway rejects unknown queue kinds', badKind.status === 400);
+    const compactWithText = await postJson(backendPort, '/api/queue', {
+      file: F,
+      kind: 'compact',
+      message: 'sneaky',
+    });
+    report('gateway rejects a compact carrying text', compactWithText.status === 400);
+    const compactId = compactResp.body.items.find((m) => m.kind === 'compact').id;
+    const editCompact = await postJson(
+      backendPort,
+      `/api/queue/${compactId}?file=${encodeURIComponent(F)}`,
+      { message: 'nope' },
+      'PATCH',
+    );
+    report('gateway refuses to edit a queued compact', editCompact.status === 400);
+    await enqueue('after compact');
+    items = await itemsOf();
+    report(
+      'queue order is text → compact → text',
+      items.length === 3 &&
+        items[0].text === 'before compact' &&
+        items[1].kind === 'compact' &&
+        items[2].text === 'after compact',
+      JSON.stringify(items.map((m) => m.kind ?? 'message')),
+    );
+    prompts = readPrompts().filter((p) => p.agentId === F);
+    report('nothing is delivered while the session still runs', prompts.length === promptsBeforeCompact);
+
+    await setStatus('idle');
+    prompts = await waitPrompts(F, promptsBeforeCompact + 1);
+    await delay(400);
+    report(
+      'first idle flushes the head text only (compact waits its turn)',
+      readPrompts().every((p) => p.agentId !== F || p.message !== 'after compact'),
+    );
+    await setStatus('idle');
+    await delay(600);
+    report(
+      'the compact head is gone after its idle turn (delivered, not re-queued)',
+      (await itemsOf()).every((m) => m.kind !== 'compact'),
+      JSON.stringify(await itemsOf()),
+    );
+    await setStatus('idle');
+    prompts = await waitPrompts(F, promptsBeforeCompact + 2);
+    await delay(400);
+    const tail = readPrompts().filter((p) => p.agentId === F);
+    report(
+      'compact never reaches the backend as a prompt; tail text delivered last',
+      tail.every((p) => p.message !== '' && p.message !== 'compact') &&
+        tail.some((p) => p.message === 'after compact'),
+      JSON.stringify(tail.map((p) => p.message)),
+    );
+
     const health = await getJson(backendPort, '/api/health');
     report(
       'health reports the gateway queue size',
@@ -511,6 +576,49 @@ function uiQueueRows() {
     report('ui_queue drains completely after delivery', uiAtEnd.length === 0, JSON.stringify(uiAtEnd));
     items = (await getJson(backendPort, `/api/queue?file=${encodeURIComponent(FB)}`)).items;
     report('gateway queue is empty at the end', items.length === 0);
+
+    console.log('phase 3 — queued compact survives SIGKILL and keeps FIFO across restart');
+    const FC = makeSession('mq-compact');
+    await postJson(backendPort, '/api/queue/hold', { file: FC });
+    const cEnq = await postJson(backendPort, '/api/queue', { file: FC, kind: 'compact' });
+    const mEnq = await postJson(backendPort, '/api/queue', { file: FC, message: 'after compact message' });
+    const heldItems = (await getJson(backendPort, `/api/queue?file=${encodeURIComponent(FC)}`)).items;
+    report(
+      'compact + text queue behind the edit hold',
+      cEnq.status === 200 &&
+        mEnq.status === 200 &&
+        heldItems.length === 2 &&
+        heldItems[0].kind === 'compact' &&
+        heldItems[1].text === 'after compact message',
+      JSON.stringify(heldItems),
+    );
+    const victim2 = procs[procs.length - 1];
+    victim2.kill('SIGKILL');
+    await delay(500);
+    const rowsAfterCompactCrash = uiQueueRows().filter((r) => r.session_file === FC);
+    report(
+      'SIGKILL keeps the queued compact durable with its kind',
+      rowsAfterCompactCrash.length === 2 &&
+        rowsAfterCompactCrash.some((r) => r.kind === 'compact' && r.message === '') &&
+        rowsAfterCompactCrash.some((r) => r.message === 'after compact message'),
+      JSON.stringify(rowsAfterCompactCrash),
+    );
+
+    procs.push(spawnSdkBackend(backendPort));
+    await waitUp(backendPort);
+    let compactRows = uiQueueRows().filter((r) => r.session_file === FC);
+    for (let i = 0; i < 80 && compactRows.length > 0; i++) {
+      compactRows = uiQueueRows().filter((r) => r.session_file === FC);
+      if (compactRows.length === 0) break;
+      await delay(250);
+    }
+    report(
+      'boot restores the compact, delivers it head-first, then the text behind it',
+      compactRows.length === 0,
+      JSON.stringify(compactRows),
+    );
+    items = (await getJson(backendPort, `/api/queue?file=${encodeURIComponent(FC)}`)).items;
+    report('restarted compact session queue view is empty', items.length === 0);
   } catch (e) {
     report('suite crashed', false, e.message);
   } finally {

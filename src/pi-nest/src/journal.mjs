@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync } from 'nod
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 const UI_STATES = new Set(['working', 'unread', 'error']);
 
 function warn(op, e) {
@@ -73,10 +73,15 @@ function applySchema(db) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       session_file TEXT NOT NULL,
       message TEXT NOT NULL,
-      images TEXT NOT NULL DEFAULT '[]'
+      images TEXT NOT NULL DEFAULT '[]',
+      kind TEXT NOT NULL DEFAULT 'message'
     );
   `);
   db.exec('CREATE INDEX IF NOT EXISTS ui_queue_session ON ui_queue(session_file, id)');
+  const uiQueueCols = db.prepare('PRAGMA table_info(ui_queue)').all();
+  if (!uiQueueCols.some((c) => c.name === 'kind')) {
+    db.exec("ALTER TABLE ui_queue ADD COLUMN kind TEXT NOT NULL DEFAULT 'message'");
+  }
   db.exec(`
     CREATE TABLE IF NOT EXISTS jobs (
       id TEXT PRIMARY KEY,
@@ -175,9 +180,11 @@ export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null 
     snapshotPartial: db.prepare('UPDATE queue_items SET partial_text = ? WHERE id = ?'),
     remove: db.prepare('DELETE FROM queue_items WHERE id = ?'),
     removeSessionQueue: db.prepare('DELETE FROM queue_items WHERE session_file = ?'),
-    uiEnqueue: db.prepare('INSERT INTO ui_queue (session_file, message, images) VALUES (?, ?, ?)'),
-    uiList: db.prepare('SELECT id, message, images FROM ui_queue WHERE session_file = ? ORDER BY id'),
-    uiAll: db.prepare('SELECT id, session_file, message, images FROM ui_queue ORDER BY session_file, id'),
+    uiEnqueue: db.prepare('INSERT INTO ui_queue (session_file, message, images, kind) VALUES (?, ?, ?, ?)'),
+    uiList: db.prepare('SELECT id, message, images, kind FROM ui_queue WHERE session_file = ? ORDER BY id'),
+    uiAll: db.prepare(
+      'SELECT id, session_file, message, images, kind FROM ui_queue ORDER BY session_file, id',
+    ),
     uiUpdate: db.prepare('UPDATE ui_queue SET message = ? WHERE id = ? AND session_file = ?'),
     uiDelete: db.prepare('DELETE FROM ui_queue WHERE id = ? AND session_file = ?'),
     uiDeleteSession: db.prepare('DELETE FROM ui_queue WHERE session_file = ?'),
@@ -378,9 +385,9 @@ export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null 
         warn('removeSession', e);
       }
     },
-    addUiQueue(sessionFile, { message, images = [] }) {
+    addUiQueue(sessionFile, { kind = 'message', message, images = [] }) {
       try {
-        const r = stmt.uiEnqueue.run(sessionFile, message, JSON.stringify(images ?? []));
+        const r = stmt.uiEnqueue.run(sessionFile, message, JSON.stringify(images ?? []), kind);
         return Number(r.lastInsertRowid);
       } catch (e) {
         warn('addUiQueue', e);
@@ -393,6 +400,7 @@ export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null 
           id: Number(r.id),
           text: r.message,
           images: parseImages(r.images),
+          kind: r.kind ?? 'message',
         }));
       } catch (e) {
         warn('listUiQueue', e);
@@ -405,7 +413,12 @@ export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null 
         for (const r of stmt.uiAll.all()) {
           const file = r.session_file;
           if (!out.has(file)) out.set(file, []);
-          out.get(file).push({ id: Number(r.id), text: r.message, images: parseImages(r.images) });
+          out.get(file).push({
+            id: Number(r.id),
+            text: r.message,
+            images: parseImages(r.images),
+            kind: r.kind ?? 'message',
+          });
         }
         return out;
       } catch (e) {
@@ -465,7 +478,12 @@ export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null 
             continue;
           }
           if (!out.has(r.session_file)) out.set(r.session_file, []);
-          out.get(r.session_file).push({ id: Number(r.id), text: r.message, images: parseImages(r.images) });
+          out.get(r.session_file).push({
+            id: Number(r.id),
+            text: r.message,
+            images: parseImages(r.images),
+            kind: r.kind ?? 'message',
+          });
         }
         db.exec('COMMIT');
       } catch (e) {

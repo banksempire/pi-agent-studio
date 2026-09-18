@@ -21,6 +21,22 @@ const RUN_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'queue-msg-'));
 const SESSIONS_ROOT = path.join(RUN_ROOT, 'sessions');
 const STATES_PATH = path.join(RUN_ROOT, 'states.json');
 const PROMPT_LOG = path.join(RUN_ROOT, 'prompts.jsonl');
+const SLASH_LOG = path.join(RUN_ROOT, 'slash.jsonl');
+const STUB_MODELS = [
+  {
+    id: 'stub-pro',
+    provider: 'stub',
+    name: 'Stub Pro',
+    reasoning: true,
+    contextWindow: 128000,
+    maxTokens: 8192,
+    cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+    input: ['text', 'image'],
+    api: 'openai-completions',
+    baseUrl: 'https://stub.example/v1',
+    thinkingLevels: ['off', 'low', 'medium', 'high'],
+  },
+];
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -97,6 +113,14 @@ function writeSessionFile(name) {
         stopReason: 'stop',
       },
     }),
+    JSON.stringify({
+      type: 'model_change',
+      id: `${name}-mc0`,
+      parentId: `${name}-a0`,
+      timestamp: new Date().toISOString(),
+      provider: 'stub',
+      modelId: 'stub-pro',
+    }),
   ];
   const file = path.join(dir, `${name}.jsonl`);
   fs.writeFileSync(file, `${lines.join('\n')}\n`);
@@ -107,6 +131,18 @@ function readPrompts() {
   try {
     return fs
       .readFileSync(PROMPT_LOG, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+  } catch {
+    return [];
+  }
+}
+
+function readSlashes() {
+  try {
+    return fs
+      .readFileSync(SLASH_LOG, 'utf8')
       .split('\n')
       .filter(Boolean)
       .map((l) => JSON.parse(l));
@@ -164,6 +200,8 @@ function getJson(port, p) {
           PI_STUDIO_CLIENT_MODULE: stub.stubPath,
           STUB_CONTROL_FILE: stub.controlPath,
           STUB_PROMPT_LOG: PROMPT_LOG,
+          STUB_SLASH_LOG: SLASH_LOG,
+          STUB_MODELS_JSON: JSON.stringify(STUB_MODELS),
           PI_STUDIO_SESSIONS: SESSIONS_ROOT,
           PI_STUDIO_STATES_PATH: STATES_PATH,
           PI_STUDIO_DB_PATH: path.join(RUN_ROOT, 'studio.db'),
@@ -865,6 +903,109 @@ function getJson(port, p) {
       (await page.locator('.chat-attach-chip').count()) === 0,
     );
 
+    console.log('compact click while the session works queues the compaction (FIFO)');
+    await idleUntilSend();
+    await waitCount(boxes, 0);
+    const compactishPromptsBefore = readPrompts().filter(
+      (p) => p.agentId === F && (p.message === '' || p.message === 'compact'),
+    ).length;
+    const ctxBtn = page.locator('.chat-context');
+    report('context button renders with the stub catalog', await waitCount(ctxBtn, 1));
+    await clickWhenVisible(ctxBtn);
+    let idleCompact = null;
+    for (let i = 0; i < 40; i++) {
+      idleCompact = readSlashes().find((s) => s.agentId === F && s.command === 'compact');
+      if (idleCompact) break;
+      await delay(250);
+    }
+    report(
+      'idle compact click still compacts immediately (no queue box)',
+      !!idleCompact && (await boxes.count()) === 0,
+    );
+
+    await runUntilStop();
+    await input.fill('queued before compact');
+    await clickWhenVisible(queueBtn);
+    await delay(300);
+    await clickWhenVisible(ctxBtn);
+    await waitCount(boxes, 2);
+    const compactTexts = await boxes.allInnerTexts();
+    report(
+      'compact click while running queues a compact box behind the pending text',
+      compactTexts.length === 2 &&
+        compactTexts[0].includes('queued before compact') &&
+        compactTexts[1].includes('Compact context'),
+      JSON.stringify(compactTexts),
+    );
+    report(
+      'a queued compact is not delivered while the session still runs',
+      readSlashes().filter((s) => s.agentId === F && s.command === 'compact').length === 1,
+    );
+    const compactBox = boxes.nth(1);
+    report(
+      'queued compact has no edit button',
+      (await compactBox.locator('[title="Edit this queued message"]').count()) === 0,
+    );
+    report(
+      'queued compact can be removed like any queued item',
+      (await compactBox.locator('[title="Remove from queue"]').count()) === 1,
+    );
+    await input.fill('queued after compact');
+    await clickWhenVisible(queueBtn);
+    await waitCount(boxes, 3);
+    const afterCompactTexts = await boxes.allInnerTexts();
+    report(
+      'text queued after the compact stays behind it (FIFO untouched)',
+      afterCompactTexts.length === 3 &&
+        afterCompactTexts[1].includes('Compact context') &&
+        afterCompactTexts[2].includes('queued after compact'),
+      JSON.stringify(afterCompactTexts),
+    );
+
+    await idleUntilSend();
+    let flushBefore = null;
+    for (let i = 0; i < 40; i++) {
+      flushBefore = readPrompts().find((p) => p.agentId === F && p.message === 'queued before compact');
+      if (flushBefore) break;
+      await delay(250);
+    }
+    report('session going idle flushes the queued text first', !!flushBefore);
+    await setStatus('idle');
+    let queuedCompact = null;
+    for (let i = 0; i < 40; i++) {
+      const hits = readSlashes().filter((s) => s.agentId === F && s.command === 'compact');
+      if (hits.length >= 2) {
+        queuedCompact = hits[1];
+        break;
+      }
+      await delay(250);
+    }
+    report('the next idle transition runs the queued compact', !!queuedCompact);
+    await setStatus('idle');
+    let flushAfter = null;
+    for (let i = 0; i < 40; i++) {
+      flushAfter = readPrompts().find((p) => p.agentId === F && p.message === 'queued after compact');
+      if (flushAfter) break;
+      await delay(250);
+    }
+    report('the text queued behind the compact flushes last', !!flushAfter);
+    report(
+      'delivery order is prompt → compact → prompt (FIFO never broken)',
+      !!flushBefore &&
+        !!queuedCompact &&
+        !!flushAfter &&
+        flushBefore.ts <= queuedCompact.ts &&
+        queuedCompact.ts <= flushAfter.ts &&
+        flushBefore.ts !== flushAfter.ts,
+      `text1:${flushBefore?.ts} compact:${queuedCompact?.ts} text2:${flushAfter?.ts}`,
+    );
+    report(
+      'the queued compact never becomes a prompt message',
+      readPrompts().filter((p) => p.agentId === F && (p.message === '' || p.message === 'compact')).length ===
+        compactishPromptsBefore,
+    );
+    report('queue fully drains after the compact', await waitCount(boxes, 0));
+
     await runUntilStop();
     await input.fill('via enter');
     await delay(300);
@@ -1243,7 +1384,7 @@ function getJson(port, p) {
 
     report('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   } catch (e) {
-    report('suite crashed', false, e.message);
+    report('suite crashed', false, e.stack || e.message);
   } finally {
     if (browser) await browser.close().catch(() => {});
     fs.rmSync(RUN_ROOT, { recursive: true, force: true });

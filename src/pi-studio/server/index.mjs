@@ -1321,19 +1321,34 @@ const server = createServer(async (req, res) => {
     }
 
     if (p === '/api/queue' && req.method === 'POST') {
-      const { file, message, images } = await readBody(req);
-      if (!file || typeof message !== 'string') {
+      const { file, message, images, kind } = await readBody(req);
+      if (!file) {
+        return sendJson(res, 400, { error: 'file required' });
+      }
+      const isCompact = kind === 'compact';
+      if (kind !== undefined && !isCompact) {
+        return sendJson(res, 400, { error: "kind must be 'compact'" });
+      }
+      if (!isCompact && typeof message !== 'string') {
         return sendJson(res, 400, { error: 'file and message required' });
       }
       const norm = normalizeAttachments(images);
       if (norm.error) return sendJson(res, 400, { error: norm.error });
-      if (!message.trim() && !norm.images.length) {
+      if (!isCompact && !message.trim() && !norm.images.length) {
         return sendJson(res, 400, { error: 'file and message required' });
+      }
+      if (isCompact && ((message ?? '').trim() || norm.images.length)) {
+        return sendJson(res, 400, { error: 'a queued compact carries no text or images' });
       }
       if (!existsSync(file) && registry && !registry.has(file)) {
         return sendJson(res, 404, { error: 'session file not found' });
       }
-      const id = messageQueue.enqueue(file, { message: message.trim(), images: norm.images });
+      const id = messageQueue.enqueue(
+        file,
+        isCompact
+          ? { kind: 'compact', message: '', images: [] }
+          : { message: message.trim(), images: norm.images },
+      );
       if (id === null) return sendJson(res, 500, { error: 'failed to persist queued message' });
       sendJson(res, 200, { ok: true, items: messageQueue.list(file) });
       return;
@@ -1363,6 +1378,9 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 400, { error: 'file and numeric id required' });
       if (typeof body.message !== 'string' || !body.message.trim()) {
         return sendJson(res, 400, { error: 'message required' });
+      }
+      if (messageQueue.itemOf(file, id)?.kind === 'compact') {
+        return sendJson(res, 400, { error: 'a queued compact cannot be edited' });
       }
       if (!messageQueue.updateText(file, id, body.message.trim())) {
         return sendJson(res, 404, { error: 'queued message not found' });

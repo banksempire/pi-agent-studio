@@ -103,7 +103,12 @@ const contextTitle = computed(() => {
   const ctx = session.value?.context;
   if (!ctx?.window) return '';
   const win = formatTokens(ctx.window);
-  const hint = session.value?.compacting ? '' : ' Click to compact the context.';
+  const compacting = session.value?.compacting;
+  const hint = compacting
+    ? ''
+    : session.value?.status === 'running'
+      ? ' Session is working — click to queue the compact behind pending messages.'
+      : ' Click to compact the context.';
   return ctx.percent === null
     ? `Context in use: unknown until the next response (${win} window).${hint}`
     : `${Math.round(ctx.tokens ?? 0).toLocaleString()} of ${win} tokens (${ctx.percent.toFixed(1)}%).${hint}`;
@@ -644,7 +649,8 @@ function compactContext() {
   const s = session.value;
   if (!s || s.compacting) return;
   store.clearSessionError(props.sessionId);
-  void store.compactSession(props.sessionId);
+  if (s.status === 'running') void store.enqueueCompact(props.sessionId);
+  else void store.compactSession(props.sessionId);
   pinToBottom();
 }
 
@@ -714,9 +720,14 @@ function openQueueReview(q: QueuedChatMessage) {
 }
 
 function queueBoxTitle(q: QueuedChatMessage): string {
+  if (q.kind === 'compact') return 'Compact the context — runs when the session finishes';
   const n = q.images?.length ?? 0;
   if (!n) return q.text;
   return `${q.text || 'Image'} · ${n} image${n === 1 ? '' : 's'} — click to view`;
+}
+
+function queueLabel(q: QueuedChatMessage): string {
+  return q.kind === 'compact' ? 'Compact context' : q.text;
 }
 
 const editingQueue = ref<QueuedChatMessage | null>(null);
@@ -1184,14 +1195,23 @@ watch(
             v-for="q in queue"
             :key="q.id"
             class="chat-queue-box"
-            :class="{ 'chat-queue-box--viewable': !!q.images?.length }"
+            :class="{
+              'chat-queue-box--viewable': !!q.images?.length,
+              'chat-queue-box--compact': q.kind === 'compact',
+            }"
             :title="queueBoxTitle(q)"
             data-testid="chat-queue-box"
             @click="openQueueReview(q)"
           >
-            <SvgIcon v-if="q.images?.length" name="🖼" class="chat-queue-img-ind" />
-            <span class="chat-queue-text" :title="q.text">{{ q.text }}</span>
+            <SvgIcon
+              v-if="q.kind === 'compact'"
+              name="⏳"
+              class="chat-queue-img-ind"
+            />
+            <SvgIcon v-else-if="q.images?.length" name="🖼" class="chat-queue-img-ind" />
+            <span class="chat-queue-text" :title="queueLabel(q)">{{ queueLabel(q) }}</span>
             <button
+              v-if="q.kind !== 'compact'"
               class="chat-queue-act"
               title="Edit this queued message"
               @click.stop="editQueued(q)"

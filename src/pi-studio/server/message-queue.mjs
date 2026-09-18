@@ -71,7 +71,7 @@ export function createMessageQueue({
     emit({
       type: 'queue_update',
       file,
-      items: st.items.map((m) => ({ id: m.id, text: m.text, images: m.images })),
+      items: st.items.map((m) => ({ id: m.id, text: m.text, images: m.images, kind: m.kind })),
       held: isHeld(st),
     });
   }
@@ -112,11 +112,11 @@ export function createMessageQueue({
     }
   }
 
-  function enqueue(file, { message, images = [] }) {
+  function enqueue(file, { kind = 'message', message, images = [] }) {
     const st = stateOf(file);
-    const id = journal ? journal.addUiQueue(file, { message, images }) : memorySeq--;
+    const id = journal ? journal.addUiQueue(file, { kind, message, images }) : memorySeq--;
     if (id === null || id === undefined) return null;
-    st.items.push({ id, text: message, images });
+    st.items.push({ id, text: message, images, kind });
     st.retryAt = 0;
     st.failStreak = 0;
     broadcast(file);
@@ -127,7 +127,7 @@ export function createMessageQueue({
   function list(file) {
     const st = sessions.get(file);
     if (!st) return [];
-    return st.items.map((m) => ({ id: m.id, text: m.text, images: m.images }));
+    return st.items.map((m) => ({ id: m.id, text: m.text, images: m.images, kind: m.kind }));
   }
 
   function all() {
@@ -156,11 +156,17 @@ export function createMessageQueue({
     const st = sessions.get(file);
     if (!st) return false;
     const item = st.items.find((m) => m.id === id);
-    if (!item) return false;
+    if (!item || item.kind === 'compact') return false;
     item.text = text;
     if (journal) journal.updateUiQueue(id, file, text);
     broadcast(file);
     return true;
+  }
+
+  function itemOf(file, id) {
+    const st = sessions.get(file);
+    if (!st) return null;
+    return st.items.find((m) => m.id === id) ?? null;
   }
 
   function remove(file, id) {
@@ -224,14 +230,19 @@ export function createMessageQueue({
     const item = st.items[0];
     st.inflight = true;
     try {
-      const p = Promise.resolve(
-        client.prompt({
-          agentId: file,
-          message: item.text,
-          interrupt: false,
-          images: item.images ?? [],
-        }),
-      );
+      const delivery =
+        item.kind === 'compact'
+          ? client.slash({ agentId: file, command: 'compact' }).then((r) => {
+              if (!r?.ok) throw new Error(r?.error || 'compaction refused');
+              return r;
+            })
+          : client.prompt({
+              agentId: file,
+              message: item.text,
+              interrupt: false,
+              images: item.images ?? [],
+            });
+      const p = Promise.resolve(delivery);
       st.items.shift();
       broadcast(file);
       p.then(
@@ -239,6 +250,10 @@ export function createMessageQueue({
           st.failStreak = 0;
           st.retryAt = 0;
           if (journal) journal.deleteUiQueue(item.id, file);
+          if (item.kind === 'compact') {
+            st.inflight = false;
+            flushIfIdle(file);
+          }
         },
         () => {
           st.inflight = false;
@@ -288,6 +303,7 @@ export function createMessageQueue({
     enqueue,
     list,
     all,
+    itemOf,
     updateText,
     remove,
     removeAll,

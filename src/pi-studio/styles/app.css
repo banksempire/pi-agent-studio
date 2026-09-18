@@ -721,6 +721,11 @@
   border-color: color-mix(in srgb, var(--sf-accent) 55%, var(--sf-border));
 }
 
+.chat-queue-box--compact .chat-queue-text {
+  font-style: italic;
+  color: var(--sf-text-muted);
+}
+
 .chat-queue-img-ind {
   flex-shrink: 0;
   color: var(--sf-accent);

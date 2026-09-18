@@ -148,9 +148,10 @@ const dialogDoc = computed<PopupDocument>(() => {
       { title: 'Model', fields: [modelField] },
       {
         title: 'Peak hour',
+        columns: 2,
         fields: [
-          { key: 'start', type: 'slot', label: 'Peak start', half: true },
-          { key: 'end', type: 'slot', label: 'Peak end', half: true },
+          { key: 'start', type: 'slot', label: 'Peak start' },
+          { key: 'end', type: 'slot', label: 'Peak end' },
           { key: 'live', type: 'info', text: liveHint.value, class: 'aph-live' },
         ],
       },

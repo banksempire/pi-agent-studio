@@ -77,11 +77,11 @@ function portBindable(port, host) {
 
 async function autoWebPort(host = '0.0.0.0') {
   const used = webPortsInUse(null);
-  for (let p = 7500; p < 7600; p++) {
+  for (let p = 17002; p <= 17009; p++) {
     if (RESERVED_PORTS.includes(p) || used.has(p)) continue;
     if (await portBindable(p, host)) return p;
   }
-  throw new CliError('no free web port found in 7500-7599', 1);
+  throw new CliError('no free web port found in 17002-17009', 1);
 }
 
 function validatePair(pairRoot) {
@@ -159,8 +159,8 @@ export async function cmdInit(out, opts = {}) {
   if (used.has(webPort)) {
     throw new CliError(`web port ${webPort} already used by instance '${used.get(webPort)}'`, 4);
   }
-  if (webPort !== 7492 && RESERVED_PORTS.includes(webPort)) {
-    throw new CliError(`web port ${webPort} is reserved (7492/7494/7495 belong to main)`, 4);
+  if (webPort !== 17000 && RESERVED_PORTS.includes(webPort)) {
+    throw new CliError(`web port ${webPort} is reserved (main web 17000 / main backend 7494)`, 4);
   }
   const sessionsDir = opts.sessions
     ? path.resolve(opts.sessions)
@@ -308,8 +308,8 @@ export async function cmdInstanceSet(out, id, pairs) {
     if (numeric.includes(key)) {
       value = Number(value);
       if (!Number.isFinite(value)) throw new CliError(`${key} must be a number`, 2);
-      if (key === 'webPort' && value !== 7492 && RESERVED_PORTS.includes(value) && id !== 'main') {
-        throw new CliError(`web port ${value} is reserved (7492/7494/7495 belong to main)`, 4);
+      if (key === 'webPort' && value !== 17000 && RESERVED_PORTS.includes(value) && id !== 'main') {
+        throw new CliError(`web port ${value} is reserved (main web 17000 / main backend 7494)`, 4);
       }
       const used = webPortsInUse(id);
       if (key === 'webPort' && used.has(value)) {

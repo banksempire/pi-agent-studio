@@ -85,12 +85,12 @@ commands:
 
 options:
   -i, --instance <id>       select instance (default: detected from cwd, else main)
-  --port web=7500           ephemeral port override (web|backend)
+  --port web=17004          ephemeral port override (web|backend)
   PI_STUDIO_STRICT=1        env flag: up/down/restart/kill refuse to run on
                             defaults — an explicit -i <id> is required
                             (agent/dev-mode guard against touching main
                             by accident)
-  --port web=7500           ephemeral port override (web|backend)
+  --port web=17004          ephemeral port override (web|backend)
   --sessions <dir>          sessions dir override
   --host <host>             web bind host override
   --json                    machine-readable output (ndjson events for up)

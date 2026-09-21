@@ -22,7 +22,7 @@ Design doc only; implementation notes in §12.
 **Non-goals**
 - Not a process supervisor (no auto-restart-on-crash, no systemd replacement).
 - No changes to service behavior beyond the ENV hooks in §10.
-- Not managing StudioFramework's test servers (`SF_TEST_PORT` on non-7492 ports).
+- Not managing StudioFramework's test servers (`SF_TEST_PORT` on 7493 / other non-product ports).
 
 ## 2. Service model
 
@@ -50,7 +50,7 @@ stack start (persisting it as a tombstone) and wires web to it via ENV.
 
 | Port | Persistence | Rules |
 |:--|:--|:--|
-| `web` | Persisted in instance config; stable across restarts | Unique across instances; `main` = 7492; `test` conventionally pins 7493 (the exposed test port); never 7494; no other instance may use 7492 |
+| `web` | Persisted in instance config; stable across restarts | Unique across instances; `main` = 17000; `review` pins 17001; dev branches auto-pick 17002-17009 (the container only exposes 17000-17019; 17010-17019 belong to quant-studio); never 7494; no other instance may use 17000 |
 | `backend` | Ephemeral; recorded in runtime state for the stack's lifetime | Chosen at `up` from free ports, loopback bind |
 
 Wiring per launch (CLI composes child argv; it never injects env):
@@ -70,11 +70,13 @@ If that port was taken by a foreign process meanwhile: the port falls back to
 a fresh ephemeral pick, and `restart web` (re-wire) or `down && up` are the
 suggested remedies.
 
-Reserved ports: 7492 (main web — the exposed production port) and 7494
-(main backend) — the ephemeral picker skips them. 7493 is the shared test
-port — the only other externally reachable port — hosting the `test`
-instance web, the StudioFramework check server, or ad-hoc test servers
-(first come, first served). 7495 is free since the nest/gateway merge.
+Reserved ports: 17000 (main web — the exposed production port) and 7494
+(main backend, loopback) — the ephemeral picker skips them. 17001 is the
+review web. The dev-branch picker scans 17002-17009. 7493 remains the
+StudioFramework test port (dev server + check suites; loopback-reachable
+only — the container no longer exposes it). Any port that must be reached
+from outside the container must live in 17000-17019; everything else stays
+below it.
 
 Hosts: `web` binds `0.0.0.0` (or instance `host`); `backend` binds
 `127.0.0.1` always (loopback-only by design; proxying happens server-side in
@@ -388,9 +390,9 @@ single services.
   covering worktree pair creation, up with ENV-pinned ports, sessions
   isolation, the backend guard (exit 5), graceful drain/spill/restore, port
   reuse on restart, partial down, and full teardown. It hosts nothing on
-  7492/7494.
+  17000-17019 or 7494.
 - CLI-spawned backends bind `127.0.0.1` (override with `PI_STUDIO_HOST`);
-  main's web stays `0.0.0.0:7492`.
+  main's web stays `0.0.0.0:17000`.
 
 - Human tables by default; `--json` everywhere; `up` emits ndjson events
   `{"event":"starting","instance":"test","service":"backend"}` …
@@ -410,7 +412,8 @@ single services.
   Zero runtime deps beyond Node built-ins + the SDK import in the backend.
   No comments in source, per workspace rules.
 - Regression: committed check script (pattern of `check:*`), testing against
-  fake processes / a throwaway pair — never hosting test services on 7492–7495.
+  fake processes / a throwaway pair — never hosting test services on
+  17000-17019 or main's 7494.
 
 ## 13. Example sessions
 
@@ -426,7 +429,7 @@ $ studio -i test up
 $ studio status
   INSTANCE  SERVICE   PID     STATE  PORT    DETAIL
   main      backend  14353   up     7494    2 agents (1 running) · rss 412 MB · 3 sse
-  main      web      42416   up     7492
+  main      web      42416   up     17000
   test      nest      51017   up     34191   0 agents
   test      gateway   51044   up     34195   rss 88 MB
   test      web       51082   up     7512    branch test · ~/wt/test

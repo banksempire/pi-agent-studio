@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 export const PRODUCT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const SF_ROOT = path.join(path.dirname(PRODUCT_ROOT), 'StudioFramework');
 export const QS_ROOT = path.join(path.dirname(PRODUCT_ROOT), 'quant-studio');
-export const RESERVED_PORTS = [7492, 7494];
+export const RESERVED_PORTS = [17000, 7494];
 
 export function workspaceHooksDir() {
   const segs = PRODUCT_ROOT.split(path.sep);
@@ -186,7 +186,7 @@ export function ensureMain() {
     id: 'main',
     pairRoot,
     branch: 'main',
-    webPort: 7492,
+    webPort: 17000,
     backendPort: 7494,
     host: '0.0.0.0',
     createdAt: Date.now(),

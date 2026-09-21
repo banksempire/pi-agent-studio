@@ -115,6 +115,11 @@ function plainText(content) {
 
 export function toDisplayMessage(message) {
   const d = { role: message.role, text: '', ts: message.timestamp ?? Date.now() };
+  if (message.role === 'system') {
+    d.text = plainText(message.content);
+    if (!d.text) return null;
+    return d;
+  }
   if (message.role === 'assistant') {
     d.text = textOf(message.content);
     d.model = message.model ?? null;

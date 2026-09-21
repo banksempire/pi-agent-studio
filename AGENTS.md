@@ -59,6 +59,7 @@ Run as `npm run studio -- …` from this repo or `node pi-agent-studio/bin/studi
 | sub-agents + workflow engine (spec validation, waves, forEach, result extraction, child runs, gc, chat-list hiding, HTTP surface) | `check:subagents` |
 | scheduler tab + job dialog CRUD UI | `check:jobeditor` |
 | journal drain/recover (unit) | `check:registry` |
+| transcript display rows (pi's internal empty system-prompt entries never reach the transcript; text system notices still render) | `check:transcript` |
 | real-process restart recovery (SIGTERM/SIGKILL mid-generation → boot auto-resume) | `check:backend-restart`, `check:restart-selfkill` |
 | docker icon geometry | `check:dockericons` |
 | types | `typecheck` (`vue-tsc --noEmit`; plain `tsc` does NOT check `.vue`) |

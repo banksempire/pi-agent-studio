@@ -354,6 +354,12 @@ function toDisplayMessage(message) {
   const cached = displayMessageMemo.get(message);
   if (cached) return cached;
   const d = { role: message.role, text: '', ts: message.timestamp ?? Date.now() };
+  if (message.role === 'system') {
+    d.text = plainTextOf(message.content);
+    if (!d.text) return null;
+    displayMessageMemo.set(message, d);
+    return d;
+  }
   if (message.role === 'assistant') {
     d.text = textOf(message.content);
     d.model = message.model ?? null;
@@ -499,6 +505,7 @@ function deriveSession(entries, st) {
       if (t) lastText = t;
     }
     const dm = toDisplayMessage(msg);
+    if (!dm) continue;
     dm.id = entry.id;
     if (msg.role === 'assistant') dm.thinkingLevel = thinkingLevel;
     messages.push(dm);

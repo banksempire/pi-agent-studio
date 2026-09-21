@@ -579,6 +579,7 @@ export class AgentRegistry extends EventEmitter {
           case 'message_update':
           case 'message_end': {
             const dm = toDisplayMessage(ev.message);
+            if (!dm) break;
             dm.id = messageId(ev.message);
             dm.thinkingLevel = live.session.thinkingLevel ?? null;
             this.broadcast('message', agentId, dm);
@@ -587,6 +588,7 @@ export class AgentRegistry extends EventEmitter {
           }
           case 'turn_end': {
             const dm = toDisplayMessage(ev.message);
+            if (!dm) break;
             dm.id = messageId(ev.message);
             dm.thinkingLevel = live.session.thinkingLevel ?? null;
             this.broadcast('message', agentId, dm);

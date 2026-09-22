@@ -24,7 +24,7 @@ const PAIR = path.join(WT, 'selfkill');
 const ID = 'selfkill';
 const STUB_STATE_DIR = path.join(BASE, 'stub-state');
 const DRAIN_MS = 6000;
-const RESERVED = [7492, 7493, 7494];
+const RESERVED = [17000, 17001, 7494];
 
 for (const key of Object.keys(process.env)) {
   if (key.startsWith('PI_STUDIO_') || key === 'PI_API_PROXY') delete process.env[key];

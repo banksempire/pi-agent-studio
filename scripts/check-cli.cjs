@@ -21,7 +21,7 @@ const STATE = path.join(BASE, 'state');
 const WT = path.join(BASE, '.branch');
 const PAIR = path.join(WT, 'check');
 const ID = 'check';
-const RESERVED = [7492, 7494];
+const RESERVED = [17000, 7494];
 
 for (const key of Object.keys(process.env)) {
   if (key.startsWith('PI_STUDIO_') || key === 'PI_API_PROXY') delete process.env[key];

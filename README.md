@@ -32,10 +32,10 @@ Two processes, both served from `/workspace/sf`:
 
 ```bash
 npm run server   # backend (HTTP+SSE + agents in one process): → 127.0.0.1:7494
-npm run dev      # frontend: vite → 0.0.0.0:7492 (proxies /api → 7494)
+npm run dev      # frontend: vite → 0.0.0.0:17000 (proxies /api → 7494)
 ```
 
-Open http://localhost:7492. Backend config resolves argv > env > default —
+Open http://localhost:17000. Backend config resolves argv > env > default —
 the CLI wires services via argv (`--port`, `--sessions`, `--db`, …) and never
 injects env. For manual/container starts, env works directly:
 `PI_STUDIO_PORT` (7494), `PI_STUDIO_CWD` (new-chat working dir, default

@@ -3,11 +3,11 @@ import type {
   BadgeTone,
   DotTone,
   KeyValueItem,
-  PanelFormRow,
   PanelListItem,
   PanelTableRow,
   TreeNode,
 } from '@sf/types/panel';
+import type { PopupField, PopupValues } from '@sf/types/popup';
 import { computed, reactive, ref, watch } from 'vue';
 import { requestConfirm } from '../confirm';
 import { cronToPattern, describeCron } from '../cronInfo';
@@ -269,7 +269,7 @@ function tuiCost(usd: number): string {
   return `$${usd.toFixed(3)}`;
 }
 
-registerPanelData('session-stats', () => {
+registerPanelData('session-general', () => {
   const s = activeSession.value;
   if (!s) {
     return {
@@ -278,57 +278,71 @@ registerPanelData('session-stats', () => {
     };
   }
   const st = s.stats;
-  const out: KeyValueItem[] = [];
-  const section = (label: string) => out.push({ key: label, header: true });
-  const push = (label: string, value: string, extra?: Partial<KeyValueItem>) =>
-    out.push({ key: label, value, ...extra });
-
-  section('General');
-  push('File', truncateMiddle(s.file, 34, 34), { indent: 1, title: s.file });
   const id = s.sessionId;
-  push('ID', !id ? '—' : id.length > 16 ? `${id.slice(0, 13)}…` : id, {
-    indent: 1,
-    title: s.sessionId ?? s.file,
-  });
-  push('Working dir', s.cwd || '—', { indent: 1, title: s.cwd });
-  push('Started', fmtDateTime(st.startedAt), { indent: 1 });
-  push('Last activity', fmtDateTime(st.lastActivity), { indent: 1 });
+  return {
+    items: [
+      { key: 'File', value: truncateMiddle(s.file, 34, 34), title: s.file },
+      {
+        key: 'ID',
+        value: !id ? '—' : id.length > 16 ? `${id.slice(0, 13)}…` : id,
+        title: s.sessionId ?? s.file,
+      },
+      { key: 'Working dir', value: s.cwd || '—', title: s.cwd },
+      { key: 'Started', value: fmtDateTime(st.startedAt) },
+      { key: 'Last activity', value: fmtDateTime(st.lastActivity) },
+    ],
+  };
+});
 
-  section('Messages');
-  push('Total', fmtTokens(st.messageCount), { indent: 1 });
-  push('User', fmtTokens(st.userMessages), { indent: 1 });
-  push('Assistant', fmtTokens(st.assistantMessages), { indent: 1 });
-  push('Tools', fmtTokens(st.toolResults), { indent: 1 });
+registerPanelData('session-messages', () => {
+  const s = activeSession.value;
+  if (!s) return { items: [] };
+  const st = s.stats;
+  return {
+    items: [
+      { key: 'Total', value: fmtTokens(st.messageCount) },
+      { key: 'User', value: fmtTokens(st.userMessages) },
+      { key: 'Assistant', value: fmtTokens(st.assistantMessages) },
+      { key: 'Tools', value: fmtTokens(st.toolResults) },
+    ],
+  };
+});
 
-  section('Tokens');
-  push('Input', fmtTokens(st.promptTokens), { indent: 1 });
+registerPanelData('session-tokens', () => {
+  const s = activeSession.value;
+  if (!s) return { items: [] };
+  const st = s.stats;
+  const out: KeyValueItem[] = [{ key: 'Input', value: fmtTokens(st.promptTokens) }];
   if (st.promptTokens > 0 && (st.cacheRead > 0 || st.cacheWrite > 0)) {
     const hit = ((st.cacheRead / st.promptTokens) * 100).toFixed(1);
-    push('Cached', fmtTokens(st.cacheRead), { indent: 1 });
-    push('rate%', `${hit}%`, { indent: 2 });
+    out.push({ key: 'Cached', value: fmtTokens(st.cacheRead) });
+    out.push({ key: 'rate%', value: `${hit}%`, indent: 1 });
     const written = st.cacheWrite > 0 ? ` (${fmtTokens(st.cacheWrite)} written to cache)` : '';
-    push('Uncached', `${fmtTokens(st.tokensIn + st.cacheWrite)}${written}`, { indent: 1 });
+    out.push({ key: 'Uncached', value: `${fmtTokens(st.tokensIn + st.cacheWrite)}${written}` });
   }
-  push('Output', fmtTokens(st.tokensOut), { indent: 1 });
-  push('Total', fmtTokens(st.promptTokens + st.tokensOut), { indent: 1 });
+  out.push({ key: 'Output', value: fmtTokens(st.tokensOut) });
+  out.push({ key: 'Total', value: fmtTokens(st.promptTokens + st.tokensOut) });
+  return { items: out };
+});
 
-  if (st.costUsd > 0 || st.cacheWaste.missedTokens > 0) {
-    section('Cost');
-    push('Total', tuiCost(st.costUsd), { indent: 1 });
-    if (st.costBreakdown.length > 1) {
-      for (const b of st.costBreakdown) {
-        push(b.key, `${tuiCost(b.cost)} (${fmtCompactTokens(b.tokens)})`, { indent: 1 });
-      }
+registerPanelData('session-cost', () => {
+  const s = activeSession.value;
+  if (!s) return { items: [] };
+  const st = s.stats;
+  const out: KeyValueItem[] = [{ key: 'Total', value: tuiCost(st.costUsd) }];
+  if (st.costBreakdown.length > 1) {
+    for (const b of st.costBreakdown) {
+      out.push({ key: b.key, value: `${tuiCost(b.cost)} (${fmtCompactTokens(b.tokens)})` });
     }
-    if (st.cacheWaste.missedTokens > 0) {
-      push(
-        'Cache Re-billed',
+  }
+  if (st.cacheWaste.missedTokens > 0) {
+    out.push({
+      key: 'Cache Re-billed',
+      value:
         st.cacheWaste.missedCost >= 0.0001
           ? `${tuiCost(st.cacheWaste.missedCost)} (${fmtCompactTokens(st.cacheWaste.missedTokens)})`
           : `(${fmtCompactTokens(st.cacheWaste.missedTokens)})`,
-        { indent: 1 },
-      );
-    }
+    });
   }
   return { items: out };
 });
@@ -338,32 +352,32 @@ const SEND_KEY_TITLES: Record<string, string> = {
   shiftEnter: 'Shift+Enter sends, Enter new line',
 };
 
-registerPanelData('prefs-rows', () => [
-  {
-    id: 'sendKey',
-    label: 'Send with',
-    pills: {
-      value: store.prefs.sendKey,
-      choices: [
+registerPanelData('prefs-rows', () => ({
+  fields: [
+    {
+      key: 'sendKey',
+      type: 'pills',
+      label: 'Send with',
+      options: [
         { value: 'enter', label: 'Enter', title: SEND_KEY_TITLES.enter },
         { value: 'shiftEnter', label: 'Shift+Enter', title: SEND_KEY_TITLES.shiftEnter },
       ],
     },
-    action: 'set-pref',
-  },
-  {
-    id: 'renderMarkdown',
-    label: 'Render Markdown',
-    pills: {
-      value: store.prefs.renderMarkdown ? 'yes' : 'no',
-      choices: [
+    {
+      key: 'renderMarkdown',
+      type: 'pills',
+      label: 'Render Markdown',
+      options: [
         { value: 'yes', label: 'Yes' },
         { value: 'no', label: 'No' },
       ],
     },
-    action: 'set-pref',
-  },
-]);
+  ] satisfies PopupField[],
+  values: {
+    sendKey: store.prefs.sendKey,
+    renderMarkdown: store.prefs.renderMarkdown ? 'yes' : 'no',
+  } satisfies PopupValues,
+}));
 
 const PATTERN_LABELS: Record<string, string> = {
   minutes: 'Minutes',
@@ -549,18 +563,29 @@ const SCHEDULER_ROWS: Array<{ id: keyof typeof schedulerForm; label: string; tit
   { id: 'modelMax', label: 'Per Model', title: 'Concurrent job runs per model' },
 ];
 
-registerPanelData('scheduler-caps', () => {
-  const rows: PanelFormRow[] = SCHEDULER_ROWS.map((r) => ({
-    id: r.id,
-    label: r.label,
-    stepper: { value: schedulerForm[r.id], min: 1, max: 10, step: 1, title: r.title },
-    action: 'set-scheduler-cap',
-  }));
-  if (schedulerError.value) {
-    rows.push({ id: 'error', note: schedulerError.value, noteTone: 'error' });
-  }
-  return { rows };
-});
+registerPanelData('scheduler-caps', () => ({
+  fields: [
+    ...SCHEDULER_ROWS.map(
+      (r): PopupField => ({
+        key: r.id,
+        type: 'stepper',
+        label: r.label,
+        min: 1,
+        max: 10,
+        step: 1,
+        labelNote: r.title,
+      }),
+    ),
+    ...(schedulerError.value
+      ? [{ key: 'error', type: 'info', text: schedulerError.value } as PopupField]
+      : []),
+  ],
+  values: {
+    globalMax: schedulerForm.globalMax,
+    providerMax: schedulerForm.providerMax,
+    modelMax: schedulerForm.modelMax,
+  } satisfies PopupValues,
+}));
 
 function fmtContext(window: number): string {
   if (!window) return '—';
@@ -648,41 +673,42 @@ const YES_NO = [
 
 registerPanelData('model-preference-rows', () => {
   const detail = store.modelDetail;
-  if (!detail) return { rows: [], empty: 'Select a model to change preferences.' };
-  const rows: PanelFormRow[] = [
+  if (!detail) {
+    return { fields: [], values: {}, empty: 'Select a model to change preferences.' };
+  }
+  const fields: PopupField[] = [
     {
-      id: 'default',
+      key: 'default',
+      type: 'pills',
       label: 'Default model',
-      pills: { value: detail.isDefault ? 'yes' : 'no', choices: YES_NO },
-      action: 'set-model-pref',
+      options: [...YES_NO],
     },
   ];
+  const values: PopupValues = { default: detail.isDefault ? 'yes' : 'no' };
   if (detail.isDefault) {
     const levels = detail.model.thinkingLevels ?? [];
     const activeLevel =
       store.modelDefaultLevel && levels.includes(store.modelDefaultLevel)
         ? store.modelDefaultLevel
         : (levels[0] ?? null);
-    rows.push({
-      id: 'think',
+    fields.push({
+      key: 'think',
+      type: 'pills',
       label: 'Thinking',
-      pills: {
-        value: activeLevel ?? '',
-        choices: levels.map((l) => ({
-          value: l,
-          label: l.charAt(0).toUpperCase() + l.slice(1),
-        })),
-      },
-      action: 'set-model-pref',
+      options: levels.map((l) => ({
+        value: l,
+        label: l.charAt(0).toUpperCase() + l.slice(1),
+      })),
     });
+    values.think = activeLevel ?? '';
     if (store.modelDefaultSource === 'latest-chat') {
-      rows.push({ id: 'src', note: 'via latest new chat', noteTone: 'muted' });
+      fields.push({ key: 'src', type: 'info', text: 'via latest new chat' });
     }
   }
   if (modelPrefError.value) {
-    rows.push({ id: 'error', note: modelPrefError.value, noteTone: 'error' });
+    fields.push({ key: 'error', type: 'info', text: modelPrefError.value });
   }
-  return { rows };
+  return { fields, values };
 });
 
 const peakActionError = ref('');
@@ -821,7 +847,7 @@ export function handlePanelAction(action: string | undefined, payload: unknown):
     option?: string;
     button?: string;
     value?: unknown;
-    row?: string;
+    key?: string;
   };
   switch (action) {
     case 'chat-history':
@@ -842,16 +868,16 @@ export function handlePanelAction(action: string | undefined, payload: unknown):
       if (p.id) store.toggleDir(p.id);
       break;
     case 'set-pref':
-      if (p.row === 'sendKey' && typeof p.value === 'string') store.setSendKey(p.value as SendKeyMode);
-      else if (p.row === 'renderMarkdown' && typeof p.value === 'string')
+      if (p.key === 'sendKey' && typeof p.value === 'string') store.setSendKey(p.value as SendKeyMode);
+      else if (p.key === 'renderMarkdown' && typeof p.value === 'string')
         store.setRenderMarkdown(p.value === 'yes');
       break;
     case 'set-scheduler-cap':
       if (
-        (p.row === 'globalMax' || p.row === 'providerMax' || p.row === 'modelMax') &&
+        (p.key === 'globalMax' || p.key === 'providerMax' || p.key === 'modelMax') &&
         typeof p.value === 'number'
       ) {
-        setSchedulerCap(p.row, p.value);
+        setSchedulerCap(p.key, p.value);
       }
       break;
     case 'pick-model': {
@@ -860,11 +886,11 @@ export function handlePanelAction(action: string | undefined, payload: unknown):
       break;
     }
     case 'set-model-pref':
-      if (p.row === 'default' && typeof p.value === 'string') {
+      if (p.key === 'default' && typeof p.value === 'string') {
         const want = p.value === 'yes';
         const d = store.modelDetail;
         if (d && want !== d.isDefault) void toggleModelDefault();
-      } else if (p.row === 'think' && typeof p.value === 'string') {
+      } else if (p.key === 'think' && typeof p.value === 'string') {
         void setModelDefaultLevel(p.value);
       }
       break;

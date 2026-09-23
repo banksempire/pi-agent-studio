@@ -79,14 +79,14 @@
       "icon": "💬",
       "panel": {
         "title": "Chat",
-        "sections": [
+        "groups": [
           {
             "id": "chat",
-            "label": "Chat",
-            "subSections": [
+            "title": "Chat",
+            "sections": [
               {
                 "id": "pinned",
-                "label": "Pinned",
+                "title": "Pinned",
                 "height": "fixed",
                 "minHeight": 60,
                 "components": [
@@ -99,7 +99,7 @@
               },
               {
                 "id": "history",
-                "label": "Chat History",
+                "title": "Chat History",
                 "height": "variable",
                 "minHeight": 90,
                 "utilities": [
@@ -121,7 +121,7 @@
               },
               {
                 "id": "sessions",
-                "label": "Sessions",
+                "title": "Sessions",
                 "height": "variable",
                 "minHeight": 80,
                 "utilities": [
@@ -143,11 +143,11 @@
           },
           {
             "id": "directory",
-            "label": "Directory",
-            "subSections": [
+            "title": "Directory",
+            "sections": [
               {
                 "id": "directory",
-                "label": "Directory",
+                "title": "Directory",
                 "height": "variable",
                 "minHeight": 80,
                 "components": [
@@ -170,14 +170,14 @@
       "icon": "🗂",
       "panel": {
         "title": "Workspaces",
-        "sections": [
+        "groups": [
           {
             "id": "workspaces",
-            "label": "Workspaces",
-            "subSections": [
+            "title": "Workspaces",
+            "sections": [
               {
                 "id": "ws-panel",
-                "label": "Saved Workspaces",
+                "title": "Saved Workspaces",
                 "height": "variable",
                 "minHeight": 120,
                 "components": [
@@ -196,14 +196,14 @@
   "rightPanels": {
     "jobs": {
       "title": "SCHEDULER",
-      "sections": [
+      "groups": [
         {
           "id": "detail",
-          "label": "Detail",
-          "subSections": [
+          "title": "Detail",
+          "sections": [
             {
               "id": "job-detail",
-              "label": "Job Detail",
+              "title": "Job Detail",
               "height": "fixed",
               "minHeight": 80,
               "utilities": [
@@ -224,7 +224,7 @@
             },
             {
               "id": "job-history",
-              "label": "History",
+              "title": "History",
               "height": "variable",
               "minHeight": 60,
               "components": [
@@ -269,16 +269,17 @@
         },
         {
           "id": "preference",
-          "label": "Preference",
-          "subSections": [
+          "title": "Preference",
+          "sections": [
             {
               "id": "scheduler-prefs",
-              "label": "Concurrent Job",
+              "title": "Concurrent Job",
               "height": "fixed",
               "components": [
                 {
                   "type": "form",
-                  "bind": "scheduler-caps"
+                  "bind": "scheduler-caps",
+                  "action": "set-scheduler-cap"
                 }
               ]
             }
@@ -288,14 +289,14 @@
     },
     "peak-hours": {
       "title": "Model Detail",
-      "sections": [
+      "groups": [
         {
           "id": "model-detail",
-          "label": "Model Detail",
-          "subSections": [
+          "title": "Model Detail",
+          "sections": [
             {
               "id": "model-detail",
-              "label": "Model Detail",
+              "title": "Model Detail",
               "height": "fixed",
               "components": [
                 {
@@ -311,14 +312,14 @@
     },
     "model-catalog": {
       "title": "Model Catalog",
-      "sections": [
+      "groups": [
         {
           "id": "model-catalog",
-          "label": "Model Catalog",
-          "subSections": [
+          "title": "Model Catalog",
+          "sections": [
             {
               "id": "model-detail",
-              "label": "Model Detail",
+              "title": "Model Detail",
               "height": "fixed",
               "components": [
                 {
@@ -330,18 +331,19 @@
             },
             {
               "id": "model-preference",
-              "label": "Preference",
+              "title": "Preference",
               "height": "fixed",
               "components": [
                 {
                   "type": "form",
-                  "bind": "model-preference-rows"
+                  "bind": "model-preference-rows",
+                  "action": "set-model-pref"
                 }
               ]
             },
             {
               "id": "peak-hours",
-              "label": "Peak Hours",
+              "title": "Peak Hours",
               "height": "variable",
               "minHeight": 80,
               "components": [
@@ -372,74 +374,131 @@
           ]
         }
       ]
+    },
+    "chat-window": {
+      "title": "Chat",
+      "groups": [
+        {
+          "id": "session",
+          "title": "Session",
+          "sections": [
+            {
+              "id": "session-model",
+              "title": "Model",
+              "height": "fixed",
+              "components": [
+                {
+                  "type": "keyValueList",
+                  "bind": "model-picker-rows"
+                },
+                {
+                  "type": "menuButton",
+                  "label": "Change Model",
+                  "bind": "model-picker-menu",
+                  "title": "Change Model",
+                  "action": "pick-model"
+                },
+                {
+                  "type": "banner",
+                  "bind": "model-picker-note",
+                  "tone": "info"
+                }
+              ]
+            },
+            {
+              "id": "session-stats",
+              "title": "Stats",
+              "height": "fixed",
+              "components": [
+                {
+                  "type": "header",
+                  "bind": "session-header",
+                  "variant": "bar"
+                },
+                {
+                  "type": "keyValueList",
+                  "bind": "session-messages"
+                }
+              ]
+            },
+            {
+              "id": "session-general",
+              "title": "General",
+              "heading": 3,
+              "components": [
+                {
+                  "type": "keyValueList",
+                  "bind": "session-general"
+                }
+              ]
+            },
+            {
+              "id": "session-tokens",
+              "title": "Tokens",
+              "heading": 3,
+              "components": [
+                {
+                  "type": "keyValueList",
+                  "bind": "session-tokens"
+                }
+              ]
+            },
+            {
+              "id": "session-cost",
+              "title": "Cost",
+              "heading": 3,
+              "components": [
+                {
+                  "type": "keyValueList",
+                  "bind": "session-cost"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "preference",
+          "title": "Preference",
+          "sections": [
+            {
+              "id": "prefs",
+              "title": "General",
+              "height": "fixed",
+              "components": [
+                {
+                  "type": "form",
+                  "bind": "prefs-rows",
+                  "action": "set-pref"
+                }
+              ],
+              "heading": 3
+            }
+          ]
+        }
+      ]
+    },
+    "welcome": {
+      "title": "Welcome",
+      "groups": [
+        {
+          "id": "welcome",
+          "title": "Welcome",
+          "sections": [
+            {
+              "id": "welcome-tips",
+              "title": "Getting started",
+              "heading": 3,
+              "components": [
+                {
+                  "type": "text",
+                  "text": "Create a chat from the left panel, or pick one from Chat History. The right panel follows the active tab."
+                }
+              ]
+            }
+          ]
+        }
+      ]
     }
-  },
-  "right": {
-    "title": "Chat",
-    "sections": [
-      {
-        "id": "session",
-        "label": "Session",
-        "subSections": [
-          {
-            "id": "session-model",
-            "label": "Model",
-            "height": "fixed",
-            "components": [
-              {
-                "type": "keyValueList",
-                "bind": "model-picker-rows"
-              },
-              {
-                "type": "menuButton",
-                "label": "Change Model",
-                "bind": "model-picker-menu",
-                "title": "Change Model",
-                "action": "pick-model"
-              },
-              {
-                "type": "banner",
-                "bind": "model-picker-note",
-                "tone": "info"
-              }
-            ]
-          },
-          {
-            "id": "session-stats",
-            "label": "Stats",
-            "height": "fixed",
-            "components": [
-              {
-                "type": "header",
-                "bind": "session-header",
-                "variant": "bar"
-              },
-              {
-                "type": "keyValueList",
-                "bind": "session-stats"
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "id": "preference",
-        "label": "Preference",
-        "subSections": [
-          {
-            "id": "prefs",
-            "label": "Preference",
-            "height": "fixed",
-            "components": [
-              {
-                "type": "form",
-                "bind": "prefs-rows"
-              }
-            ]
-          }
-        ]
-      }
-    ]
   },
   "workspace": {
     "minTileWidth": 220,

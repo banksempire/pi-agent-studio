@@ -633,18 +633,18 @@ const STUB_MODELS = [
     const layoutDefs = JSON.parse(
       fs.readFileSync(path.join(PRODUCT_ROOT, 'src/pi-studio/layout/app.layout.json'), 'utf8'),
     );
-    const catalogSubs = layoutDefs.rightPanels?.['model-catalog']?.sections?.[0]?.subSections ?? [];
+    const catalogSubs = layoutDefs.rightPanels?.['model-catalog']?.groups?.[0]?.sections ?? [];
     const detailDef = catalogSubs.find((s) => s.id === 'model-detail');
     report(
       'Model Detail subsection is content-fit, not variable-height',
-      detailDef?.height === 'fixed' && detailDef?.minHeight === undefined,
+      detailDef?.height !== 'variable' && detailDef?.minHeight === undefined,
       JSON.stringify(detailDef ?? null),
     );
 
     const prefDef = catalogSubs.find((s) => s.id === 'model-preference');
     report(
       'Preference subsection is content-fit, not variable-height',
-      prefDef?.height === 'fixed' && prefDef?.minHeight === undefined,
+      prefDef?.height !== 'variable' && prefDef?.minHeight === undefined,
       JSON.stringify(prefDef ?? null),
     );
 
@@ -668,7 +668,7 @@ const STUB_MODELS = [
     await page.locator('.model-catalog-row', { hasText: 'Stub Mini' }).first().click();
     await delay(400);
     const defPill = page.locator(
-      '[data-sub-body="model-preference"] .sf-pf-row[data-row="default"] .sf-pill-item',
+      '[data-sub-body="model-preference"] .sf-form-field[data-field="default"] .sf-pill-item',
       { hasText: 'Yes' },
     );
     const miniSwitchBefore = await defPill.getAttribute('aria-pressed');
@@ -678,7 +678,7 @@ const STUB_MODELS = [
     const badgeRow = await page.locator('.model-catalog-row:has(.model-catalog-badge)').first().textContent();
     const miniSwitchAfter = await defPill.getAttribute('aria-pressed');
     const miniPills = await page
-      .locator('[data-sub-body="model-preference"] .sf-pf-row[data-row="think"] .sf-pill-item')
+      .locator('[data-sub-body="model-preference"] .sf-form-field[data-field="think"] .sf-pill-item')
       .count();
     const srcNote = await page.locator('[data-sub-body="model-preference"] .sf-pf-note').count();
     report(
@@ -698,41 +698,43 @@ const STUB_MODELS = [
     await page.locator('.model-catalog-row', { hasText: 'Stub Pro' }).first().click();
     await delay(400);
     await page
-      .locator('[data-sub-body="model-preference"] .sf-pf-row[data-row="default"] .sf-pill-item', {
+      .locator('[data-sub-body="model-preference"] .sf-form-field[data-field="default"] .sf-pill-item', {
         hasText: 'Yes',
       })
       .click();
     await delay(600);
     const proPills = await page
-      .locator('[data-sub-body="model-preference"] .sf-pf-row[data-row="think"] .sf-pill-item')
+      .locator('[data-sub-body="model-preference"] .sf-form-field[data-field="think"] .sf-pill-item')
       .count();
     const pillGap = await page.evaluate(() => {
-      const row = document.querySelector('[data-sub-body="model-preference"] .sf-pf-row[data-row="think"]');
+      const row = document.querySelector(
+        '[data-sub-body="model-preference"] .sf-form-field[data-field="think"]',
+      );
       const track = row?.querySelector('.sf-pill-track');
       if (!row || !track) return null;
       return Math.round(row.getBoundingClientRect().right - track.getBoundingClientRect().right);
     });
     const pillItems = await page
-      .locator('[data-sub-body="model-preference"] .sf-pf-row[data-row="think"] .sf-pill-item')
+      .locator('[data-sub-body="model-preference"] .sf-form-field[data-field="think"] .sf-pill-item')
       .count();
     const itemW = await page.evaluate(() => {
       const el = document.querySelector(
-        '[data-sub-body="model-preference"] .sf-pf-row[data-row="think"] .sf-pill-item',
+        '[data-sub-body="model-preference"] .sf-form-field[data-field="think"] .sf-pill-item',
       );
       return el ? Math.round(el.getBoundingClientRect().width) : 0;
     });
     const activeBefore = await page
-      .locator('[data-sub-body="model-preference"] .sf-pf-row[data-row="think"] .sf-pill-item--on')
+      .locator('[data-sub-body="model-preference"] .sf-form-field[data-field="think"] .sf-pill-item--on')
       .textContent();
     await page
-      .locator('[data-sub-body="model-preference"] .sf-pf-row[data-row="think"] .sf-pill-item', {
+      .locator('[data-sub-body="model-preference"] .sf-form-field[data-field="think"] .sf-pill-item', {
         hasText: 'High',
       })
       .click();
     await delay(600);
     const levelPost = defaultPosts[defaultPosts.length - 1];
     const activeAfter = await page
-      .locator('[data-sub-body="model-preference"] .sf-pf-row[data-row="think"] .sf-pill-item--on')
+      .locator('[data-sub-body="model-preference"] .sf-form-field[data-field="think"] .sf-pill-item--on')
       .textContent();
     report(
       'thinking-level pills POST thinkLevel with the default model and mark the active level',
@@ -750,7 +752,7 @@ const STUB_MODELS = [
     );
 
     await page
-      .locator('[data-sub-body="model-preference"] .sf-pf-row[data-row="default"] .sf-pill-item', {
+      .locator('[data-sub-body="model-preference"] .sf-form-field[data-field="default"] .sf-pill-item', {
         hasText: 'No',
       })
       .click();
@@ -761,11 +763,11 @@ const STUB_MODELS = [
       .first()
       .textContent();
     const clearSwitch = await page
-      .locator('[data-sub-body="model-preference"] .sf-pf-row[data-row="default"] .sf-pill-item', {
+      .locator('[data-sub-body="model-preference"] .sf-form-field[data-field="default"] .sf-pill-item', {
         hasText: 'Yes',
       })
       .getAttribute('aria-pressed');
-    const clearSrc = await page.locator('[data-sub-body="model-preference"] .sf-pf-note').textContent();
+    const clearSrc = await page.locator('[data-sub-body="model-preference"] .sf-form-info').textContent();
     report(
       'unsetting the default POSTs null and falls back to the latest-chat model',
       !!clearPost &&

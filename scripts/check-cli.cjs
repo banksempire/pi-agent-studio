@@ -234,6 +234,22 @@ async function main() {
   });
   sh('cp', ['-r', `${path.join(PRODUCT_ROOT, 'src')}/.`, path.join(PAIR, 'pi-agent-studio', 'src')]);
 
+  const stampPast = new Date(Date.now() - 60_000);
+  const stampWalk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === 'dist') continue;
+        stampWalk(full);
+      } else {
+        fs.utimesSync(full, stampPast, stampPast);
+      }
+    }
+  };
+  for (const rel of ['src/pi-nest', 'src/pi-studio/server']) {
+    stampWalk(path.join(PAIR, 'pi-agent-studio', rel));
+  }
+
   try {
     const initRes = studio(
       ['init', '--pair-root', PAIR, '--id', ID, `--port`, `web=${webPort}`, '--no-install'],

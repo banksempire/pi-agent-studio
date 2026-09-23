@@ -4,3 +4,4 @@ dist/
 
 !scripts/lib/stub-sdk/dist/
 !scripts/lib/stub-sdk/dist/**
+node_modules

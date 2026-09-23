@@ -285,18 +285,18 @@ async function save() {
   background: rgba(0, 0, 0, 0.15);
   color: var(--sf-text);
   font-family: var(--sf-mono, monospace);
-  font-size: 13px;
+  font-size: 16px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .aph-field-note {
-  font-size: 12px;
-  color: var(--sf-text-muted);
+  font-size: 16px;
+  color: var(--sf-text);
 }
 .aph-live {
   font-family: var(--sf-mono, monospace);
-  font-size: 12px;
-  color: var(--sf-text-muted);
+  font-size: 16px;
+  color: var(--sf-text);
 }
 </style>

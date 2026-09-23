@@ -100,7 +100,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
   background: rgba(255, 255, 255, 0.08);
   color: var(--sf-text, #e8e8ea);
   font-family: var(--sf-font, inherit);
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.5;
 }
 .img-review-gallery {

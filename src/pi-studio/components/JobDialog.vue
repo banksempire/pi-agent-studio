@@ -745,8 +745,8 @@ const dialogDoc = computed<PopupDocument>(() => {
   align-items: baseline;
   gap: 10px;
   flex-wrap: wrap;
-  font-size: 12px;
-  color: var(--sf-text-muted);
+  font-size: 16px;
+  color: var(--sf-text);
 }
 .je-meta-id {
   max-width: 220px;
@@ -765,9 +765,8 @@ const dialogDoc = computed<PopupDocument>(() => {
   min-width: 0;
 }
 .je-label-note {
-  font-size: 11px;
-  opacity: 0.75;
-}
+  font-size: 16px;
+  }
 .je-time {
   width: auto;
   min-width: 84px;
@@ -801,14 +800,13 @@ const dialogDoc = computed<PopupDocument>(() => {
 }
 
 .je-label {
-  font-size: 12px;
-  color: var(--sf-text-muted);
+  font-size: 16px;
+  color: var(--sf-text);
 }
 
 .je-hint {
-  font-size: 12px;
-  opacity: 0.65;
-}
+  font-size: 16px;
+  }
 
 .je-hint--warn {
   color: var(--sf-status-warn);
@@ -828,17 +826,15 @@ const dialogDoc = computed<PopupDocument>(() => {
   min-width: 0;
 }
 .je-unit {
-  font-size: 13px;
-  opacity: 0.6;
-}
+  font-size: 16px;
+  }
 .je-every-seg {
   flex: 1 1 auto;
   min-width: 0;
 }
 .je-ctrl-colon {
-  font-size: 13px;
-  opacity: 0.6;
-}
+  font-size: 16px;
+  }
 
 .je-cron-preview {
   display: flex;
@@ -857,20 +853,18 @@ const dialogDoc = computed<PopupDocument>(() => {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  font-size: 12px;
-  opacity: 0.85;
-}
+  font-size: 16px;
+  }
 .je-cron-ref-label {
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  font-size: 11px;
-  opacity: 0.6;
-}
+  font-size: 16px;
+  }
 .je-cron-ref code {
-  font-size: 12px;
+  font-size: 16px;
 }
 .je-cron-desc {
-  font-size: 13px;
+  font-size: 16px;
   color: var(--sf-text-bright);
 }
 .je-cron-next {
@@ -878,22 +872,20 @@ const dialogDoc = computed<PopupDocument>(() => {
   align-items: baseline;
   gap: 12px;
   flex-wrap: wrap;
-  font-size: 12px;
-  opacity: 0.85;
-}
+  font-size: 16px;
+  }
 .je-cron-next-label {
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  font-size: 11px;
-  opacity: 0.6;
-}
+  font-size: 16px;
+  }
 .je-cron-next-item em {
   font-style: normal;
   opacity: 0.6;
   margin-left: 5px;
 }
 .je-cron-error {
-  font-size: 13px;
+  font-size: 16px;
   color: var(--sf-danger);
 }
 
@@ -912,15 +904,13 @@ const dialogDoc = computed<PopupDocument>(() => {
   align-items: baseline;
   gap: 10px;
   flex-wrap: wrap;
-  font-size: 12px;
-  opacity: 0.9;
-}
+  font-size: 16px;
+  }
 .je-offpeak-title {
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  font-size: 11px;
-  opacity: 0.65;
-}
+  font-size: 16px;
+  }
 
 .je-cards {
   display: grid;
@@ -946,14 +936,13 @@ const dialogDoc = computed<PopupDocument>(() => {
   border-color: var(--sf-accent);
 }
 .je-card-title {
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--sf-text-bright);
 }
 .je-card-desc {
-  font-size: 12px;
-  opacity: 0.65;
-}
+  font-size: 16px;
+  }
 .je-session-filter {
   max-width: 320px;
 }

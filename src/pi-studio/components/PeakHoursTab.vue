@@ -340,8 +340,8 @@ async function remove(row: Record<string, unknown>) {
   padding: 0 4px;
   border: 1px solid var(--sf-border);
   border-radius: var(--sf-radius-sm);
-  color: var(--sf-text-muted);
-  font-size: 11px;
+  color: var(--sf-text);
+  font-size: 16px;
   white-space: nowrap;
 }
 

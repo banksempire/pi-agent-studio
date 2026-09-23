@@ -364,8 +364,8 @@ const totalCount = computed(() => {
   align-items: baseline;
   gap: 12px;
   min-width: 0;
-  color: var(--sf-text-muted);
-  font-size: 14px;
+  color: var(--sf-text);
+  font-size: 16px;
 }
 
 .sf-root--mobile .model-catalog-sub-in {

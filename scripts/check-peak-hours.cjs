@@ -561,7 +561,7 @@ async function unitChecks({ report }) {
     const layoutDefs = JSON.parse(
       fs.readFileSync(path.join(PRODUCT_ROOT, 'src/pi-studio/layout/app.layout.json'), 'utf8'),
     );
-    const catalogSubs = layoutDefs.rightPanels?.['model-catalog']?.sections?.[0]?.subSections ?? [];
+    const catalogSubs = layoutDefs.rightPanels?.['model-catalog']?.groups?.[0]?.sections ?? [];
     const peakDef = catalogSubs.find((s) => s.id === 'peak-hours');
     report(
       'layout: peak-hours subsection is variable-height with a minHeight',
@@ -1164,7 +1164,7 @@ async function unitChecks({ report }) {
     report('the tab table has no UTC column', !headText.includes('UTC'), `head=${headText}`);
 
     const peakTabPanelDef = layoutDefs.rightPanels?.['peak-hours'];
-    const peakTabPanelSubs = peakTabPanelDef?.sections?.[0]?.subSections ?? [];
+    const peakTabPanelSubs = peakTabPanelDef?.groups?.[0]?.sections ?? [];
     report(
       'layout: the peak-hours tab right panel shows the model detail',
       peakTabPanelSubs.length === 1 &&

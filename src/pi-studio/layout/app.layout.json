@@ -470,8 +470,7 @@
                   "bind": "prefs-rows",
                   "action": "set-pref"
                 }
-              ],
-              "heading": 3
+              ]
             }
           ]
         }
@@ -487,7 +486,6 @@
             {
               "id": "welcome-tips",
               "title": "Getting started",
-              "heading": 3,
               "components": [
                 {
                   "type": "text",

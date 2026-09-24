@@ -2,7 +2,7 @@
 import SvgIcon from '@sf/components/SvgIcon.vue';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ActionBubble, ActionGroup, type ActionKind, type ActionStatus, actionName } from '../actionBubble';
 import { dataUrlOf, processImageFile } from '../imageAttach';
 import {
@@ -261,6 +261,7 @@ function onTouchEnd() {
 function onScroll() {
   const el = listEl.value;
   if (!el) return;
+  if (suppressScrollMemo) return;
   if (touchDownCount > 0) gestureScrolled = true;
   const st = chatScrollOf(props.sessionId);
   const { max, st: stv, distFromTop } = posInfo(el);
@@ -279,6 +280,7 @@ async function loadOlder() {
 }
 
 const keepBottom = () => {
+  if (!viewActive) return;
   if (sticky()) {
     nextTick(scrollToBottom);
     return;
@@ -949,10 +951,29 @@ onMounted(() => {
         firstObs = false;
         return;
       }
+      if (!viewActive) return;
       if (sticky()) scrollToBottom();
     });
     listObserver.observe(el);
   }
+});
+
+let suppressScrollMemo = false;
+let viewActive = true;
+
+onDeactivated(() => {
+  viewActive = false;
+});
+
+onActivated(() => {
+  suppressScrollMemo = true;
+  restoreScroll(props.sessionId);
+  nextTick(() => {
+    nextTick(() => {
+      suppressScrollMemo = false;
+    });
+  });
+  viewActive = true;
 });
 
 onUnmounted(() => {

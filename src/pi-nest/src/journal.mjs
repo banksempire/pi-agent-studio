@@ -18,6 +18,16 @@ function parseImages(json) {
   }
 }
 
+function parseQueueData(json) {
+  if (!json) return null;
+  try {
+    const v = JSON.parse(json);
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 function openDatabase(dbPath) {
   mkdirSync(path.dirname(dbPath), { recursive: true });
   let db = null;
@@ -81,6 +91,9 @@ function applySchema(db) {
   const uiQueueCols = db.prepare('PRAGMA table_info(ui_queue)').all();
   if (!uiQueueCols.some((c) => c.name === 'kind')) {
     db.exec("ALTER TABLE ui_queue ADD COLUMN kind TEXT NOT NULL DEFAULT 'message'");
+  }
+  if (!uiQueueCols.some((c) => c.name === 'data')) {
+    db.exec("ALTER TABLE ui_queue ADD COLUMN data TEXT NOT NULL DEFAULT ''");
   }
   db.exec(`
     CREATE TABLE IF NOT EXISTS jobs (
@@ -180,10 +193,14 @@ export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null 
     snapshotPartial: db.prepare('UPDATE queue_items SET partial_text = ? WHERE id = ?'),
     remove: db.prepare('DELETE FROM queue_items WHERE id = ?'),
     removeSessionQueue: db.prepare('DELETE FROM queue_items WHERE session_file = ?'),
-    uiEnqueue: db.prepare('INSERT INTO ui_queue (session_file, message, images, kind) VALUES (?, ?, ?, ?)'),
-    uiList: db.prepare('SELECT id, message, images, kind FROM ui_queue WHERE session_file = ? ORDER BY id'),
+    uiEnqueue: db.prepare(
+      'INSERT INTO ui_queue (session_file, message, images, kind, data) VALUES (?, ?, ?, ?, ?)',
+    ),
+    uiList: db.prepare(
+      'SELECT id, message, images, kind, data FROM ui_queue WHERE session_file = ? ORDER BY id',
+    ),
     uiAll: db.prepare(
-      'SELECT id, session_file, message, images, kind FROM ui_queue ORDER BY session_file, id',
+      'SELECT id, session_file, message, images, kind, data FROM ui_queue ORDER BY session_file, id',
     ),
     uiUpdate: db.prepare('UPDATE ui_queue SET message = ? WHERE id = ? AND session_file = ?'),
     uiDelete: db.prepare('DELETE FROM ui_queue WHERE id = ? AND session_file = ?'),
@@ -385,9 +402,15 @@ export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null 
         warn('removeSession', e);
       }
     },
-    addUiQueue(sessionFile, { kind = 'message', message, images = [] }) {
+    addUiQueue(sessionFile, { kind = 'message', message, images = [], data = null }) {
       try {
-        const r = stmt.uiEnqueue.run(sessionFile, message, JSON.stringify(images ?? []), kind);
+        const r = stmt.uiEnqueue.run(
+          sessionFile,
+          message,
+          JSON.stringify(images ?? []),
+          kind,
+          data ? JSON.stringify(data) : '',
+        );
         return Number(r.lastInsertRowid);
       } catch (e) {
         warn('addUiQueue', e);
@@ -401,6 +424,7 @@ export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null 
           text: r.message,
           images: parseImages(r.images),
           kind: r.kind ?? 'message',
+          data: parseQueueData(r.data),
         }));
       } catch (e) {
         warn('listUiQueue', e);
@@ -418,6 +442,7 @@ export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null 
             text: r.message,
             images: parseImages(r.images),
             kind: r.kind ?? 'message',
+            data: parseQueueData(r.data),
           });
         }
         return out;
@@ -467,15 +492,17 @@ export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null 
         const rows = stmt.uiAll.all();
         const pendingOf = new Map();
         for (const r of rows) {
-          const key = `${r.session_file}\u0000${r.message}`;
-          if (!pendingOf.has(key)) {
-            pendingOf.set(key, Number(stmt.pendingBySession.get(r.session_file, r.message)?.n ?? 0));
-          }
-          const owned = pendingOf.get(key);
-          if (owned > 0) {
-            pendingOf.set(key, owned - 1);
-            stmt.uiDelete.run(r.id, r.session_file);
-            continue;
+          if (r.kind === 'message') {
+            const key = `${r.session_file}\u0000${r.message}`;
+            if (!pendingOf.has(key)) {
+              pendingOf.set(key, Number(stmt.pendingBySession.get(r.session_file, r.message)?.n ?? 0));
+            }
+            const owned = pendingOf.get(key);
+            if (owned > 0) {
+              pendingOf.set(key, owned - 1);
+              stmt.uiDelete.run(r.id, r.session_file);
+              continue;
+            }
           }
           if (!out.has(r.session_file)) out.set(r.session_file, []);
           out.get(r.session_file).push({
@@ -483,6 +510,7 @@ export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null 
             text: r.message,
             images: parseImages(r.images),
             kind: r.kind ?? 'message',
+            data: parseQueueData(r.data),
           });
         }
         db.exec('COMMIT');

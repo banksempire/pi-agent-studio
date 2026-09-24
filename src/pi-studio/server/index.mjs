@@ -1328,24 +1328,31 @@ const server = createServer(async (req, res) => {
     }
 
     if (p === '/api/queue' && req.method === 'POST') {
-      const { file, message, images, kind } = await readBody(req);
+      const { file, message, images, kind, model, thinking } = await readBody(req);
       if (!file) {
         return sendJson(res, 400, { error: 'file required' });
       }
       const isCompact = kind === 'compact';
-      if (kind !== undefined && !isCompact) {
-        return sendJson(res, 400, { error: "kind must be 'compact'" });
+      const isModel = kind === 'model';
+      if (kind !== undefined && !isCompact && !isModel) {
+        return sendJson(res, 400, { error: "kind must be 'compact' or 'model'" });
       }
-      if (!isCompact && typeof message !== 'string') {
+      if (!isCompact && !isModel && typeof message !== 'string') {
         return sendJson(res, 400, { error: 'file and message required' });
       }
       const norm = normalizeAttachments(images);
       if (norm.error) return sendJson(res, 400, { error: norm.error });
-      if (!isCompact && !message.trim() && !norm.images.length) {
+      if (!isCompact && !isModel && !message.trim() && !norm.images.length) {
         return sendJson(res, 400, { error: 'file and message required' });
       }
-      if (isCompact && ((message ?? '').trim() || norm.images.length)) {
-        return sendJson(res, 400, { error: 'a queued compact carries no text or images' });
+      if ((isCompact || isModel) && ((message ?? '').trim() || norm.images.length)) {
+        return sendJson(res, 400, { error: 'a queued command carries no text or images' });
+      }
+      if (isModel && (!(typeof model === 'string') || !model.trim())) {
+        return sendJson(res, 400, { error: 'a queued model change needs a model' });
+      }
+      if (isModel && (!(typeof thinking === 'string') || !thinking.trim())) {
+        return sendJson(res, 400, { error: 'a queued model change needs a thinking level' });
       }
       if (!existsSync(file) && registry && !registry.has(file)) {
         return sendJson(res, 404, { error: 'session file not found' });
@@ -1354,7 +1361,14 @@ const server = createServer(async (req, res) => {
         file,
         isCompact
           ? { kind: 'compact', message: '', images: [] }
-          : { message: message.trim(), images: norm.images },
+          : isModel
+            ? {
+                kind: 'model',
+                message: '',
+                images: [],
+                data: { model: model.trim(), thinking: thinking.trim() },
+              }
+            : { message: message.trim(), images: norm.images },
       );
       if (id === null) return sendJson(res, 500, { error: 'failed to persist queued message' });
       sendJson(res, 200, { ok: true, items: messageQueue.list(file) });
@@ -1386,8 +1400,8 @@ const server = createServer(async (req, res) => {
       if (typeof body.message !== 'string' || !body.message.trim()) {
         return sendJson(res, 400, { error: 'message required' });
       }
-      if (messageQueue.itemOf(file, id)?.kind === 'compact') {
-        return sendJson(res, 400, { error: 'a queued compact cannot be edited' });
+      if (messageQueue.itemOf(file, id)?.kind !== 'message') {
+        return sendJson(res, 400, { error: 'only queued messages can be edited' });
       }
       if (!messageQueue.updateText(file, id, body.message.trim())) {
         return sendJson(res, 404, { error: 'queued message not found' });

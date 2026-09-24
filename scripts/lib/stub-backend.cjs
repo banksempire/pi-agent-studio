@@ -103,7 +103,13 @@ export async function createClient() {
       if (!Array.isArray(models)) models = [];
       return { ok: true, models, default: models[0] ?? null, current: models[0] ?? null, currentThinkingLevel: null };
     },
-    async setModel() {
+    async setModel(evt) {
+      if (process.env.STUB_MODEL_LOG) {
+        fs.appendFileSync(
+          process.env.STUB_MODEL_LOG,
+          JSON.stringify({ agentId: evt && evt.file, model: evt && evt.model, thinkLevel: evt && evt.thinkLevel, ts: Date.now() }) + '\\n',
+        );
+      }
       return { ok: true, notice: '' };
     },
     async refreshCatalog() {

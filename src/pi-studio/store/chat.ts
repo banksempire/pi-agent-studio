@@ -1997,7 +1997,9 @@ export interface QueuedChatMessage {
   id: number;
   text: string;
   images?: { data: string; mimeType: string }[];
-  kind?: 'message' | 'compact';
+  kind?: 'message' | 'compact' | 'model';
+  model?: string;
+  thinking?: string;
 }
 
 const LEGACY_QUEUES_KEY = 'sf-chat:queues';
@@ -2023,12 +2025,29 @@ export function queuedMessagesOf(sessionId: string): QueuedChatMessage[] {
 }
 
 function cloneItems(items: QueuedChatMessage[]): QueuedChatMessage[] {
-  return items.map((m) => ({
-    id: m.id,
-    text: m.text,
-    kind: m.kind,
-    ...(m.images?.length ? { images: m.images.map((im) => ({ ...im })) } : {}),
-  }));
+  return items.map((m) => {
+    const data = (m as { data?: { model?: unknown; thinking?: unknown } | null }).data;
+    const model =
+      typeof m.model === 'string' && m.model
+        ? m.model
+        : typeof data?.model === 'string'
+          ? data.model
+          : undefined;
+    const thinking =
+      typeof m.thinking === 'string' && m.thinking
+        ? m.thinking
+        : typeof data?.thinking === 'string'
+          ? data.thinking
+          : undefined;
+    return {
+      id: m.id,
+      text: m.text,
+      kind: m.kind,
+      ...(model ? { model } : {}),
+      ...(thinking ? { thinking } : {}),
+      ...(m.images?.length ? { images: m.images.map((im) => ({ ...im })) } : {}),
+    };
+  });
 }
 
 function setQueue(file: string, items: QueuedChatMessage[]) {
@@ -2163,6 +2182,38 @@ export async function enqueueCompact(sessionId: string): Promise<boolean> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ file: s.file, kind: 'compact' }),
+    });
+    setQueue(s.file, items ?? []);
+    return true;
+  } catch (e) {
+    const q = queuesByFile[s.file];
+    if (q) {
+      const i = q.findIndex((m) => m.id === temp.id);
+      if (i >= 0) q.splice(i, 1);
+    }
+    if (!(e instanceof TypeError)) {
+      setSessionError(sessionId, e instanceof Error ? e.message : String(e));
+    } else {
+      state.backend = 'offline';
+    }
+    return false;
+  }
+}
+
+export async function enqueueModelChange(
+  sessionId: string,
+  model: string,
+  thinking: string,
+): Promise<boolean> {
+  const s = findSession(sessionId);
+  if (!s || !model.trim() || !thinking.trim()) return false;
+  const temp: QueuedChatMessage = { id: -Date.now(), text: '', kind: 'model', model, thinking };
+  queueListOf(s.file).push(temp);
+  try {
+    const { items } = await api<{ items: QueuedChatMessage[] }>('/api/queue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: s.file, kind: 'model', model, thinking }),
     });
     setQueue(s.file, items ?? []);
     return true;
@@ -2608,6 +2659,7 @@ export const store = {
   queuedMessagesOf,
   enqueueMessage,
   enqueueCompact,
+  enqueueModelChange,
   removeQueuedMessage,
   updateQueuedMessage,
   queueEditHold,

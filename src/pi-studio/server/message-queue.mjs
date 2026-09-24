@@ -71,7 +71,13 @@ export function createMessageQueue({
     emit({
       type: 'queue_update',
       file,
-      items: st.items.map((m) => ({ id: m.id, text: m.text, images: m.images, kind: m.kind })),
+      items: st.items.map((m) => ({
+        id: m.id,
+        text: m.text,
+        images: m.images,
+        kind: m.kind,
+        ...(m.data ? { data: m.data } : {}),
+      })),
       held: isHeld(st),
     });
   }
@@ -112,11 +118,11 @@ export function createMessageQueue({
     }
   }
 
-  function enqueue(file, { kind = 'message', message, images = [] }) {
+  function enqueue(file, { kind = 'message', message, images = [], data = null }) {
     const st = stateOf(file);
-    const id = journal ? journal.addUiQueue(file, { kind, message, images }) : memorySeq--;
+    const id = journal ? journal.addUiQueue(file, { kind, message, images, data }) : memorySeq--;
     if (id === null || id === undefined) return null;
-    st.items.push({ id, text: message, images, kind });
+    st.items.push({ id, text: message, images, kind, data });
     st.retryAt = 0;
     st.failStreak = 0;
     broadcast(file);
@@ -127,7 +133,13 @@ export function createMessageQueue({
   function list(file) {
     const st = sessions.get(file);
     if (!st) return [];
-    return st.items.map((m) => ({ id: m.id, text: m.text, images: m.images, kind: m.kind }));
+    return st.items.map((m) => ({
+      id: m.id,
+      text: m.text,
+      images: m.images,
+      kind: m.kind,
+      ...(m.data ? { data: m.data } : {}),
+    }));
   }
 
   function all() {
@@ -156,7 +168,7 @@ export function createMessageQueue({
     const st = sessions.get(file);
     if (!st) return false;
     const item = st.items.find((m) => m.id === id);
-    if (!item || item.kind === 'compact') return false;
+    if (item?.kind !== 'message') return false;
     item.text = text;
     if (journal) journal.updateUiQueue(id, file, text);
     broadcast(file);
@@ -236,12 +248,23 @@ export function createMessageQueue({
               if (!r?.ok) throw new Error(r?.error || 'compaction refused');
               return r;
             })
-          : client.prompt({
-              agentId: file,
-              message: item.text,
-              interrupt: false,
-              images: item.images ?? [],
-            });
+          : item.kind === 'model'
+            ? client
+                .setModel({
+                  file,
+                  model: item.data?.model ?? '',
+                  thinkLevel: item.data?.thinking ?? '',
+                })
+                .then((r) => {
+                  if (!r?.ok) throw new Error(r?.error || 'model change refused');
+                  return r;
+                })
+            : client.prompt({
+                agentId: file,
+                message: item.text,
+                interrupt: false,
+                images: item.images ?? [],
+              });
       const p = Promise.resolve(delivery);
       st.items.shift();
       broadcast(file);
@@ -250,7 +273,7 @@ export function createMessageQueue({
           st.failStreak = 0;
           st.retryAt = 0;
           if (journal) journal.deleteUiQueue(item.id, file);
-          if (item.kind === 'compact') {
+          if (item.kind !== 'message') {
             st.inflight = false;
             flushIfIdle(file);
           }

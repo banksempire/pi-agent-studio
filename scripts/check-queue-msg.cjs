@@ -22,6 +22,7 @@ const SESSIONS_ROOT = path.join(RUN_ROOT, 'sessions');
 const STATES_PATH = path.join(RUN_ROOT, 'states.json');
 const PROMPT_LOG = path.join(RUN_ROOT, 'prompts.jsonl');
 const SLASH_LOG = path.join(RUN_ROOT, 'slash.jsonl');
+const MODEL_LOG = path.join(RUN_ROOT, 'models.jsonl');
 const STUB_MODELS = [
   {
     id: 'stub-pro',
@@ -32,6 +33,19 @@ const STUB_MODELS = [
     maxTokens: 8192,
     cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
     input: ['text', 'image'],
+    api: 'openai-completions',
+    baseUrl: 'https://stub.example/v1',
+    thinkingLevels: ['off', 'low', 'medium', 'high'],
+  },
+  {
+    id: 'stub-flash',
+    provider: 'stub',
+    name: 'Stub Flash',
+    reasoning: true,
+    contextWindow: 64000,
+    maxTokens: 4096,
+    cost: { input: 1, output: 4, cacheRead: 0.1, cacheWrite: 1.25 },
+    input: ['text'],
     api: 'openai-completions',
     baseUrl: 'https://stub.example/v1',
     thinkingLevels: ['off', 'low', 'medium', 'high'],
@@ -151,6 +165,18 @@ function readSlashes() {
   }
 }
 
+function readModels() {
+  try {
+    return fs
+      .readFileSync(MODEL_LOG, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+  } catch {
+    return [];
+  }
+}
+
 async function clickWhenVisible(locator, timeout = 15000) {
   await locator.waitFor({ state: 'visible', timeout });
   await locator.dispatchEvent('click');
@@ -174,6 +200,21 @@ function getJson(port, p) {
   });
 }
 
+function patchStatus(port, p, body) {
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify(body);
+    const req = http.request(
+      { host: '127.0.0.1', port, path: p, method: 'PATCH', headers: { 'Content-Type': 'application/json' } },
+      (res) => {
+        res.resume();
+        res.on('end', () => resolve(res.statusCode));
+      },
+    );
+    req.on('error', reject);
+    req.end(data);
+  });
+}
+
 (async () => {
   const { report, isFailed } = makeReporter();
   const procs = [];
@@ -189,6 +230,7 @@ function getJson(port, p) {
     const stub = writeStubClient(RUN_ROOT);
     const F = writeSessionFile('queue-msg-check');
     fs.rmSync(PROMPT_LOG, { force: true });
+    fs.rmSync(MODEL_LOG, { force: true });
 
     procs.push(
       spawnStackProc(spawn, SUITE_STAMP, 'node', ['src/pi-studio/server/index.mjs'], {
@@ -201,6 +243,7 @@ function getJson(port, p) {
           STUB_CONTROL_FILE: stub.controlPath,
           STUB_PROMPT_LOG: PROMPT_LOG,
           STUB_SLASH_LOG: SLASH_LOG,
+          STUB_MODEL_LOG: MODEL_LOG,
           STUB_MODELS_JSON: JSON.stringify(STUB_MODELS),
           PI_STUDIO_SESSIONS: SESSIONS_ROOT,
           PI_STUDIO_STATES_PATH: STATES_PATH,
@@ -1005,6 +1048,104 @@ function getJson(port, p) {
         compactishPromptsBefore,
     );
     report('queue fully drains after the compact', await waitCount(boxes, 0));
+
+    console.log('model or thinking change while the session works queues a model item (FIFO)');
+    await idleUntilSend();
+    await waitCount(boxes, 0);
+    const pickerBtn = page.locator('[data-sub-body="session-model"] .sf-pc-menubtn');
+    const pickModel = async (modelName, level) => {
+      await clickWhenVisible(pickerBtn);
+      await page.waitForSelector('.sf-menu-pop', { timeout: 5000 });
+      await page.locator('.sf-menu-row', { hasText: 'stub' }).first().hover();
+      await page.locator('.sf-menu-row', { hasText: modelName }).waitFor({ timeout: 5000 });
+      await page.locator('.sf-menu-row', { hasText: modelName }).hover();
+      await page.locator('.sf-menu-row:visible', { hasText: level }).first().click();
+      await delay(300);
+    };
+    await pickModel('Stub Pro', 'high');
+    let idleModel = null;
+    for (let i = 0; i < 40; i++) {
+      idleModel = readModels().find((m) => m.model === 'stub/stub-pro' && m.thinkLevel === 'high');
+      if (idleModel) break;
+      await delay(250);
+    }
+    report(
+      'idle model pick still applies immediately (no queue box)',
+      !!idleModel && (await boxes.count()) === 0,
+    );
+
+    await runUntilStop();
+    await input.fill('queued behind model');
+    await clickWhenVisible(queueBtn);
+    await waitCount(boxes, 1);
+    const runningModelCalls = readModels().length;
+    await pickModel('Stub Flash', 'high');
+    await waitCount(boxes, 2);
+    const modelTexts = await boxes.allInnerTexts();
+    report(
+      'model pick while running queues a box behind the pending text',
+      modelTexts.length === 2 &&
+        modelTexts[0].includes('queued behind model') &&
+        modelTexts[1].includes('Model: stub/stub-flash') &&
+        modelTexts[1].includes('high'),
+      JSON.stringify(modelTexts),
+    );
+    report(
+      'a queued model change is not applied while the session still runs',
+      readModels().length === runningModelCalls,
+    );
+    const modelBox = boxes.nth(1);
+    report(
+      'queued model box has no edit button',
+      (await modelBox.locator('[title="Edit this queued message"]').count()) === 0,
+    );
+    report(
+      'queued model box can be removed like any queued item',
+      (await modelBox.locator('[title="Remove from queue"]').count()) === 1,
+    );
+    const qView = await getJson(backendPort, `/api/queue?file=${encodeURIComponent(F)}`);
+    const modelItem = (qView?.items ?? []).find((i) => i.kind === 'model');
+    report(
+      'queued model item carries model and thinking to the gateway',
+      !!modelItem && modelItem.data?.model === 'stub/stub-flash' && modelItem.data?.thinking === 'high',
+      JSON.stringify(qView),
+    );
+    const patchSt = await patchStatus(
+      backendPort,
+      `/api/queue/${modelItem.id}?file=${encodeURIComponent(F)}`,
+      {
+        message: 'hijacked',
+      },
+    );
+    report('a queued model change is refused by PATCH', patchSt === 400, `status:${patchSt}`);
+    await pickModel('Stub Flash', 'medium');
+    await waitCount(boxes, 3);
+    await boxes.nth(2).locator('[title="Remove from queue"]').click();
+    await waitCount(boxes, 2);
+    report('a queued model change can be removed before delivery', (await boxes.count()) === 2);
+
+    await idleUntilSend();
+    let modelFlushText = null;
+    for (let i = 0; i < 40; i++) {
+      modelFlushText = readPrompts().find((p) => p.agentId === F && p.message === 'queued behind model');
+      if (modelFlushText) break;
+      await delay(250);
+    }
+    report('session going idle flushes the queued text before the model change', !!modelFlushText);
+    await setStatus('idle');
+    let queuedModelHit = null;
+    for (let i = 0; i < 40; i++) {
+      queuedModelHit = readModels().find((m) => m.model === 'stub/stub-flash' && m.thinkLevel === 'high');
+      if (queuedModelHit) break;
+      await delay(250);
+    }
+    report('the next idle transition applies the queued model change', !!queuedModelHit);
+    report(
+      'delivery order is prompt → model change (FIFO never broken)',
+      !!modelFlushText && !!queuedModelHit && modelFlushText.ts <= queuedModelHit.ts,
+      `text:${modelFlushText?.ts} model:${queuedModelHit?.ts}`,
+    );
+    report('queue fully drains after the model change', await waitCount(boxes, 0));
 
     await runUntilStop();
     await input.fill('via enter');

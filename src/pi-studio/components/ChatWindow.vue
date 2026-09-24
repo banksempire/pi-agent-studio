@@ -723,13 +723,16 @@ function openQueueReview(q: QueuedChatMessage) {
 
 function queueBoxTitle(q: QueuedChatMessage): string {
   if (q.kind === 'compact') return 'Compact the context — runs when the session finishes';
+  if (q.kind === 'model') return 'Model change — applies when the session finishes';
   const n = q.images?.length ?? 0;
   if (!n) return q.text;
   return `${q.text || 'Image'} · ${n} image${n === 1 ? '' : 's'} — click to view`;
 }
 
 function queueLabel(q: QueuedChatMessage): string {
-  return q.kind === 'compact' ? 'Compact context' : q.text;
+  if (q.kind === 'compact') return 'Compact context';
+  if (q.kind === 'model') return `Model: ${q.model ?? '?'} · ${q.thinking ?? '?'}`;
+  return q.text;
 }
 
 const editingQueue = ref<QueuedChatMessage | null>(null);
@@ -1219,6 +1222,7 @@ watch(
             :class="{
               'chat-queue-box--viewable': !!q.images?.length,
               'chat-queue-box--compact': q.kind === 'compact',
+              'chat-queue-box--model': q.kind === 'model',
             }"
             :title="queueBoxTitle(q)"
             data-testid="chat-queue-box"
@@ -1229,10 +1233,15 @@ watch(
               name="⏳"
               class="chat-queue-img-ind"
             />
+            <SvgIcon
+              v-else-if="q.kind === 'model'"
+              name="⇄"
+              class="chat-queue-img-ind"
+            />
             <SvgIcon v-else-if="q.images?.length" name="🖼" class="chat-queue-img-ind" />
             <span class="chat-queue-text" :title="queueLabel(q)">{{ queueLabel(q) }}</span>
             <button
-              v-if="q.kind !== 'compact'"
+              v-if="q.kind === 'message' || !q.kind"
               class="chat-queue-act"
               title="Edit this queued message"
               @click.stop="editQueued(q)"

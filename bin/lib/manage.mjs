@@ -2,6 +2,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
+import { copyModulesFrom } from './copy-modules.mjs';
 import {
   appendAudit,
   instanceRepoRoot,
@@ -96,24 +97,6 @@ function validatePair(pairRoot) {
   return { repo, sf };
 }
 
-function copyModulesFrom(srcRepo, dstRepo) {
-  const src = path.join(srcRepo, 'node_modules');
-  const dst = path.join(dstRepo, 'node_modules');
-  if (fs.existsSync(dst) || !fs.existsSync(src)) return false;
-  try {
-    execFileSync('cp', ['-al', src, dst], { stdio: 'ignore' });
-    return true;
-  } catch {
-    fs.rmSync(dst, { recursive: true, force: true });
-    try {
-      fs.cpSync(src, dst, { recursive: true, verbatimSymlinks: true });
-      return true;
-    } catch {
-      return false;
-    }
-  }
-}
-
 async function npmInstallIfMissing(dir, { skip = false } = {}) {
   if (fs.existsSync(path.join(dir, 'node_modules'))) return false;
   if (skip) {
@@ -166,9 +149,11 @@ export async function cmdInit(out, opts = {}) {
     ? path.resolve(opts.sessions)
     : path.join(pairRoot, '.studio', 'sessions');
   fs.mkdirSync(sessionsDir, { recursive: true });
-  const copiedPa = copyModulesFrom(PRODUCT_ROOT, repo);
-  const copiedSf = copyModulesFrom(SF_ROOT, path.join(pairRoot, 'StudioFramework'));
-  if (copiedPa || copiedSf) out.line(`${okSym} node_modules hardlink-copied (no install needed)`);
+  const copiedPa = copyModulesFrom(PRODUCT_ROOT, repo, out);
+  const copiedSf = copyModulesFrom(SF_ROOT, path.join(pairRoot, 'StudioFramework'), out);
+  if (copiedPa !== 'failed' && copiedSf !== 'failed' && (copiedPa === 'copied' || copiedSf === 'copied')) {
+    out.line(`${okSym} node_modules hardlink-copied (no install needed)`);
+  }
   const skippedPa = await npmInstallIfMissing(repo, { skip: opts.noInstall });
   const skippedSf = await npmInstallIfMissing(path.join(pairRoot, 'StudioFramework'), {
     skip: opts.noInstall,

@@ -25,15 +25,48 @@ function readAsDataUrl(file: File): Promise<string> {
   });
 }
 
+function base64Of(dataUrl: string): string {
+  const comma = dataUrl.indexOf(',');
+  return comma === -1 ? '' : dataUrl.slice(comma + 1);
+}
+
+export function sniffedImageMime(base64: string): string | null {
+  let head: string;
+  try {
+    head = atob(base64.slice(0, 24));
+  } catch {
+    return null;
+  }
+  const bytes = new Uint8Array(head.length);
+  for (let i = 0; i < head.length; i++) bytes[i] = head.charCodeAt(i);
+  const startsWith = (offset: number, marker: string) => {
+    for (let i = 0; i < marker.length; i++) {
+      if (bytes[offset + i] !== marker.charCodeAt(i)) return false;
+    }
+    return true;
+  };
+  if (startsWith(0, '\x89PNG')) return 'image/png';
+  if (bytes[0] === 0xff && bytes[1] === 0xd8) return 'image/jpeg';
+  if (startsWith(0, 'GIF8')) return 'image/gif';
+  if (startsWith(0, 'RIFF') && startsWith(8, 'WEBP')) return 'image/webp';
+  if (startsWith(0, 'BM')) return 'image/bmp';
+  return null;
+}
+
 export async function processImageFile(file: File): Promise<AttachedImage> {
   const dataUrl = await readAsDataUrl(file);
   const img = await loadImage(dataUrl);
   const w = img.naturalWidth;
   const h = img.naturalHeight;
   if (!w || !h) throw new Error('not a valid image');
-  if (w <= MAX_EDGE && h <= MAX_EDGE && file.size <= MAX_KEEP_BYTES) {
-    const comma = dataUrl.indexOf(',');
-    return { data: dataUrl.slice(comma + 1), mimeType: file.type || 'image/png' };
+  const sniffed = sniffedImageMime(base64Of(dataUrl));
+  if (
+    (sniffed === 'image/png' || sniffed === 'image/jpeg') &&
+    w <= MAX_EDGE &&
+    h <= MAX_EDGE &&
+    file.size <= MAX_KEEP_BYTES
+  ) {
+    return { data: base64Of(dataUrl), mimeType: sniffed };
   }
   const scale = Math.min(1, MAX_EDGE / Math.max(w, h));
   const canvas = document.createElement('canvas');
@@ -45,8 +78,7 @@ export async function processImageFile(file: File): Promise<AttachedImage> {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   const out = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
-  const comma = out.indexOf(',');
-  return { data: out.slice(comma + 1), mimeType: 'image/jpeg' };
+  return { data: base64Of(out), mimeType: 'image/jpeg' };
 }
 
 export function dataUrlOf(im: AttachedImage): string {

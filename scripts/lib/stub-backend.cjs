@@ -64,7 +64,16 @@ export async function createClient() {
       if (process.env.STUB_PROMPT_LOG) {
         fs.appendFileSync(
           process.env.STUB_PROMPT_LOG,
-          JSON.stringify({ agentId: evt && evt.agentId, message: evt && evt.message, interrupt: evt && evt.interrupt, images: evt && evt.images ? evt.images.length : 0, ts: Date.now() }) + '\\n',
+          JSON.stringify({
+            agentId: evt && evt.agentId,
+            message: evt && evt.message,
+            interrupt: evt && evt.interrupt,
+            images: evt && evt.images ? evt.images.length : 0,
+            imageDetails: Array.isArray(evt && evt.images)
+              ? evt.images.map((im) => ({ mime: im && im.mimeType, head: String((im && im.data) || '').slice(0, 8) }))
+              : [],
+            ts: Date.now(),
+          }) + '\\n',
         );
       }
       const ts = Date.now();

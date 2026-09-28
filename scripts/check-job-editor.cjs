@@ -992,7 +992,7 @@ function writeSessionFile(name) {
 
     await page.locator('.jobs-tab .sf-tbl-row', { hasText: 'custom-cron job' }).first().click();
     await delay(300);
-    await page.locator('.sf-tab-panel-toggle').first().click();
+    await page.locator('.sf-menu-rp').click();
     await delay(300);
     await page.locator('.jobs-tab .sf-tbl-row', { hasText: 'custom-cron job' }).first().click();
     await delay(600);
@@ -1004,7 +1004,7 @@ function writeSessionFile(name) {
         !!p.querySelector('[data-sub-body="job-history"] .sf-tbl-head')
       );
     });
-    await page.locator('.sf-tab-panel-toggle').first().click();
+    await page.locator('.sf-menu-rp').click();
     await delay(800);
     const hiddenFit = await fitProbe();
     report(

@@ -72,7 +72,7 @@ const renameValues = computed({
 const renameDoc = computed(
   (): PopupDocument => ({
     title: 'Rename',
-    sections: [
+    h2: [
       {
         fields: [
           {
@@ -99,7 +99,7 @@ const confirmDoc = computed(() => confirmDocument());
 const aboutOpen = ref(false);
 const aboutDoc = computed<PopupDocument>(() => ({
   title: 'About pi-agent-studio',
-  sections: [
+  h2: [
     {
       fields: [
         {

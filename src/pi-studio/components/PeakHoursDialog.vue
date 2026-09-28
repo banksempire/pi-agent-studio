@@ -144,7 +144,7 @@ const dialogDoc = computed<PopupDocument>(() => {
     : { key: 'model', type: 'slot' };
   return {
     title: dialogTitle.value,
-    sections: [
+    h2: [
       { title: 'Model', fields: [modelField] },
       {
         title: 'Peak hour',

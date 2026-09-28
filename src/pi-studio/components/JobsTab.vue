@@ -123,7 +123,7 @@ const confirmOpen = ref(false);
 const confirmDoc = computed(
   (): PopupDocument => ({
     title: 'Run immediately?',
-    sections: [
+    h2: [
       {
         fields: [
           {

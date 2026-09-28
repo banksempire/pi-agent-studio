@@ -506,7 +506,7 @@ const dialogDoc = computed<PopupDocument>(() => {
   }
   return {
     title: dialogTitle.value,
-    sections: [
+    h2: [
       {
         title: 'Job name',
         fields: [

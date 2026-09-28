@@ -79,11 +79,11 @@
       "icon": "💬",
       "panel": {
         "title": "Chat",
-        "groups": [
+        "h1": [
           {
             "id": "chat",
             "title": "Chat",
-            "sections": [
+            "h2": [
               {
                 "id": "pinned",
                 "title": "Pinned",
@@ -144,7 +144,7 @@
           {
             "id": "directory",
             "title": "Directory",
-            "sections": [
+            "h2": [
               {
                 "id": "directory",
                 "title": "Directory",
@@ -170,11 +170,11 @@
       "icon": "🗂",
       "panel": {
         "title": "Workspaces",
-        "groups": [
+        "h1": [
           {
             "id": "workspaces",
             "title": "Workspaces",
-            "sections": [
+            "h2": [
               {
                 "id": "ws-panel",
                 "title": "Saved Workspaces",
@@ -196,11 +196,11 @@
   "rightPanels": {
     "jobs": {
       "title": "SCHEDULER",
-      "groups": [
+      "h1": [
         {
           "id": "detail",
           "title": "Detail",
-          "sections": [
+          "h2": [
             {
               "id": "job-detail",
               "title": "Job Detail",
@@ -270,7 +270,7 @@
         {
           "id": "preference",
           "title": "Preference",
-          "sections": [
+          "h2": [
             {
               "id": "scheduler-prefs",
               "title": "Concurrent Job",
@@ -289,11 +289,11 @@
     },
     "peak-hours": {
       "title": "Model Detail",
-      "groups": [
+      "h1": [
         {
           "id": "model-detail",
           "title": "Model Detail",
-          "sections": [
+          "h2": [
             {
               "id": "model-detail",
               "title": "Model Detail",
@@ -312,11 +312,11 @@
     },
     "model-catalog": {
       "title": "Model Catalog",
-      "groups": [
+      "h1": [
         {
           "id": "model-catalog",
           "title": "Model Catalog",
-          "sections": [
+          "h2": [
             {
               "id": "model-detail",
               "title": "Model Detail",
@@ -377,11 +377,11 @@
     },
     "chat-window": {
       "title": "Chat",
-      "groups": [
+      "h1": [
         {
           "id": "session",
           "title": "Session",
-          "sections": [
+          "h2": [
             {
               "id": "session-model",
               "title": "Model",
@@ -459,7 +459,7 @@
         {
           "id": "preference",
           "title": "Preference",
-          "sections": [
+          "h2": [
             {
               "id": "prefs",
               "title": "General",
@@ -478,11 +478,11 @@
     },
     "welcome": {
       "title": "Welcome",
-      "groups": [
+      "h1": [
         {
           "id": "welcome",
           "title": "Welcome",
-          "sections": [
+          "h2": [
             {
               "id": "welcome-tips",
               "title": "Getting started",

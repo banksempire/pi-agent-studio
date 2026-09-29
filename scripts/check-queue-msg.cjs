@@ -640,6 +640,91 @@ function patchStatus(port, p, body) {
       readPrompts().filter((p) => p.agentId === F).length === idleBaseline,
     );
 
+    const apiGet = (url) =>
+      new Promise((resolve, reject) => {
+        http
+          .get(url, (res) => {
+            let body = '';
+            res.on('data', (c) => (body += c));
+            res.on('end', () => {
+              try {
+                resolve(JSON.parse(body));
+              } catch (e) {
+                reject(e);
+              }
+            });
+          })
+          .on('error', reject);
+      });
+    const waitBoxOrder = async (want, tries = 24) => {
+      for (let i = 0; i < tries; i++) {
+        const texts = await boxes.allInnerTexts();
+        if (texts.length === want.length && want.every((w, k) => texts[k].includes(w))) return texts;
+        await delay(250);
+      }
+      return boxes.allInnerTexts();
+    };
+
+    await runUntilStop();
+    for (const msg of ['reorder alpha', 'reorder beta', 'reorder gamma']) {
+      await input.fill(msg);
+      await clickWhenVisible(queueBtn);
+      await delay(250);
+    }
+    await delay(400);
+    report('three messages queued for the reorder phase', (await boxes.count()) === 3);
+    report(
+      'queue starts FIFO before any drag',
+      (await waitBoxOrder(['alpha', 'beta', 'gamma'])).length === 3,
+    );
+
+    await boxes.nth(2).locator('.chat-queue-grip').dragTo(boxes.nth(0));
+    report(
+      'dragging the last box onto the first moves it to the head',
+      (await waitBoxOrder(['gamma', 'alpha', 'beta'])).length === 3,
+    );
+    await boxes.nth(1).locator('.chat-queue-grip').dragTo(boxes.nth(2));
+    report(
+      'dragging downward swaps with the target the same way as the watch list',
+      (await waitBoxOrder(['gamma', 'beta', 'alpha'])).length === 3,
+    );
+
+    const gateway = await apiGet(`http://127.0.0.1:${backendPort}/api/queue?file=${encodeURIComponent(F)}`);
+    report(
+      'the gateway queue serves the reordered order',
+      JSON.stringify((gateway.items ?? []).map((m) => m.text)) ===
+        JSON.stringify(['reorder gamma', 'reorder beta', 'reorder alpha']),
+      JSON.stringify(gateway.items ?? []).slice(0, 200),
+    );
+
+    const flushBase = readPrompts().filter((p) => p.agentId === F).length;
+    const waitPrompt = async (want, tries = 40) => {
+      for (let i = 0; i < tries; i++) {
+        const prompts = readPrompts()
+          .filter((p) => p.agentId === F)
+          .slice(flushBase);
+        if (prompts.length >= want.length && want.every((w, k) => prompts[k]?.message === w)) return true;
+        await delay(250);
+      }
+      return false;
+    };
+    await idleUntilSend();
+    report('flush delivers the reordered head first', await waitPrompt(['reorder gamma']));
+    await runUntilStop();
+    await idleUntilSend();
+    report(
+      'the next finish delivers the second reordered message',
+      await waitPrompt(['reorder gamma', 'reorder beta']),
+    );
+    await runUntilStop();
+    await idleUntilSend();
+    report(
+      'the last reordered message keeps its tail position',
+      await waitPrompt(['reorder gamma', 'reorder beta', 'reorder alpha']),
+    );
+    await delay(1500);
+    report('queue empties after the reordered flush', (await boxes.count()) === 0);
+
     await runUntilStop();
     const PNG = Buffer.from(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',

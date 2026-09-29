@@ -193,7 +193,9 @@ function spawnSdkBackend(port) {
 
 function uiQueueRows() {
   const db = new DatabaseSync(DB_PATH);
-  const rows = db.prepare('SELECT session_file, message, kind FROM ui_queue ORDER BY id').all();
+  const rows = db
+    .prepare('SELECT session_file, message, kind, ord FROM ui_queue ORDER BY session_file, ord, id')
+    .all();
   db.close();
   return rows;
 }
@@ -555,6 +557,80 @@ function uiQueueRows() {
     );
 
     fs.writeFileSync(path.join(SDK_STATE_DIR, 'release'), '1');
+
+    console.log('phase 2b — reorder is durable and restores in the new order');
+    const FR = makeSession('mq-reorder');
+    await postJson(backendPort, '/api/queue/hold', { file: FR });
+    const rIds = [];
+    for (const msg of ['reorder alpha', 'reorder beta', 'reorder gamma']) {
+      const r = await postJson(backendPort, '/api/queue', { file: FR, message: msg });
+      rIds.push(r.body.items.at(-1).id);
+    }
+    const rBad = await postJson(backendPort, '/api/queue/reorder', { file: FR, order: [rIds[0], rIds[1]] });
+    report(
+      'reorder rejects an incomplete id list without touching the queue',
+      rBad.status === 409 &&
+        (await getJson(backendPort, `/api/queue?file=${encodeURIComponent(FR)}`)).items.length === 3,
+      `status:${rBad.status}`,
+    );
+    const rResp = await postJson(backendPort, '/api/queue/reorder', {
+      file: FR,
+      order: [rIds[2], rIds[0], rIds[1]],
+    });
+    report(
+      'reorder takes effect over the HTTP API',
+      rResp.status === 200 &&
+        JSON.stringify(rResp.body.items.map((m) => m.text)) ===
+          JSON.stringify(['reorder gamma', 'reorder alpha', 'reorder beta']),
+      JSON.stringify(rResp.body.items?.map((m) => m.text)),
+    );
+    const rowsReordered = uiQueueRows()
+      .filter((r) => r.session_file === FR)
+      .map((r) => r.message);
+    report(
+      'reordered order is durable in ui_queue before any crash',
+      JSON.stringify(rowsReordered) === JSON.stringify(['reorder gamma', 'reorder alpha', 'reorder beta']),
+      JSON.stringify(rowsReordered),
+    );
+    procs[procs.length - 1].kill('SIGKILL');
+    await delay(500);
+    const rowsAfterReorderCrash = uiQueueRows()
+      .filter((r) => r.session_file === FR)
+      .map((r) => r.message);
+    report(
+      'SIGKILL keeps the reordered ui_queue rows',
+      JSON.stringify(rowsAfterReorderCrash) ===
+        JSON.stringify(['reorder gamma', 'reorder alpha', 'reorder beta']),
+      JSON.stringify(rowsAfterReorderCrash),
+    );
+    procs.push(spawnSdkBackend(backendPort));
+    await waitUp(backendPort);
+    let reorderDeliveries = [];
+    for (let i = 0; i < 80; i++) {
+      reorderDeliveries = readSdkPrompts().filter((p) => p.file === FR);
+      if (reorderDeliveries.length >= 3) break;
+      await delay(250);
+    }
+    report(
+      'restart delivers the restored queue in the reordered order',
+      JSON.stringify(reorderDeliveries.map((p) => p.message)) ===
+        JSON.stringify(['reorder gamma', 'reorder alpha', 'reorder beta']),
+      JSON.stringify(reorderDeliveries.map((p) => p.message)),
+    );
+    for (let i = 0; i < 80; i++) {
+      const r = await getJson(backendPort, '/api/agent-states');
+      const st = (r?.states ?? []).find((s) => s.agentId === FR);
+      if (st?.status !== 'running') break;
+      await delay(250);
+    }
+    await delay(500);
+    const uiAfterReorder = uiQueueRows().filter((r) => r.session_file === FR);
+    report(
+      'restored reordered queue drains completely after delivery',
+      uiAfterReorder.length === 0,
+      JSON.stringify(uiAfterReorder.map((r) => r.message)),
+    );
+
     for (let i = 0; i < 80; i++) {
       sdkHits = readSdkPrompts().filter((p) => p.file === FB && p.message === 'durable two');
       if (sdkHits.length >= 1) break;

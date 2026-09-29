@@ -84,7 +84,8 @@ function applySchema(db) {
       session_file TEXT NOT NULL,
       message TEXT NOT NULL,
       images TEXT NOT NULL DEFAULT '[]',
-      kind TEXT NOT NULL DEFAULT 'message'
+      kind TEXT NOT NULL DEFAULT 'message',
+      ord INTEGER NOT NULL DEFAULT 0
     );
   `);
   db.exec('CREATE INDEX IF NOT EXISTS ui_queue_session ON ui_queue(session_file, id)');
@@ -94,6 +95,9 @@ function applySchema(db) {
   }
   if (!uiQueueCols.some((c) => c.name === 'data')) {
     db.exec("ALTER TABLE ui_queue ADD COLUMN data TEXT NOT NULL DEFAULT ''");
+  }
+  if (!uiQueueCols.some((c) => c.name === 'ord')) {
+    db.exec('ALTER TABLE ui_queue ADD COLUMN ord INTEGER NOT NULL DEFAULT 0');
   }
   db.exec(`
     CREATE TABLE IF NOT EXISTS jobs (
@@ -193,15 +197,17 @@ export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null 
     snapshotPartial: db.prepare('UPDATE queue_items SET partial_text = ? WHERE id = ?'),
     remove: db.prepare('DELETE FROM queue_items WHERE id = ?'),
     removeSessionQueue: db.prepare('DELETE FROM queue_items WHERE session_file = ?'),
-    uiEnqueue: db.prepare(
-      'INSERT INTO ui_queue (session_file, message, images, kind, data) VALUES (?, ?, ?, ?, ?)',
-    ),
+    uiEnqueue: db.prepare(`
+      INSERT INTO ui_queue (session_file, message, images, kind, data, ord)
+      SELECT ?, ?, ?, ?, ?, COALESCE(MAX(ord), 0) + 1 FROM ui_queue WHERE session_file = ?
+    `),
     uiList: db.prepare(
-      'SELECT id, message, images, kind, data FROM ui_queue WHERE session_file = ? ORDER BY id',
+      'SELECT id, message, images, kind, data FROM ui_queue WHERE session_file = ? ORDER BY ord, id',
     ),
     uiAll: db.prepare(
-      'SELECT id, session_file, message, images, kind, data FROM ui_queue ORDER BY session_file, id',
+      'SELECT id, session_file, message, images, kind, data FROM ui_queue ORDER BY session_file, ord, id',
     ),
+    uiReord: db.prepare('UPDATE ui_queue SET ord = ? WHERE id = ? AND session_file = ?'),
     uiUpdate: db.prepare('UPDATE ui_queue SET message = ? WHERE id = ? AND session_file = ?'),
     uiDelete: db.prepare('DELETE FROM ui_queue WHERE id = ? AND session_file = ?'),
     uiDeleteSession: db.prepare('DELETE FROM ui_queue WHERE session_file = ?'),
@@ -410,6 +416,7 @@ export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null 
           JSON.stringify(images ?? []),
           kind,
           data ? JSON.stringify(data) : '',
+          sessionFile,
         );
         return Number(r.lastInsertRowid);
       } catch (e) {
@@ -475,6 +482,22 @@ export function openJournal(dbPath, { spillPath = null, legacyStatesPath = null 
         return true;
       } catch (e) {
         warn('deleteUiQueueSession', e);
+        return false;
+      }
+    },
+    reorderUiQueue(sessionFile, orderedIds) {
+      try {
+        db.exec('BEGIN IMMEDIATE');
+        for (let i = 0; i < orderedIds.length; i++) {
+          stmt.uiReord.run(i + 1, orderedIds[i], sessionFile);
+        }
+        db.exec('COMMIT');
+        return true;
+      } catch (e) {
+        try {
+          db.exec('ROLLBACK');
+        } catch {}
+        warn('reorderUiQueue', e);
         return false;
       }
     },

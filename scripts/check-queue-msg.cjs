@@ -550,6 +550,113 @@ function patchStatus(port, p, body) {
     await delay(1000);
     report('queue empties completely after all messages are sent', (await boxes.count()) === 0);
 
+    console.log('phase — an API-errored finish pauses the queue and turns Send into Retry');
+    await runUntilStop();
+    await input.fill('paused queued message');
+    await clickWhenVisible(queueBtn);
+    await delay(400);
+    stub.emit('message', F, {
+      id: 'err-1',
+      role: 'assistant',
+      text: '',
+      stopReason: 'error',
+      error: '429: rate limited',
+      ts: Date.now(),
+    });
+    await setStatus('idle');
+    const retryBtn = page.locator('.chat-send-btn--retry');
+    let retryShown = false;
+    for (let i = 0; i < 40; i++) {
+      if ((await retryBtn.count()) === 1) {
+        retryShown = true;
+        break;
+      }
+      await delay(250);
+    }
+    const retryInfo = retryShown
+      ? await retryBtn.evaluate((el) => ({ label: (el.innerText || '').trim(), disabled: !!el.disabled }))
+      : null;
+    report(
+      'an errored finish turns the Send button into an enabled Retry',
+      retryShown && retryInfo.label === 'Retry' && !retryInfo.disabled,
+      JSON.stringify(retryInfo),
+    );
+    const retryRect = retryShown
+      ? await retryBtn.evaluate((el) => {
+          const r = el.getBoundingClientRect();
+          return { w: +r.width.toFixed(1), h: +r.height.toFixed(1) };
+        })
+      : null;
+    const retrySendRect = await page.evaluate(() => {
+      const el = document.querySelector('.chat-send-btn');
+      const r = el.getBoundingClientRect();
+      return { w: +r.width.toFixed(1), h: +r.height.toFixed(1) };
+    });
+    report(
+      'Retry keeps the Send footprint',
+      !!retryRect && retryRect.w === retrySendRect.w && retryRect.h === retrySendRect.h,
+      `retry:${JSON.stringify(retryRect)} send:${JSON.stringify(retrySendRect)}`,
+    );
+    await delay(1200);
+    const pausedDeliveries = readPrompts().filter(
+      (p) => p.agentId === F && p.message === 'paused queued message',
+    );
+    const pausedCaption = await page.locator('.chat-queue-caption').innerText();
+    report(
+      'the errored session leaves its queued message paused, not delivered',
+      pausedDeliveries.length === 0 && (await boxes.count()) === 1 && /paused/i.test(pausedCaption),
+      `deliveries:${pausedDeliveries.length} boxes:${await boxes.count()} caption:${pausedCaption}`,
+    );
+    await input.fill('typed while paused');
+    await delay(300);
+    report(
+      'typing while paused brings Send back (text wins over Retry)',
+      (await retryBtn.count()) === 0 &&
+        ((await page.locator('.chat-send-btn').innerText()) || '').trim() === 'Send',
+    );
+    await input.fill('');
+    await delay(300);
+
+    await clickWhenVisible(retryBtn);
+    let retryHit = null;
+    for (let i = 0; i < 40 && !retryHit; i++) {
+      const hits = readPrompts().filter((p) => p.agentId === F && p.message === 'queue-msg-check q0');
+      if (hits.length === 1) retryHit = hits[0];
+      else await delay(250);
+    }
+    report(
+      'Retry re-sends the last user message without interrupting',
+      !!retryHit && retryHit.interrupt === false,
+      JSON.stringify(retryHit),
+    );
+
+    await setStatus('running');
+    stub.emit('message', F, {
+      id: 'ok-1',
+      role: 'assistant',
+      text: 'recovered',
+      stopReason: 'stop',
+      ts: Date.now(),
+    });
+    await setStatus('idle');
+    let resumedFlush = null;
+    for (let i = 0; i < 40 && !resumedFlush; i++) {
+      const hits = readPrompts().filter((p) => p.agentId === F && p.message === 'paused queued message');
+      if (hits.length === 1) resumedFlush = hits[0];
+      else await delay(250);
+    }
+    await delay(600);
+    report(
+      'a successful retry resumes the paused queue',
+      !!resumedFlush && resumedFlush.interrupt === false && (await boxes.count()) === 0,
+      JSON.stringify(resumedFlush),
+    );
+    report(
+      'after recovery the composer is back to a disabled Send',
+      (await retryBtn.count()) === 0 &&
+        ((await page.locator('.chat-send-btn').innerText()) || '').trim() === 'Send',
+    );
+
     await runUntilStop();
     await input.fill('layout short');
     await clickWhenVisible(queueBtn);

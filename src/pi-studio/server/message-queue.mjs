@@ -51,6 +51,8 @@ export function createMessageQueue({
         inflight: false,
         failStreak: 0,
         retryAt: 0,
+        failed: false,
+        paused: false,
         timers: { expiry: null, retry: null },
       };
       sessions.set(file, st);
@@ -79,6 +81,7 @@ export function createMessageQueue({
         ...(m.data ? { data: m.data } : {}),
       })),
       held: isHeld(st),
+      paused: st.paused,
     });
   }
 
@@ -109,12 +112,20 @@ export function createMessageQueue({
     }, left);
   }
 
+  function noteAssistantOutcome(file, stopReason) {
+    const st = stateOf(file);
+    st.failed = stopReason === 'error';
+  }
+
   function noteStatus(file, status) {
     const st = stateOf(file);
     st.lastStatus = status;
     if (status === 'idle') {
       st.inflight = false;
-      void maybeFlush(file);
+      const wasPaused = st.paused;
+      st.paused = st.failed;
+      if (st.paused !== wasPaused && st.items.length) broadcast(file);
+      if (!st.paused) void maybeFlush(file);
     }
   }
 
@@ -154,6 +165,14 @@ export function createMessageQueue({
     const out = [];
     for (const [file, st] of sessions) {
       if (isHeld(st)) out.push(file);
+    }
+    return out;
+  }
+
+  function pausedFiles() {
+    const out = [];
+    for (const [file, st] of sessions) {
+      if (st.paused) out.push(file);
     }
     return out;
   }
@@ -201,6 +220,8 @@ export function createMessageQueue({
       st.hold = null;
       st.retryAt = 0;
       st.failStreak = 0;
+      st.failed = false;
+      st.paused = false;
     }
     if (journal) journal.deleteUiQueueSession(file);
     if (st) broadcast(file);
@@ -224,13 +245,13 @@ export function createMessageQueue({
 
   function flushIfIdle(file) {
     const st = sessions.get(file);
-    if (!st || st.lastStatus === 'running') return;
+    if (!st || st.lastStatus === 'running' || st.paused) return;
     void maybeFlush(file);
   }
 
   async function maybeFlush(file) {
     const st = sessions.get(file);
-    if (!st || st.inflight || !st.items.length) return;
+    if (!st || st.inflight || st.paused || !st.items.length) return;
     if (isHeld(st)) {
       armExpiry(file, st);
       return;
@@ -333,9 +354,12 @@ export function createMessageQueue({
     hold,
     release,
     noteStatus,
+    noteAssistantOutcome,
     restore,
     size,
     heldFiles,
+    pausedFiles,
+    paused: (file) => !!sessions.get(file)?.paused,
     waitIdle,
   };
 }

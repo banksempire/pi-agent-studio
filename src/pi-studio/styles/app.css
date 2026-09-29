@@ -703,6 +703,10 @@
   padding: 0 2px;
 }
 
+.chat-queue-caption--paused {
+  color: var(--sf-status-warn);
+}
+
 .chat-queue-box {
   display: flex;
   align-items: center;

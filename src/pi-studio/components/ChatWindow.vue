@@ -19,6 +19,7 @@ import {
   queuedMessagesOf,
   queueEditHold,
   queueEditRelease,
+  queuePausedOf,
   removeQueuedMessage,
   sessionErrorOf,
   setAttachments,
@@ -789,10 +790,28 @@ const fileInput = ref<HTMLInputElement | null>(null);
 
 const running = computed(() => session.value?.status === 'running');
 const hasContent = computed(() => !!input.value.trim() || attachments.value.length > 0);
-const actionMode = computed(() => (running.value ? (hasContent.value ? 'queue' : 'stop') : 'send'));
+const lastFailed = computed(() => {
+  const msgs = session.value?.messages ?? [];
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role !== 'assistant') continue;
+    return msgs[i].stopReason === 'error';
+  }
+  return false;
+});
+const actionMode = computed(() => {
+  if (running.value) return hasContent.value ? 'queue' : 'stop';
+  if (hasContent.value) return 'send';
+  return lastFailed.value ? 'retry' : 'send';
+});
 
 function stopGeneration() {
   void store.stopSession(props.sessionId);
+}
+
+function retryGeneration() {
+  store.clearSessionError(props.sessionId);
+  void store.retrySession(props.sessionId);
+  pinToBottom();
 }
 
 function pickImages() {
@@ -1214,7 +1233,10 @@ watch(
       </div>
 
         <div v-if="queue.length" class="chat-queue" data-testid="chat-queue">
-          <div class="chat-queue-caption">Queued — sends when the session finishes</div>
+          <div
+            class="chat-queue-caption"
+            :class="{ 'chat-queue-caption--paused': queuePausedOf(props.sessionId) }"
+          >{{ queuePausedOf(props.sessionId) ? 'Queued — paused after an error; Retry to send' : 'Queued — sends when the session finishes' }}</div>
           <div
             v-for="q in queue"
             :key="q.id"
@@ -1317,6 +1339,12 @@ watch(
             :disabled="!!composerBlock"
             @click="queueMessage(false)"
           >Queue</button>
+          <button
+            v-else-if="actionMode === 'retry'"
+            class="chat-send-btn chat-send-btn--retry"
+            title="Retry the failed turn"
+            @click="retryGeneration"
+          >Retry</button>
           <button
             v-else
             class="chat-send-btn"

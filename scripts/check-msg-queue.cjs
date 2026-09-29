@@ -482,6 +482,96 @@ function uiQueueRows() {
       JSON.stringify(tail.map((p) => p.message)),
     );
 
+    console.log('phase 1c — an API-errored run pauses the queue; retry re-sends the last user message');
+    await setStatus('running');
+    await waitStatus('running');
+    await enqueue('blocked one');
+    await enqueue('blocked two');
+    stub.emit('message', F, {
+      role: 'assistant',
+      text: '',
+      stopReason: 'error',
+      error: '429: rate limited',
+      ts: Date.now(),
+    });
+    await setStatus('idle');
+    await delay(1200);
+    const blockedPaused = readPrompts().filter((p) => p.agentId === F && /^blocked /.test(p.message));
+    items = await itemsOf();
+    const pausedView = await getJson(backendPort, `/api/queue?file=${encodeURIComponent(F)}`);
+    report(
+      'an errored run pauses the queue: nothing is delivered',
+      blockedPaused.length === 0 && items.length === 2 && pausedView.paused === true,
+      `prompts:${blockedPaused.length} items:${items.length} paused:${pausedView.paused}`,
+    );
+    await setStatus('idle');
+    await delay(600);
+    report(
+      'a repeated idle while paused still delivers nothing',
+      readPrompts().filter((p) => p.agentId === F && /^blocked /.test(p.message)).length === 0,
+    );
+
+    const retryResp = await postJson(backendPort, '/api/retry', { file: F });
+    let retryHits = [];
+    for (let i = 0; i < 40 && retryHits.length === 0; i++) {
+      retryHits = readPrompts().filter((p) => p.agentId === F && p.message === 'q0');
+      await delay(250);
+    }
+    report(
+      'retry re-prompts the last user message without interrupting',
+      retryResp.status === 200 && retryHits.length === 1 && retryHits[0].interrupt === false,
+      `status:${retryResp.status} hits:${retryHits.length}`,
+    );
+
+    await setStatus('running');
+    stub.emit('message', F, { role: 'assistant', text: 'ok', stopReason: 'stop', ts: Date.now() });
+    await setStatus('idle');
+    let resumed = [];
+    for (let i = 0; i < 40 && resumed.length === 0; i++) {
+      resumed = readPrompts().filter((p) => p.agentId === F && p.message === 'blocked one');
+      await delay(250);
+    }
+    await delay(600);
+    const stillQueued = readPrompts().filter((p) => p.agentId === F && p.message === 'blocked two');
+    report(
+      'a successful run resumes the queue and flushes the head only',
+      resumed.length === 1 && resumed[0].interrupt === false && stillQueued.length === 0,
+      `head:${resumed.length} tail:${stillQueued.length}`,
+    );
+    await setStatus('running');
+    await setStatus('idle');
+    for (let i = 0; i < 40; i++) {
+      if (readPrompts().some((p) => p.agentId === F && p.message === 'blocked two')) break;
+      await delay(250);
+    }
+    report(
+      'the resumed queue drains its tail on the next finish',
+      readPrompts().filter((p) => p.agentId === F && p.message === 'blocked two').length === 1,
+    );
+
+    await setStatus('running');
+    await waitStatus('running');
+    await enqueue('recovers after retry');
+    stub.emit('message', F, {
+      role: 'assistant',
+      text: '',
+      stopReason: 'error',
+      error: '429: rate limited',
+      ts: Date.now(),
+    });
+    stub.emit('message', F, { role: 'assistant', text: 'ok', stopReason: 'stop', ts: Date.now() });
+    await setStatus('idle');
+    let autoRecovered = [];
+    for (let i = 0; i < 40 && autoRecovered.length === 0; i++) {
+      autoRecovered = readPrompts().filter((p) => p.agentId === F && p.message === 'recovers after retry');
+      await delay(250);
+    }
+    report(
+      'an error auto-recovered inside the run never pauses the queue',
+      autoRecovered.length === 1 && autoRecovered[0].interrupt === false,
+      `deliveries:${autoRecovered.length}`,
+    );
+
     const health = await getJson(backendPort, '/api/health');
     report(
       'health reports the gateway queue size',

@@ -913,6 +913,20 @@ sessionStates.load();
 
 const peakHours = createPeakHoursStore({ persistPath: PEAK_HOURS_PATH });
 
+async function lastUserTurn(file) {
+  const content = await readFile(file, 'utf8').catch(() => null);
+  if (content === null) return null;
+  const chain = leafChain(parseEntries(content));
+  for (let i = chain.length - 1; i >= 0; i--) {
+    const entry = chain[i];
+    if (entry.type !== 'message' || entry.message?.role !== 'user') continue;
+    const message = plainTextOf(entry.message.content).trim();
+    const images = imagesOf(entry.message.content);
+    if (message || images.length) return { message, images };
+  }
+  return null;
+}
+
 async function resolveFileOutcome(file) {
   if (!existsSync(file)) return 'gone';
   try {
@@ -1169,6 +1183,7 @@ function handleClientEvent(ev) {
     messageQueue.noteStatus(ev.file, payload.status);
   } else if (ev.type === 'message' && payload?.role === 'assistant' && payload.stopReason) {
     sessionStates.noteAssistantOutcome(ev.file, payload.stopReason, payload.error ?? '');
+    messageQueue.noteAssistantOutcome(ev.file, payload.stopReason);
   }
   if (ev.type === 'message') emit({ type: 'message', file: ev.file, message: payload });
   else if (ev.type === 'refresh') emitRefresh(ev.file);
@@ -1322,8 +1337,9 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 200, {
           items: messageQueue.list(file),
           held: messageQueue.heldFiles().includes(file),
+          paused: messageQueue.paused(file),
         });
-      sendJson(res, 200, { queues: messageQueue.all() });
+      sendJson(res, 200, { queues: messageQueue.all(), paused: messageQueue.pausedFiles() });
       return;
     }
 
@@ -1549,6 +1565,24 @@ const server = createServer(async (req, res) => {
         reqId: reqId ?? '',
         images: attachments,
       });
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    if (p === '/api/retry' && req.method === 'POST') {
+      const { file } = await readBody(req);
+      if (!file) return sendJson(res, 400, { error: 'file required' });
+      const st = await client.getAgentState({ agentId: file }).catch(() => null);
+      if (!st?.state?.status && !existsSync(file)) {
+        return sendJson(res, 404, { error: 'session file not found' });
+      }
+      if (st?.state?.status === 'running') {
+        return sendJson(res, 409, { error: 'session is running' });
+      }
+      const last = await lastUserTurn(file);
+      if (!last) return sendJson(res, 400, { error: 'no user message to retry' });
+      sessionStates.notePrompt(file);
+      await client.prompt({ agentId: file, message: last.message, images: last.images, interrupt: false });
       sendJson(res, 200, { ok: true });
       return;
     }

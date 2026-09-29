@@ -1395,6 +1395,7 @@ function handleEvent(ev: any) {
     }
     case 'queue_update': {
       setQueue(ev.file, Array.isArray(ev.items) ? ev.items : []);
+      setQueuePaused(ev.file, !!ev.paused);
       break;
     }
     case 'pins_update': {
@@ -1983,6 +1984,23 @@ export async function sendMessage(
   }
 }
 
+export async function retrySession(sessionId: string) {
+  const s = findSession(sessionId);
+  if (!s) return;
+  noteChatInteraction(sessionId);
+  state.lastError = '';
+  try {
+    await api('/api/retry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: s.file }),
+    });
+  } catch (e) {
+    if (e instanceof TypeError) state.backend = 'offline';
+    else setSessionError(sessionId, e instanceof Error ? e.message : String(e));
+  }
+}
+
 export async function resendMessage(sessionId: string, mid: string) {
   const s = findSession(sessionId);
   if (!s) return;
@@ -2006,6 +2024,7 @@ const LEGACY_QUEUES_KEY = 'sf-chat:queues';
 const LEGACY_CLAIMS_KEY = 'sf-chat:queue-claims';
 
 const queuesByFile = reactive<Record<string, QueuedChatMessage[]>>({});
+const queuePausedByFile = reactive<Record<string, boolean>>({});
 const queueHoldBeats = new Map<string, { stop: () => void }>();
 let queueHoldMs = 15000;
 
@@ -2022,6 +2041,17 @@ export function queuedMessagesOf(sessionId: string): QueuedChatMessage[] {
   const s = findSession(sessionId);
   if (!s) return reactive<QueuedChatMessage[]>([]);
   return queueListOf(s.file);
+}
+
+export function queuePausedOf(sessionId: string): boolean {
+  const s = findSession(sessionId);
+  if (!s) return false;
+  return !!queuePausedByFile[s.file];
+}
+
+function setQueuePaused(file: string, paused: boolean) {
+  if (paused) queuePausedByFile[file] = true;
+  else delete queuePausedByFile[file];
 }
 
 function cloneItems(items: QueuedChatMessage[]): QueuedChatMessage[] {
@@ -2054,8 +2084,10 @@ function setQueue(file: string, items: QueuedChatMessage[]) {
   queuesByFile[file] = reactive(cloneItems(items));
 }
 
-function applyQueueMap(queues: Record<string, QueuedChatMessage[]>) {
+function applyQueueMap(queues: Record<string, QueuedChatMessage[]>, paused: string[] = []) {
   for (const k of Object.keys(queuesByFile)) delete queuesByFile[k];
+  for (const k of Object.keys(queuePausedByFile)) delete queuePausedByFile[k];
+  for (const file of paused) queuePausedByFile[file] = true;
   for (const [file, items] of Object.entries(queues)) {
     if (Array.isArray(items) && items.length) setQueue(file, items);
   }
@@ -2063,8 +2095,8 @@ function applyQueueMap(queues: Record<string, QueuedChatMessage[]>) {
 
 async function refreshQueues(): Promise<void> {
   try {
-    const j = await api<{ queues: Record<string, QueuedChatMessage[]> }>('/api/queue');
-    applyQueueMap(j.queues ?? {});
+    const j = await api<{ queues: Record<string, QueuedChatMessage[]>; paused?: string[] }>('/api/queue');
+    applyQueueMap(j.queues ?? {}, Array.isArray(j.paused) ? j.paused : []);
   } catch {}
 }
 
@@ -2657,6 +2689,7 @@ export const store = {
   attachmentsOf,
   setAttachments,
   queuedMessagesOf,
+  queuePausedOf,
   enqueueMessage,
   enqueueCompact,
   enqueueModelChange,
@@ -2679,6 +2712,7 @@ export const store = {
   openChat,
   noteChatInteraction,
   sendMessage,
+  retrySession,
   resendMessage,
   refreshJobs,
   createJob,

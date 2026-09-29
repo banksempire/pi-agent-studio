@@ -21,6 +21,7 @@ import {
   queueEditRelease,
   queuePausedOf,
   removeQueuedMessage,
+  reorderQueuedMessage,
   sessionErrorOf,
   setAttachments,
   setOpenGroup,
@@ -773,6 +774,39 @@ function onQueueEditKeydown(e: KeyboardEvent) {
   }
 }
 
+const queueDragId = ref<number | null>(null);
+const queueOverId = ref<number | null>(null);
+
+function onQueueDragStart(q: QueuedChatMessage, e: DragEvent) {
+  queueDragId.value = q.id;
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', queueLabel(q));
+  }
+}
+
+function onQueueDragOver(q: QueuedChatMessage) {
+  if (queueDragId.value === null || queueDragId.value === q.id) return;
+  queueOverId.value = q.id;
+}
+
+function onQueueDrop(q: QueuedChatMessage) {
+  const from = queue.value.findIndex((m) => m.id === queueDragId.value);
+  const to = queue.value.findIndex((m) => m.id === q.id);
+  if (from >= 0 && to >= 0 && from !== to) {
+    const order = queue.value.map((m) => m.id);
+    order.splice(to, 0, order.splice(from, 1)[0]);
+    void reorderQueuedMessage(props.sessionId, order);
+  }
+  queueDragId.value = null;
+  queueOverId.value = null;
+}
+
+function onQueueDragEnd() {
+  queueDragId.value = null;
+  queueOverId.value = null;
+}
+
 watch(
   () => queue.value.map((m) => m.id).join('|'),
   () => {
@@ -1245,11 +1279,21 @@ watch(
               'chat-queue-box--viewable': !!q.images?.length,
               'chat-queue-box--compact': q.kind === 'compact',
               'chat-queue-box--model': q.kind === 'model',
+              'chat-queue-box--drop': queueDragId !== null && queueOverId === q.id,
             }"
             :title="queueBoxTitle(q)"
             data-testid="chat-queue-box"
             @click="openQueueReview(q)"
+            @dragover.prevent="onQueueDragOver(q)"
+            @drop.prevent="onQueueDrop(q)"
           >
+            <span
+              class="chat-queue-grip"
+              title="Drag to reorder"
+              draggable="true"
+              @dragstart="onQueueDragStart(q, $event)"
+              @dragend="onQueueDragEnd"
+            ><SvgIcon name="grip" /></span>
             <SvgIcon
               v-if="q.kind === 'compact'"
               name="⏳"

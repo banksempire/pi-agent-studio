@@ -710,11 +710,36 @@
 .chat-queue-box {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 4px 3px 10px;
+  gap: 2px;
+  padding: 3px 4px 3px 5px;
   background: color-mix(in srgb, var(--sf-accent) 6%, var(--sf-bg));
   border: 1px solid color-mix(in srgb, var(--sf-accent) 30%, var(--sf-border));
   border-radius: 8px;
+}
+
+.chat-queue-grip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  color: var(--sf-text-muted);
+  cursor: grab;
+  opacity: 0.55;
+}
+
+.chat-queue-grip:active {
+  cursor: grabbing;
+}
+
+@media (hover: hover) {
+  .chat-queue-grip:hover {
+    opacity: 1;
+    color: var(--sf-text);
+  }
+}
+
+.chat-queue-box--drop {
+  outline: 1px dashed var(--sf-accent);
+  outline-offset: -1px;
 }
 
 .chat-queue-box--viewable {

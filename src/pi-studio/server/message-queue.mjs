@@ -211,6 +211,19 @@ export function createMessageQueue({
     return true;
   }
 
+  function reorder(file, order) {
+    const st = sessions.get(file);
+    if (!st) return false;
+    const byId = new Map(st.items.map((m) => [m.id, m]));
+    if (!Array.isArray(order) || order.length !== st.items.length) return false;
+    if (!order.every((id) => byId.has(id))) return false;
+    const next = order.map((id) => byId.get(id));
+    if (journal && !journal.reorderUiQueue(file, order)) return false;
+    st.items = next;
+    broadcast(file);
+    return true;
+  }
+
   function removeAll(file) {
     const st = sessions.get(file);
     clearTimer(st, 'expiry');
@@ -349,6 +362,7 @@ export function createMessageQueue({
     all,
     itemOf,
     updateText,
+    reorder,
     remove,
     removeAll,
     hold,

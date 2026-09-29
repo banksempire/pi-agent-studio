@@ -1391,6 +1391,19 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (p === '/api/queue/reorder' && req.method === 'POST') {
+      const { file, order } = await readBody(req);
+      if (!file) return sendJson(res, 400, { error: 'file required' });
+      if (!Array.isArray(order) || !order.every((id) => Number.isInteger(id))) {
+        return sendJson(res, 400, { error: 'order must be an array of queued message ids' });
+      }
+      if (!messageQueue.reorder(file, order)) {
+        return sendJson(res, 409, { error: 'queue changed — reload and retry' });
+      }
+      sendJson(res, 200, { ok: true, items: messageQueue.list(file) });
+      return;
+    }
+
     if (p === '/api/queue/hold' && req.method === 'POST') {
       const { file } = await readBody(req);
       if (!file) return sendJson(res, 400, { error: 'file required' });

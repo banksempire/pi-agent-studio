@@ -2301,6 +2301,27 @@ export async function updateQueuedMessage(sessionId: string, id: number, text: s
   } catch {}
 }
 
+export async function reorderQueuedMessage(sessionId: string, order: number[]) {
+  const s = findSession(sessionId);
+  if (!s) return;
+  const q = queuesByFile[s.file];
+  if (!q) return;
+  const byId = new Map(q.map((m) => [m.id, m]));
+  if (order.length !== q.length || !order.every((id) => byId.has(id))) return;
+  const next = order.map((id) => byId.get(id) as QueuedChatMessage);
+  q.splice(0, q.length, ...next);
+  try {
+    const { items } = await api<{ items: QueuedChatMessage[] }>('/api/queue/reorder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: s.file, order }),
+    });
+    setQueue(s.file, items ?? []);
+  } catch {
+    void refreshQueues();
+  }
+}
+
 export function queueEditHold(sessionId: string) {
   const s = findSession(sessionId);
   if (!s) return;

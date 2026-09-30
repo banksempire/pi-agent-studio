@@ -2391,6 +2391,26 @@ export async function compactSession(sessionId: string) {
   }
 }
 
+export async function reloadContext(sessionId: string): Promise<boolean> {
+  const s = findSession(sessionId);
+  if (!s) return false;
+  try {
+    const j = await api<any>('/api/slash', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: s.file, command: 'reload' }),
+    });
+    if (!j.ok) {
+      state.lastError = j.error || 'Context reload failed';
+      return false;
+    }
+    return true;
+  } catch (e) {
+    if (!(e instanceof TypeError)) state.lastError = String((e as Error)?.message ?? e);
+    return false;
+  }
+}
+
 export async function stopSession(sessionId: string) {
   const s = findSession(sessionId);
   if (!s) return;
@@ -2750,6 +2770,7 @@ export const store = {
   applyModelDefault,
   syncModelDefault,
   compactSession,
+  reloadContext,
   stopSession,
   closeChatView,
   renameSession,

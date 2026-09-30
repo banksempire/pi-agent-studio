@@ -25,6 +25,7 @@ Area → suite (`npm run <script>`; full list in `package.json`):
 |---|---|
 | studio CLI | `check:cli`, `check:worktree-nm` |
 | composer send/stop/queue/retry, drafts, grip reorder | `check:queue`, `check:send-stop`, `check:drafts` |
+| context reload button | `check:reload` |
 | image attachments | `check:image-attach` |
 | new chat creation | `check:newchat` |
 | gateway message queue | `check:msgqueue` |

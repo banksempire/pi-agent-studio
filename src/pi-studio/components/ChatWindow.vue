@@ -121,6 +121,35 @@ const contextClass = computed(() => {
   return p > 90 ? 'chat-context--error' : p > 70 ? 'chat-context--warn' : '';
 });
 
+const reloadingContext = ref(false);
+const reloadedFlash = ref(false);
+let reloadedFlashTimer: ReturnType<typeof setTimeout> | null = null;
+const reloadTitle = computed(() => {
+  const s = session.value;
+  if (s?.status === 'running' || s?.compacting) {
+    return 'Reload context files (AGENTS.md, skills, prompts) — available when the session is idle';
+  }
+  return 'Reload context files (AGENTS.md, skills, prompts) into this session';
+});
+
+async function reloadContextFiles() {
+  const s = session.value;
+  if (!s || reloadingContext.value || s.status === 'running' || s.compacting) return;
+  store.clearSessionError(props.sessionId);
+  reloadingContext.value = true;
+  try {
+    if (await store.reloadContext(props.sessionId)) {
+      reloadedFlash.value = true;
+      if (reloadedFlashTimer) clearTimeout(reloadedFlashTimer);
+      reloadedFlashTimer = setTimeout(() => {
+        reloadedFlash.value = false;
+      }, 1600);
+    }
+  } finally {
+    reloadingContext.value = false;
+  }
+}
+
 function sticky() {
   return chatScrollOf(props.sessionId).sticky;
 }
@@ -1044,6 +1073,7 @@ onUnmounted(() => {
   el?.removeEventListener('touchcancel', onTouchEnd);
   resizeCleanup?.();
   listObserver?.disconnect();
+  if (reloadedFlashTimer) clearTimeout(reloadedFlashTimer);
 });
 
 let listObserver: ResizeObserver | null = null;
@@ -1350,6 +1380,13 @@ watch(
             :disabled="!!composerBlock || session?.compacting"
             @click="compactContext"
           >{{ contextDisplay }}</button>
+          <button
+            class="chat-reload-btn"
+            :class="{ 'chat-reload-btn--ok': reloadedFlash }"
+            :title="reloadTitle"
+            :disabled="!!composerBlock || session?.compacting || session?.status === 'running' || reloadingContext"
+            @click="reloadContextFiles"
+          ><SvgIcon :name="reloadedFlash ? '✓' : '↻'" /></button>
           <button
             class="chat-scroll-btn"
             title="Scroll to bottom"

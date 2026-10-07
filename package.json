@@ -19,6 +19,7 @@
     "check:send-stop": "node scripts/check-send-stop.cjs",
     "check:queue": "node scripts/check-queue-msg.cjs",
     "check:image-attach": "node scripts/check-image-attach.cjs",
+    "check:image-blank": "node scripts/check-image-blank.cjs",
     "check:reload": "node scripts/check-reload.cjs",
     "check:worktree-nm": "node scripts/check-worktree-nm.cjs",
     "check:msgqueue": "node scripts/check-msg-queue.cjs",

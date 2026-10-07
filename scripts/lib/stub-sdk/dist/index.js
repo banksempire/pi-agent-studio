@@ -8,6 +8,8 @@ fs.mkdirSync(stateDir, { recursive: true });
 const promptsLog = path.join(stateDir, 'prompts.jsonl');
 const childPromptsLog = path.join(stateDir, 'subagent-prompts.jsonl');
 const releaseFile = path.join(stateDir, 'release');
+const compactHoldFile = path.join(stateDir, 'compact-hold');
+const compactionsLog = path.join(stateDir, 'compactions.jsonl');
 const childScriptFile = path.join(stateDir, 'subagent-script.jsonl');
 const childSessionsLog = path.join(stateDir, 'subagent-sessions.jsonl');
 
@@ -197,6 +199,7 @@ export async function createAgentSession({ sessionManager, thinkingLevel }) {
   if (child) fs.appendFileSync(childSessionsLog, `${JSON.stringify({ file, thinkingLevel: curThinking })}\n`);
   let listener = () => {};
   let aborted = false;
+  let compacting = false;
   const session = {
     aborted,
     sessionManager,
@@ -227,6 +230,11 @@ export async function createAgentSession({ sessionManager, thinkingLevel }) {
       listener = cb;
     },
     async prompt(message) {
+      if (compacting) {
+        throw new Error(
+          'Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry.',
+        );
+      }
       if (child) return runChildPrompt(session, file, message);
       const ts = Date.now();
       fs.appendFileSync(
@@ -253,6 +261,14 @@ export async function createAgentSession({ sessionManager, thinkingLevel }) {
       curThinking = level;
     },
     async compact() {
+      const ts = Date.now();
+      compacting = true;
+      fs.appendFileSync(compactionsLog, `${JSON.stringify({ file, event: 'start', ts })}\n`);
+      session.emit({ type: 'compaction_start', reason: 'manual' });
+      while (fs.existsSync(compactHoldFile)) await delay(25);
+      session.emit({ type: 'compaction_end', reason: 'manual' });
+      compacting = false;
+      fs.appendFileSync(compactionsLog, `${JSON.stringify({ file, event: 'end', ts: Date.now() })}\n`);
       return { ok: true };
     },
     async dispose() {},

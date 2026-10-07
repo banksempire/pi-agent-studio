@@ -1181,6 +1181,8 @@ function handleClientEvent(ev) {
     if (payload.status === 'running') sessionStates.noteAgentRunning(ev.file);
     else if (payload.status === 'idle') sessionStates.noteAgentSettled(ev.file, { stale: !!payload.stale });
     messageQueue.noteStatus(ev.file, payload.status);
+  } else if (ev.type === 'compaction_status') {
+    messageQueue.noteCompaction(ev.file, payload.status === 'started');
   } else if (ev.type === 'message' && payload?.role === 'assistant' && payload.stopReason) {
     sessionStates.noteAssistantOutcome(ev.file, payload.stopReason, payload.error ?? '');
     messageQueue.noteAssistantOutcome(ev.file, payload.stopReason);

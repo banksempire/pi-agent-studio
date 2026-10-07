@@ -49,6 +49,7 @@ export function createMessageQueue({
         hold: null,
         lastStatus: '',
         inflight: false,
+        compacting: false,
         failStreak: 0,
         retryAt: 0,
         failed: false,
@@ -127,6 +128,12 @@ export function createMessageQueue({
       if (st.paused !== wasPaused && st.items.length) broadcast(file);
       if (!st.paused) void maybeFlush(file);
     }
+  }
+
+  function noteCompaction(file, started) {
+    const st = stateOf(file);
+    st.compacting = !!started;
+    if (!st.compacting) flushIfIdle(file);
   }
 
   function enqueue(file, { kind = 'message', message, images = [], data = null }) {
@@ -258,13 +265,13 @@ export function createMessageQueue({
 
   function flushIfIdle(file) {
     const st = sessions.get(file);
-    if (!st || st.lastStatus === 'running' || st.paused) return;
+    if (!st || st.lastStatus === 'running' || st.paused || st.compacting) return;
     void maybeFlush(file);
   }
 
   async function maybeFlush(file) {
     const st = sessions.get(file);
-    if (!st || st.inflight || st.paused || !st.items.length) return;
+    if (!st || st.inflight || st.paused || st.compacting || !st.items.length) return;
     if (isHeld(st)) {
       armExpiry(file, st);
       return;
@@ -368,6 +375,7 @@ export function createMessageQueue({
     hold,
     release,
     noteStatus,
+    noteCompaction,
     noteAssistantOutcome,
     restore,
     size,

@@ -852,6 +852,7 @@ const attachments = computed({
 const fileInput = ref<HTMLInputElement | null>(null);
 
 const running = computed(() => session.value?.status === 'running');
+const compacting = computed(() => !!session.value?.compacting);
 const hasContent = computed(() => !!input.value.trim() || attachments.value.length > 0);
 const lastFailed = computed(() => {
   const msgs = session.value?.messages ?? [];
@@ -863,7 +864,7 @@ const lastFailed = computed(() => {
 });
 const actionMode = computed(() => {
   if (running.value) return hasContent.value ? 'queue' : 'stop';
-  if (hasContent.value) return 'send';
+  if (hasContent.value) return compacting.value ? 'queue' : 'send';
   return lastFailed.value ? 'retry' : 'send';
 });
 

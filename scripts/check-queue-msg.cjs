@@ -550,6 +550,60 @@ function patchStatus(port, p, body) {
     await delay(1000);
     report('queue empties completely after all messages are sent', (await boxes.count()) === 0);
 
+    console.log('phase — a compacting session queues sends until compaction ends');
+    await setStatus('idle');
+    await delay(300);
+    stub.emit('compaction_status', F, { status: 'started' });
+    await delay(400);
+    await input.fill('queued while compacting');
+    await delay(300);
+    const compactingInfo = await page.evaluate(() => {
+      const el = document.querySelector('.chat-send-btn');
+      return {
+        cls: el?.getAttribute('class') || '',
+        label: (el?.innerText || '').trim(),
+        disabled: !!el?.disabled,
+      };
+    });
+    report(
+      'compacting + text → composer offers Queue instead of Send',
+      /chat-send-btn--queue/.test(compactingInfo.cls) &&
+        compactingInfo.label === 'Queue' &&
+        !compactingInfo.disabled,
+      JSON.stringify(compactingInfo),
+    );
+    await clickWhenVisible(queueBtn);
+    await delay(400);
+    report(
+      'queued while compacting: message lands in the queue box and input clears',
+      (await input.inputValue()) === '' && (await boxes.count()) === 1,
+      `boxes:${await boxes.count()}`,
+    );
+    await delay(1200);
+    report(
+      'nothing reaches the backend while compaction is still running',
+      readPrompts().every((p) => p.message !== 'queued while compacting'),
+      JSON.stringify(readPrompts().map((p) => p.message)),
+    );
+    stub.emit('compaction_status', F, { status: 'done' });
+    let compactionFlush = null;
+    for (let i = 0; i < 40; i++) {
+      compactionFlush = readPrompts().find((p) => p.message === 'queued while compacting');
+      if (compactionFlush) break;
+      await delay(250);
+    }
+    report(
+      'compaction end flushes the queued message without interrupting',
+      !!compactionFlush && compactionFlush.interrupt === false,
+      JSON.stringify(compactionFlush),
+    );
+    await delay(1000);
+    report('queue box empties after the compaction flush', (await boxes.count()) === 0);
+    const compactionBubble = await page
+      .locator('.chat-user-bubble', { hasText: 'queued while compacting' })
+      .count();
+    report('the flushed message appears in the transcript', compactionBubble >= 1);
+
     console.log('phase — an API-errored finish pauses the queue and turns Send into Retry');
     await runUntilStop();
     await input.fill('paused queued message');

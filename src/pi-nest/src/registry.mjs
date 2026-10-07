@@ -285,6 +285,11 @@ export class AgentRegistry extends EventEmitter {
       while (!live.drained) {
         const item = live.queue.shift();
         if (!item) break;
+        while (live.compacting && !live.drained) await delay(200);
+        if (live.drained) {
+          live.queue.unshift(item);
+          break;
+        }
         live.current = item;
         item.startedAt = Date.now();
         this.#journal?.markInflight(item.id, item.startedAt);

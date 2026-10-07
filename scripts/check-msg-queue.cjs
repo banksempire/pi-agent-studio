@@ -574,6 +574,42 @@ function uiQueueRows() {
       `deliveries:${autoRecovered.length}`,
     );
 
+    console.log('phase 1d — compaction gates the gateway queue until it ends');
+    await setStatus('running');
+    await setStatus('idle');
+    await delay(400);
+    stub.emit('compaction_status', F, { status: 'started' });
+    await delay(300);
+    await enqueue('queued during compaction');
+    await delay(1200);
+    items = await itemsOf();
+    prompts = readPrompts().filter((p) => p.agentId === F && p.message === 'queued during compaction');
+    report(
+      'a message enqueued while compacting stays queued although the session is idle',
+      items.length === 1 && items[0].text === 'queued during compaction' && prompts.length === 0,
+      `items:${JSON.stringify(items.map((m) => m.text))} prompts:${prompts.length}`,
+    );
+    await setStatus('idle');
+    await delay(800);
+    report(
+      'an idle transition during compaction still delivers nothing',
+      readPrompts().filter((p) => p.agentId === F && p.message === 'queued during compaction').length === 0,
+    );
+    stub.emit('compaction_status', F, { status: 'done' });
+    let compactFlush = null;
+    for (let i = 0; i < 40; i++) {
+      compactFlush = readPrompts().find((p) => p.agentId === F && p.message === 'queued during compaction');
+      if (compactFlush) break;
+      await delay(250);
+    }
+    report(
+      'compaction end flushes the held message without interrupting',
+      !!compactFlush && compactFlush.interrupt === false,
+      JSON.stringify(compactFlush),
+    );
+    await delay(600);
+    report('gateway queue is empty after the compaction flush', (await itemsOf()).length === 0);
+
     const health = await getJson(backendPort, '/api/health');
     report(
       'health reports the gateway queue size',
@@ -785,6 +821,51 @@ function uiQueueRows() {
     );
     items = (await getJson(backendPort, `/api/queue?file=${encodeURIComponent(FC)}`)).items;
     report('restarted compact session queue view is empty', items.length === 0);
+
+    console.log('phase 4 — a direct send during compaction queues behind it in the registry');
+    const FD = makeSession('mq-compact-send');
+    const compactHold = path.join(SDK_STATE_DIR, 'compact-hold');
+    fs.writeFileSync(compactHold, '1');
+    const slashRun = postJson(backendPort, '/api/slash', { file: FD, command: 'compact' });
+    let compactStarted = false;
+    for (let i = 0; i < 80 && !compactStarted; i++) {
+      compactStarted = readLines(path.join(SDK_STATE_DIR, 'compactions.jsonl'), (r) => r).some(
+        (r) => r.file === FD && r.event === 'start',
+      );
+      await delay(250);
+    }
+    report('stub compaction starts and holds', compactStarted);
+    const chatRun = postJson(backendPort, '/api/chat', { file: FD, message: 'sent during compaction' });
+    const settled = await Promise.race([chatRun.then(() => true), delay(1500).then(() => false)]);
+    report(
+      'the send stays pending while compaction runs (no loss, no silent failure)',
+      !settled && readSdkPrompts().every((p) => p.file !== FD),
+      `settled:${settled} prompts:${JSON.stringify(readSdkPrompts().filter((p) => p.file === FD))}`,
+    );
+    fs.rmSync(compactHold, { force: true });
+    const slashRes = await slashRun;
+    report(
+      'compact slash completes after the hold is released',
+      slashRes.status === 200 && slashRes.body?.ok === true,
+      JSON.stringify(slashRes.body),
+    );
+    let compactionSent = null;
+    for (let i = 0; i < 80; i++) {
+      compactionSent = readSdkPrompts().find((p) => p.file === FD && p.message === 'sent during compaction');
+      if (compactionSent) break;
+      await delay(250);
+    }
+    report(
+      'the held send is delivered right after compaction finishes',
+      !!compactionSent,
+      JSON.stringify(readSdkPrompts().filter((p) => p.file === FD)),
+    );
+    await chatRun;
+    let persisted = false;
+    try {
+      persisted = fs.readFileSync(FD, 'utf8').includes('sent during compaction');
+    } catch {}
+    report('the delivered message is persisted in the session file (survives refresh)', persisted);
   } catch (e) {
     report('suite crashed', false, e.message);
   } finally {

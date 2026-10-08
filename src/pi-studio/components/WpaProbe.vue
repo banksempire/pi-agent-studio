@@ -2,27 +2,32 @@
 import { onMounted, onUnmounted, ref } from 'vue';
 
 const info = ref('');
-const visible = ref(false);
-let vv: VisualViewport | null = null;
+const barInfo = ref('');
+let timer: ReturnType<typeof setInterval> | null = null;
 
 function read() {
   const doc = document.documentElement;
   const root = document.querySelector('.sf-root');
-  const rect = root?.getBoundingClientRect();
-  const cs = root ? getComputedStyle(root) : null;
-  const parts = [
+  const bar = document.querySelector('.sf-status-bar');
+  const rootRect = root?.getBoundingClientRect();
+  const docRect = doc.getBoundingClientRect();
+  const barRect = bar?.getBoundingClientRect();
+  const cs = getComputedStyle(document.documentElement);
+  const barCs = bar ? getComputedStyle(bar) : null;
+  info.value = [
     `screen ${window.screen.width}x${window.screen.height}`,
     `inner ${Math.round(window.innerHeight)}`,
     `client ${doc.clientHeight}`,
-    `vv ${vv ? Math.round(vv.height) : '-'}`,
-    `vvOff ${vv ? Math.round(vv.offsetTop) : '-'}`,
-    `safeTop ${cs?.getPropertyValue('--sf-safe-top')?.trim() ?? '?'}`,
-    `safeBot ${cs?.getPropertyValue('--sf-safe-bottom')?.trim() ?? '?'}`,
-    `pin ${document.documentElement.style.getPropertyValue('--sf-app-height')?.trim() || '-'}`,
-    `root ${rect ? Math.round(rect.height) : '-'}`,
-    `scrollY ${Math.round(window.scrollY)}`,
-  ];
-  info.value = parts.join('  ·  ');
+    `dvh ${doc.clientHeight}`,
+    `envT ${cs.getPropertyValue('--sf-safe-top').trim()}`,
+    `envB ${cs.getPropertyValue('--sf-safe-bottom').trim()}`,
+    `html ${Math.round(docRect.top)}..${Math.round(docRect.bottom)}`,
+    `root ${rootRect ? Math.round(rootRect.top) + '..' + Math.round(rootRect.bottom) : '-'}`,
+    `scroll ${Math.round(window.scrollY)}`,
+  ].join('  ·  ');
+  barInfo.value = barRect
+    ? `bar ${Math.round(barRect.top)}..${Math.round(barRect.bottom)} h${Math.round(barRect.height)} padB ${barCs?.paddingBottom}`
+    : 'bar -';
 }
 
 onMounted(() => {
@@ -30,25 +35,20 @@ onMounted(() => {
     window.matchMedia('(display-mode: standalone)').matches ||
     (window.navigator as { standalone?: boolean }).standalone === true;
   if (!standalone) return;
-  visible.value = true;
-  vv = window.visualViewport;
   read();
-  window.addEventListener('resize', read);
-  window.addEventListener('orientationchange', read);
-  vv?.addEventListener('resize', read);
-  vv?.addEventListener('scroll', read);
+  timer = setInterval(read, 600);
 });
 
 onUnmounted(() => {
-  window.removeEventListener('resize', read);
-  window.removeEventListener('orientationchange', read);
-  vv?.removeEventListener('resize', read);
-  vv?.removeEventListener('scroll', read);
+  if (timer) clearInterval(timer);
 });
 </script>
 
 <template>
-  <div v-if="visible" class="qs-wpa-probe">{{ info }}</div>
+  <div v-if="info" class="qs-wpa-probe">
+    <div>{{ info }}</div>
+    <div>{{ barInfo }}</div>
+  </div>
 </template>
 
 <style scoped>

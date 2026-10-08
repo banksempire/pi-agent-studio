@@ -54,7 +54,7 @@ onUnmounted(() => {
 <style scoped>
 .qs-wpa-probe {
   position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + 4px);
+  top: calc(env(safe-area-inset-top, 0px) + 68px);
   left: 2px;
   right: 2px;
   z-index: 9999;

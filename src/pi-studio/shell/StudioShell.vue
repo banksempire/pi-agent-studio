@@ -5,6 +5,7 @@ import { registerUtilityMenu } from '@sf/registry';
 import type { PopupDocument, PopupValues } from '@sf/types/popup';
 import { computed, nextTick, ref, watch } from 'vue';
 import PeakHoursDialog from '../components/PeakHoursDialog.vue';
+import WpaProbe from '../components/WpaProbe.vue';
 import { confirmDocument, confirmState, settleConfirm } from '../confirm';
 import { layout } from '../layout/loadLayout';
 import { handlePanelAction, usePanelDialogs } from '../layout/panelData';
@@ -134,6 +135,7 @@ watch(
     @workspace-ready="store.bindWorkspace"
   >
     <template #overlay>
+      <WpaProbe />
       <PopupDialog
         v-model:open="dialogs.renameDialog.open"
         v-model:values="renameValues"

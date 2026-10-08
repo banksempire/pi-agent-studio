@@ -22,7 +22,7 @@ function read() {
     `envT ${cs.getPropertyValue('--sf-safe-top').trim()}`,
     `envB ${cs.getPropertyValue('--sf-safe-bottom').trim()}`,
     `html ${Math.round(docRect.top)}..${Math.round(docRect.bottom)}`,
-    `root ${rootRect ? Math.round(rootRect.top) + '..' + Math.round(rootRect.bottom) : '-'}`,
+    `root ${rootRect ? `${Math.round(rootRect.top)}..${Math.round(rootRect.bottom)}` : '-'}`,
     `scroll ${Math.round(window.scrollY)}`,
   ].join('  ·  ');
   barInfo.value = barRect
@@ -54,7 +54,7 @@ onUnmounted(() => {
 <style scoped>
 .qs-wpa-probe {
   position: fixed;
-  top: 2px;
+  top: calc(env(safe-area-inset-top, 0px) + 4px);
   left: 2px;
   right: 2px;
   z-index: 9999;

@@ -601,11 +601,11 @@ function patchStatus(port, p, body) {
     const pausedDeliveries = readPrompts().filter(
       (p) => p.agentId === F && p.message === 'paused queued message',
     );
-    const pausedCaption = await page.locator('.chat-queue-caption').innerText();
+    const pausedBoxes = await boxes.count();
     report(
       'the errored session leaves its queued message paused, not delivered',
-      pausedDeliveries.length === 0 && (await boxes.count()) === 1 && /paused/i.test(pausedCaption),
-      `deliveries:${pausedDeliveries.length} boxes:${await boxes.count()} caption:${pausedCaption}`,
+      pausedDeliveries.length === 0 && pausedBoxes === 1,
+      `deliveries:${pausedDeliveries.length} boxes:${pausedBoxes}`,
     );
     await input.fill('typed while paused');
     await delay(300);

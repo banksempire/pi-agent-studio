@@ -19,7 +19,6 @@ import {
   queuedMessagesOf,
   queueEditHold,
   queueEditRelease,
-  queuePausedOf,
   removeQueuedMessage,
   reorderQueuedMessage,
   sessionErrorOf,
@@ -1298,10 +1297,6 @@ watch(
       </div>
 
         <div v-if="queue.length" class="chat-queue" data-testid="chat-queue">
-          <div
-            class="chat-queue-caption"
-            :class="{ 'chat-queue-caption--paused': queuePausedOf(props.sessionId) }"
-          >{{ queuePausedOf(props.sessionId) ? 'Queued — paused after an error; Retry to send' : 'Queued — sends when the session finishes' }}</div>
           <div
             v-for="q in queue"
             :key="q.id"

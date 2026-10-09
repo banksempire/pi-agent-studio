@@ -72,6 +72,7 @@ function chatListItem(s: ChatSession): PanelListItem {
     active: s.id === store.activeChatId,
     action: 'chat-history',
     options: chatRowOptions(s),
+    buttons: [{ id: 'more', icon: '⋮', title: 'More', visibility: 'mobile' }],
     dragType: CHAT_DROP_TYPE,
     dragText: s.title,
   };
@@ -864,11 +865,16 @@ export function handlePanelAction(action: string | undefined, payload: unknown):
     button?: string;
     value?: unknown;
     key?: string;
+    x?: number;
+    y?: number;
+    open?: (x: number, y: number) => void;
   };
   switch (action) {
     case 'chat-history':
       if (p.gesture === 'activate') store.openChat(p.id ?? '');
-      else if (p.gesture === 'menu') {
+      else if (p.gesture === 'button' && p.button === 'more' && p.id) {
+        p.open?.(p.x ?? 0, p.y ?? 0);
+      } else if (p.gesture === 'menu') {
         if (p.option === 'pin' || p.option === 'unpin') store.togglePinned(p.id ?? '');
         else if (p.option === 'rename') openRename(p.id ?? '');
         else if (p.option === 'delete') void store.deleteSession(p.id ?? '');

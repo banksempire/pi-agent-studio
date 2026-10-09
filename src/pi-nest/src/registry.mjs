@@ -14,6 +14,7 @@ const NUDGE_SHORT =
   '[gateway restart] Your previous reply was cut off mid-generation. Continue exactly where it stopped.';
 const NUDGE_NONE =
   '[gateway restart] The gateway restarted before you produced any reply. Respond to the request above.';
+export const IMAGE_ONLY_PROMPT = '(see attached image)';
 
 function nudgeEmbedded(partial) {
   return `[gateway restart] Your previous reply was cut off mid-generation. Its last generated state was:\n\n<<<\n${partial}\n>>>\n\nContinue from that point without repeating yourself.`;
@@ -299,7 +300,7 @@ export class AgentRegistry extends EventEmitter {
           if (item.images?.length) row.images = item.images;
           this.broadcast('message', agentId, row);
           await live.session.prompt(
-            item.message,
+            item.images?.length && !item.message.trim() ? IMAGE_ONLY_PROMPT : item.message,
             item.images?.length
               ? {
                   images: item.images.map((i) => ({ type: 'image', data: i.data, mimeType: i.mimeType })),

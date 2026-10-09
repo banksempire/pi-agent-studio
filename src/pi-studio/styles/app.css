@@ -705,16 +705,6 @@
   gap: 4px;
 }
 
-.chat-queue-caption {
-  color: var(--sf-text-muted);
-  font-size: 13px;
-  padding: 0 2px;
-}
-
-.chat-queue-caption--paused {
-  color: var(--sf-status-warn);
-}
-
 .chat-queue-box {
   display: flex;
   align-items: center;

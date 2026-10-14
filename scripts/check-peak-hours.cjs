@@ -24,6 +24,17 @@ fs.mkdirSync(SESSIONS_ROOT, { recursive: true });
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
+async function pickSelect(page, id, label) {
+  await page.locator(`#${id}`).click();
+  const pop = page.locator('.sf-root > .sf-select-pop');
+  await pop.waitFor({ state: 'visible', timeout: 5000 });
+  await pop
+    .locator('.sf-select-row', { hasText: new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`) })
+    .first()
+    .click();
+  await pop.waitFor({ state: 'detached', timeout: 5000 });
+}
+
 function makeReporter() {
   let failed = false;
   const report = (name, ok, extra = '') => {
@@ -561,7 +572,7 @@ async function unitChecks({ report }) {
     const layoutDefs = JSON.parse(
       fs.readFileSync(path.join(PRODUCT_ROOT, 'src/pi-studio/layout/app.layout.json'), 'utf8'),
     );
-    const catalogSubs = layoutDefs.rightPanels?.['model-catalog']?.groups?.[0]?.sections ?? [];
+    const catalogSubs = layoutDefs.rightPanels?.['model-catalog']?.h1?.flatMap((h1) => h1.h2 ?? []) ?? [];
     const peakDef = catalogSubs.find((s) => s.id === 'peak-hours');
     report(
       'layout: peak-hours subsection is variable-height with a minHeight',
@@ -699,11 +710,18 @@ async function unitChecks({ report }) {
       `select=${modelSelectCount} bound=${boundModel.trim()}`,
     );
 
-    const tzOptions = await page
-      .locator('#aph-tz option')
-      .evaluateAll((els) =>
-        els.map((e) => ({ value: Number(e.value), label: (e.textContent || '').trim() })),
-      );
+    await page.locator('#aph-tz').click();
+    const tzPop = page.locator('.sf-root > .sf-select-pop');
+    await tzPop.waitFor({ state: 'visible', timeout: 5000 });
+    const tzOptions = await tzPop.locator('.sf-select-row').evaluateAll((els) =>
+      els.map((el) => {
+        const label = (el.textContent || '').trim();
+        const m = /^UTC([+-])(\d{1,2})$/.exec(label);
+        return { value: label === 'UTC' ? 0 : m ? (m[1] === '-' ? -1 : 1) * Number(m[2]) * 60 : NaN, label };
+      }),
+    );
+    await tzPop.locator('.sf-select-row', { hasText: /^UTC$/ }).first().click();
+    await tzPop.waitFor({ state: 'detached', timeout: 5000 });
     report(
       'timezone selector offers whole-hour offsets only (UTC-12..UTC+12)',
       tzOptions.length === 25 &&
@@ -980,7 +998,7 @@ async function unitChecks({ report }) {
       JSON.stringify(boxStyles),
     );
 
-    await page.selectOption('#aph-tz', '120');
+    await pickSelect(page, 'aph-tz', 'UTC+2');
     await page.fill('#aph-start', '09:00');
     await page.fill('#aph-end', '17:00');
     const liveHint = (await page.locator('.aph-live').first().textContent()) ?? '';
@@ -1036,7 +1054,7 @@ async function unitChecks({ report }) {
       editPressed === 5 && editSun === 'false',
       `pressed=${editPressed} sun=${editSun}`,
     );
-    await page.selectOption('#aph-tz', '0');
+    await pickSelect(page, 'aph-tz', 'UTC');
     const editStart = await page.locator('#aph-start').inputValue();
     const editEnd = await page.locator('#aph-end').inputValue();
     const editHint = (await page.locator('.aph-live').first().textContent()) ?? '';
@@ -1164,7 +1182,7 @@ async function unitChecks({ report }) {
     report('the tab table has no UTC column', !headText.includes('UTC'), `head=${headText}`);
 
     const peakTabPanelDef = layoutDefs.rightPanels?.['peak-hours'];
-    const peakTabPanelSubs = peakTabPanelDef?.groups?.[0]?.sections ?? [];
+    const peakTabPanelSubs = peakTabPanelDef?.h1?.flatMap((h1) => h1.h2 ?? []) ?? [];
     report(
       'layout: the peak-hours tab right panel shows the model detail',
       peakTabPanelSubs.length === 1 &&
@@ -1175,8 +1193,8 @@ async function unitChecks({ report }) {
 
     await page.locator('.pht-add').click();
     await page.waitForSelector('.sf-dialog', { timeout: 5000 });
-    await page.selectOption('#aph-model', 'stub/stub-mini');
-    await page.selectOption('#aph-tz', '0');
+    await pickSelect(page, 'aph-model', 'Stub Mini');
+    await pickSelect(page, 'aph-tz', 'UTC');
     await page.fill('#aph-start', '03:00');
     await page.fill('#aph-end', '06:00');
     await page.locator('.aph-save').click();

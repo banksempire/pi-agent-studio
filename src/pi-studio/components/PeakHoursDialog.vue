@@ -144,47 +144,59 @@ const dialogDoc = computed<PopupDocument>(() => {
     : { key: 'model', type: 'slot' };
   return {
     title: dialogTitle.value,
-    h2: [
-      { title: 'Model', fields: [modelField] },
+    h1: [
       {
-        title: 'Peak hour',
-        fields: [
-          { key: 'start', type: 'slot', label: 'Peak start', line: 'window' },
-          { key: 'end', type: 'slot', label: 'Peak end', line: 'window' },
-          { key: 'live', type: 'info', text: liveHint.value, class: 'aph-live' },
-        ],
-      },
-      {
-        title: 'Weekdays',
-        fields: [{ key: 'weekdays', type: 'multi', options: DOW_OPTIONS, class: 'aph-days' }],
-      },
-      {
-        title: 'Timezone',
-        fields: [
-          { key: 'utcOffset', type: 'select', label: 'UTC offset', id: 'aph-tz', options: OFFSET_OPTIONS },
-        ],
-      },
-      {
-        title: 'Note',
-        fields: [
+        id: 'peak',
+        title: 'Peak hours',
+        h2: [
+          { title: 'Model', fields: [modelField] },
           {
-            key: 'note',
-            type: 'input',
-            id: 'aph-note',
-            placeholder: 'rate-limit window',
-            spellcheck: false,
+            title: 'Peak hour',
+            fields: [
+              { key: 'start', type: 'slot', label: 'Peak start', line: 'window' },
+              { key: 'end', type: 'slot', label: 'Peak end', line: 'window' },
+              { key: 'live', type: 'info', text: liveHint.value, class: 'aph-live' },
+            ],
           },
-          ...(problems.value.length
-            ? [
-                {
-                  key: 'problems',
-                  type: 'info' as const,
-                  text: `needs ${problems.value.join(', ')}`,
-                  class: 'aph-live--warn',
-                  hintTone: 'warn' as const,
-                },
-              ]
-            : []),
+          {
+            title: 'Weekdays',
+            fields: [{ key: 'weekdays', type: 'multi', options: DOW_OPTIONS, class: 'aph-days' }],
+          },
+          {
+            title: 'Timezone',
+            fields: [
+              {
+                key: 'utcOffset',
+                type: 'select',
+                label: 'UTC offset',
+                id: 'aph-tz',
+                options: OFFSET_OPTIONS,
+              },
+            ],
+          },
+          {
+            title: 'Note',
+            fields: [
+              {
+                key: 'note',
+                type: 'input',
+                id: 'aph-note',
+                placeholder: 'rate-limit window',
+                spellcheck: false,
+              },
+              ...(problems.value.length
+                ? [
+                    {
+                      key: 'problems',
+                      type: 'info' as const,
+                      text: `needs ${problems.value.join(', ')}`,
+                      class: 'aph-live--warn',
+                      hintTone: 'warn' as const,
+                    },
+                  ]
+                : []),
+            ],
+          },
         ],
       },
     ],

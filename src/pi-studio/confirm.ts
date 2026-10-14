@@ -44,7 +44,18 @@ export function settleConfirm(ok: boolean) {
 export function confirmDocument() {
   return {
     title: confirmState.title,
-    sections: [{ fields: [{ key: 'text', type: 'info' as const, text: confirmState.text }] }],
+    h1: [
+      {
+        id: 'confirm',
+        title: confirmState.title,
+        h2: [
+          {
+            title: confirmState.title,
+            fields: [{ key: 'text', type: 'info' as const, text: confirmState.text }],
+          },
+        ],
+      },
+    ],
     actions: [
       { id: 'cancel', label: 'Cancel', close: true },
       { id: 'confirm', label: confirmState.confirmLabel, tone: confirmState.tone, close: true },

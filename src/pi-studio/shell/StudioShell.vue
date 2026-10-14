@@ -72,17 +72,24 @@ const renameValues = computed({
 const renameDoc = computed(
   (): PopupDocument => ({
     title: 'Rename',
-    h2: [
+    h1: [
       {
-        fields: [
+        id: 'rename',
+        title: 'Rename',
+        h2: [
           {
-            key: 'name',
-            type: 'input',
-            label: 'Session name',
-            placeholder: 'Session name',
-            id: 'session-name-input',
-            inputClass: 'sf-dialog-input',
-            spellcheck: false,
+            title: 'Rename',
+            fields: [
+              {
+                key: 'name',
+                type: 'input',
+                label: 'Session name',
+                placeholder: 'Session name',
+                id: 'session-name-input',
+                inputClass: 'sf-dialog-input',
+                spellcheck: false,
+              },
+            ],
           },
         ],
       },
@@ -99,13 +106,20 @@ const confirmDoc = computed(() => confirmDocument());
 const aboutOpen = ref(false);
 const aboutDoc = computed<PopupDocument>(() => ({
   title: 'About pi-agent-studio',
-  h2: [
+  h1: [
     {
-      fields: [
+      id: 'about',
+      title: 'About',
+      h2: [
         {
-          key: 'text',
-          type: 'info',
-          text: 'pi-agent-studio — browser UI for pi agents, sessions and scheduled jobs.',
+          title: 'About',
+          fields: [
+            {
+              key: 'text',
+              type: 'info',
+              text: 'pi-agent-studio — browser UI for pi agents, sessions and scheduled jobs.',
+            },
+          ],
         },
       ],
     },

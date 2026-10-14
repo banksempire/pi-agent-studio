@@ -506,34 +506,40 @@ const dialogDoc = computed<PopupDocument>(() => {
   }
   return {
     title: dialogTitle.value,
-    h2: [
+    h1: [
       {
-        title: 'Job name',
-        fields: [
+        id: 'job',
+        title: 'Job',
+        h2: [
           {
-            key: 'name',
-            type: 'input',
-            placeholder: 'nightly maintenance',
-            spellcheck: false,
+            title: 'Job name',
+            fields: [
+              {
+                key: 'name',
+                type: 'input',
+                placeholder: 'nightly maintenance',
+                spellcheck: false,
+              },
+            ],
           },
-        ],
-      },
-      { title: 'Schedule', fields: schedule, extraSlot: 'schedule-extra' },
-      {
-        title: 'Model',
-        note: modelNote.value,
-        fields: [{ key: 'model', type: 'slot', label: 'Model override' }],
-      },
-      { title: 'Session', fields: [{ key: 'session', type: 'slot' }] },
-      {
-        title: 'Message',
-        fields: [
+          { title: 'Schedule', fields: schedule, extraSlot: 'schedule-extra' },
           {
-            key: 'message',
-            type: 'textarea',
-            rows: 5,
-            placeholder:
-              'What the agent should do each time this job fires — e.g. “run the full check suite and summarize failures.”',
+            title: 'Model',
+            note: modelNote.value,
+            fields: [{ key: 'model', type: 'slot', label: 'Model override' }],
+          },
+          { title: 'Session', fields: [{ key: 'session', type: 'slot' }] },
+          {
+            title: 'Message',
+            fields: [
+              {
+                key: 'message',
+                type: 'textarea',
+                rows: 5,
+                placeholder:
+                  'What the agent should do each time this job fires — e.g. “run the full check suite and summarize failures.”',
+              },
+            ],
           },
         ],
       },

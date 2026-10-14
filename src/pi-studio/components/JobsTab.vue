@@ -123,15 +123,22 @@ const confirmOpen = ref(false);
 const confirmDoc = computed(
   (): PopupDocument => ({
     title: 'Run immediately?',
-    h2: [
+    h1: [
       {
-        fields: [
+        id: 'confirm',
+        title: 'Run immediately?',
+        h2: [
           {
-            key: 'text',
-            type: 'info',
-            text: `${confirmJob.value?.name ?? ''} was scheduled for ${
-              confirmJob.value ? fmtTime(confirmJob.value.runAt) : ''
-            } (${confirmJob.value ? fmtRelative(confirmJob.value.runAt) : ''}) — that time has passed. Re-activating it will run it immediately.`,
+            title: 'Run immediately?',
+            fields: [
+              {
+                key: 'text',
+                type: 'info',
+                text: `${confirmJob.value?.name ?? ''} was scheduled for ${
+                  confirmJob.value ? fmtTime(confirmJob.value.runAt) : ''
+                } (${confirmJob.value ? fmtRelative(confirmJob.value.runAt) : ''}) — that time has passed. Re-activating it will run it immediately.`,
+              },
+            ],
           },
         ],
       },

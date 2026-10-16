@@ -3,7 +3,7 @@ import { closeSync, existsSync, openSync, readSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { extractText, hashId, messageId, newSessionPath, sdk, toDisplayMessage } from './sdk-bridge.mjs';
 
-export const STALE_RUN_MS = 20 * 60 * 1000;
+export const STALE_RUN_MS = Number(process.env.PI_NEST_STALE_RUN_MS ?? 20 * 60 * 1000);
 export const IDLE_EVICT_MS = Number(process.env.PI_NEST_IDLE_EVICT_MS ?? 60 * 60 * 1000);
 export const WATCHDOG_INTERVAL_MS = 30 * 1000;
 export const PARTIAL_SNAPSHOT_MS = 500;
@@ -504,6 +504,11 @@ export class AgentRegistry extends EventEmitter {
         live.runningSince = null;
         this.broadcast('session_status', agentId, { status: 'idle', stale: true });
         this.broadcast('refresh', agentId, {});
+        Promise.resolve()
+          .then(() => live.session.abort())
+          .catch((e) => {
+            console.error(`[pi-nest][watchdog] abort failed (${agentId.split('/').pop()}):`, e?.message ?? e);
+          });
         continue;
       }
       if (

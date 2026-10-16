@@ -7,6 +7,7 @@ const PRODUCT_ROOT = path.join(__dirname, '..');
 const REGISTRY = path.join(PRODUCT_ROOT, 'src', 'pi-nest', 'src', 'registry.mjs');
 const JOURNAL = path.join(PRODUCT_ROOT, 'src', 'pi-nest', 'src', 'journal.mjs');
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'registry-journal-'));
+process.env.PI_NEST_STALE_RUN_MS = '50';
 
 let failed = false;
 const report = (name, ok, extra = '') => {
@@ -23,8 +24,14 @@ function fakeSession() {
     thinkingLevel: null,
     resolvePrompt: null,
     prompts: [],
+    subs: [],
     disposed: false,
-    subscribe() {},
+    subscribe(cb) {
+      this.subs.push(cb);
+    },
+    emit(ev) {
+      for (const cb of this.subs) cb(ev);
+    },
     dispose() {
       this.disposed = true;
     },
@@ -35,6 +42,7 @@ function fakeSession() {
       });
     },
     abort() {
+      this.abortCalls = (this.abortCalls ?? 0) + 1;
       this.resolvePrompt?.();
     },
   };
@@ -380,6 +388,52 @@ async function main() {
       'journal-less registry still prompts and drains',
       f.prompts[0] === 'm1' && drained.queued === 0 && drained.interrupted === 0,
     );
+  }
+
+  {
+    const A = sessionFile('stale-a');
+    const j = openJournal(db('stale'));
+    const r = new AgentRegistry({ journal: j });
+    const f = fakeSession();
+    r.attach(A, f);
+    const settleEvents = [];
+    r.on('event', (ev) => {
+      if (ev.type === 'session_status') settleEvents.push(JSON.parse(ev.json));
+    });
+    const p1 = r.prompt(A, 'stale-m1');
+    const p2 = r.prompt(A, 'stale-m2');
+    await ticks();
+    report(
+      'stale scenario: run inflight, follow-up queued',
+      f.prompts.length === 1 && r.state(A).queueDepth === 1,
+    );
+    f.emit({ type: 'agent_start' });
+    await new Promise((res) => setTimeout(res, 80));
+    r.scanStaleRuns();
+    await ticks();
+    report(
+      'watchdog force-settle broadcasts idle+stale and aborts the hung run',
+      f.abortCalls === 1 && settleEvents.some((e) => e.status === 'idle' && e.stale === true),
+      JSON.stringify({ abortCalls: f.abortCalls, settleEvents }),
+    );
+    await p1;
+    await ticks();
+    report(
+      'force-settle drains the queue: follow-up prompt is delivered',
+      f.prompts[1] === 'stale-m2' && r.state(A).queueDepth === 0,
+      JSON.stringify(f.prompts),
+    );
+    const rows = j.pendingItems();
+    report(
+      'stuck inflight row removed, follow-up now inflight',
+      rows.length === 1 && rows[0].status === 'inflight' && rows[0].message === 'stale-m2',
+      JSON.stringify(rows.map((x) => [x.message, x.status])),
+    );
+    f.resolvePrompt();
+    await p2;
+    await ticks();
+    report('settling the follow-up empties the journal', j.pendingCount() === 0);
+    j.close();
   }
 
   fs.rmSync(TMP, { recursive: true, force: true });

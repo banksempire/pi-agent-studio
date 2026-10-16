@@ -41,7 +41,7 @@ Area → suite (`npm run <script>`; full list in `package.json`):
 | model catalog peak hours | `check:peakhours` |
 | scheduler + job dialog UI | `check:scheduler`, `check:jobeditor` |
 | sub-agents + workflow engine | `check:subagents` |
-| journal drain/recover | `check:registry` |
+| journal drain/recover, stale-run force-settle | `check:registry` |
 | restart recovery (SIGTERM/SIGKILL mid-generation) | `check:backend-restart`, `check:restart`, `check:restart-selfkill` |
 | docker icon geometry | `check:dockericons` |
 | types / prod build | `typecheck` (vue-tsc — plain `tsc` does NOT check `.vue`), `build` |

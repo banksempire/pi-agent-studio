@@ -4,7 +4,7 @@ Task-specific manual. The workspace contract (ground rules, workflow, ports) liv
 
 ## Setup
 
-- Run the stack via the CLI, never by hand: `npm run studio -- …` from this repo, or `node pi-agent-studio/bin/studio.mjs …` from the pair root. The full service-lifecycle runbook — commands (`up` / `down` / `restart <svc>` / `kill <svc>` / `status` / `logs [svc] [-f]` / `agents` / `abort <id>` / `doctor [--fix]` / `clean [--snapshots]`), restart semantics, ports, strays, maintenance-window discipline — lives in the `pi-studio-services` skill (`.pi/skills/pi-studio-services/SKILL.md` at the pair root); load it before touching services.
+- Run the stack via the CLI, never by hand: `npm run studio -- …` from this repo, or `node pi-agent-studio/bin/studio.mjs …` from the pair root. Service-lifecycle commands and rules: the `pi-studio-services` skill.
 - One process: `src/pi-studio/server/index.mjs` serves the HTTP/SSE API and owns the agent registry in-process; the agent core lives in `src/pi-nest/src/` (registry, sdk-bridge, slash, journal). No separate daemon. The journal is SQLite at `<state>/studio.db`; every queue transition is committed before it happens, so graceful and SIGKILL restarts recover identically.
 - Frontend: `src/pi-studio/` (Vue). The whole UI is declarative JSON — `layout/app.layout.json` (panels bound to data providers) + `layout/panelData.ts` (viewmodels, action handlers, dialogs); `components/` holds workspace-tab widgets and the backend status component only. Product-specific UI never touches `StudioFramework`; framework gaps are fixed there (keep its demo + suites green).
 - Vite proxies `/api` (incl. SSE) to the backend — main: 17000 → 7494.
@@ -13,7 +13,7 @@ Task-specific manual. The workspace contract (ground rules, workflow, ports) liv
 
 - Config precedence: CLI args > `PI_STUDIO_*` env > instance config (`.studio/config/instances/`) > defaults. Services are wired via argv only — the CLI injects no env; env remains the manual/container channel (and the reason for the workspace strip ritual).
 - Sub-command groups: `worktree add|rm` (no `ls`; `--purge` leaves the git ref), `jobs list|add|edit|rm|run|enable|disable|runs`, `subagents ls|gc`, `guard install`. Full design doc: `docs/cli-design.md`.
-- `restart backend` reuses the recorded backend port so the running web proxy keeps working, and completes via a detached `__finish-restart` helper even if its caller dies. Service-lifecycle rules (guard, cascade, adoption, pidfiles/logs paths, manual-start fallback, stray cleanup) live in the `pi-studio-services` skill — not here.
+- `restart backend` reuses the recorded backend port so the running web proxy keeps working, and completes via a detached `__finish-restart` helper even if its caller dies. Other lifecycle rules: the `pi-studio-services` skill.
 
 ## Testing
 

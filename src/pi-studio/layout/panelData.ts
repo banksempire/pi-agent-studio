@@ -36,7 +36,6 @@ import {
   fmtDateTime,
   fmtTokens,
   type JobRunInfo,
-  queuedMessagesOf,
   type SendKeyMode,
   timeAgo,
   useChatStore,
@@ -252,23 +251,6 @@ registerPanelData('model-picker-rows', () => {
 });
 
 registerPanelData('model-picker-menu', () => modelMenuItems(sessionModel.catalog?.models ?? []));
-
-registerPanelData('model-picker-note', () => {
-  if (sessionModel.busy) return { text: 'Applying…', tone: 'info' as const };
-  if (sessionModel.error) return { text: sessionModel.error, tone: 'error' as const };
-  if (!activeSession.value) return { text: 'Open a chat window to change its model.', tone: 'info' as const };
-  const s = activeSession.value;
-  if (s.status === 'running') {
-    return {
-      text: 'Session is working — a model change is queued until it finishes.',
-      tone: 'info' as const,
-    };
-  }
-  if (queuedMessagesOf(s.id).some((q) => q.kind === 'model')) {
-    return { text: 'Model change queued — applies when the session finishes.', tone: 'info' as const };
-  }
-  return { text: undefined, tone: 'info' as const };
-});
 
 const SESSION_DOT: Record<string, DotTone> = { idle: 'muted', running: 'ok-pulse' };
 

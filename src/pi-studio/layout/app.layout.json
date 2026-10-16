@@ -397,11 +397,6 @@
                   "bind": "model-picker-menu",
                   "title": "Change Model",
                   "action": "pick-model"
-                },
-                {
-                  "type": "banner",
-                  "bind": "model-picker-note",
-                  "tone": "info"
                 }
               ]
             },

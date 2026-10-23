@@ -292,7 +292,7 @@ async function save() {
   align-items: center;
   padding: 7px 10px;
   border: 1px solid var(--sf-border);
-  border-radius: var(--sf-radius-sm);
+  border-radius: 8px;
   background: rgba(0, 0, 0, 0.15);
   color: var(--sf-text);
   font-family: var(--sf-mono, monospace);

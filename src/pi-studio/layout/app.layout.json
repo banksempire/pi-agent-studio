@@ -383,24 +383,6 @@
           "title": "Session",
           "h2": [
             {
-              "id": "session-model",
-              "title": "Model",
-              "height": "fixed",
-              "components": [
-                {
-                  "type": "keyValueList",
-                  "bind": "model-picker-rows"
-                },
-                {
-                  "type": "menuButton",
-                  "label": "Change Model",
-                  "bind": "model-picker-menu",
-                  "title": "Change Model",
-                  "action": "pick-model"
-                }
-              ]
-            },
-            {
               "id": "session-stats",
               "title": "Stats",
               "height": "fixed",
@@ -413,39 +395,39 @@
                 {
                   "type": "keyValueList",
                   "bind": "session-messages"
-                }
-              ]
-            },
-            {
-              "id": "session-general",
-              "title": "General",
-              "heading": 3,
-              "components": [
+                },
                 {
-                  "type": "keyValueList",
-                  "bind": "session-general"
-                }
-              ]
-            },
-            {
-              "id": "session-tokens",
-              "title": "Tokens",
-              "heading": 3,
-              "components": [
+                  "id": "session-general",
+                  "title": "General",
+                  "heading": 3,
+                  "components": [
+                    {
+                      "type": "keyValueList",
+                      "bind": "session-general"
+                    }
+                  ]
+                },
                 {
-                  "type": "keyValueList",
-                  "bind": "session-tokens"
-                }
-              ]
-            },
-            {
-              "id": "session-cost",
-              "title": "Cost",
-              "heading": 3,
-              "components": [
+                  "id": "session-tokens",
+                  "title": "Tokens",
+                  "heading": 3,
+                  "components": [
+                    {
+                      "type": "keyValueList",
+                      "bind": "session-tokens"
+                    }
+                  ]
+                },
                 {
-                  "type": "keyValueList",
-                  "bind": "session-cost"
+                  "id": "session-cost",
+                  "title": "Cost",
+                  "heading": 3,
+                  "components": [
+                    {
+                      "type": "keyValueList",
+                      "bind": "session-cost"
+                    }
+                  ]
                 }
               ]
             }

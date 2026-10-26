@@ -383,6 +383,24 @@
           "title": "Session",
           "h2": [
             {
+              "id": "session-model",
+              "title": "Model",
+              "height": "fixed",
+              "components": [
+                {
+                  "type": "keyValueList",
+                  "bind": "model-picker-rows"
+                },
+                {
+                  "type": "menuButton",
+                  "label": "Change Model",
+                  "bind": "model-picker-menu",
+                  "title": "Change Model",
+                  "action": "pick-model"
+                }
+              ]
+            },
+            {
               "id": "session-stats",
               "title": "Stats",
               "height": "fixed",

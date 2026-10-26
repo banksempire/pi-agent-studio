@@ -633,7 +633,7 @@ const STUB_MODELS = [
     const layoutDefs = JSON.parse(
       fs.readFileSync(path.join(PRODUCT_ROOT, 'src/pi-studio/layout/app.layout.json'), 'utf8'),
     );
-    const catalogSubs = layoutDefs.rightPanels?.['model-catalog']?.groups?.[0]?.sections ?? [];
+    const catalogSubs = layoutDefs.rightPanels?.['model-catalog']?.h1?.[0]?.h2 ?? [];
     const detailDef = catalogSubs.find((s) => s.id === 'model-detail');
     report(
       'Model Detail subsection is content-fit, not variable-height',

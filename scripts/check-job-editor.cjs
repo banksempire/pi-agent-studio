@@ -543,7 +543,7 @@ function writeSessionFile(name) {
         modes: seg?.querySelectorAll('.sf-pill-item').length ?? 0,
         selected: on?.textContent ?? '',
         periodicSeg: !!document.querySelector('.je-periodic-seg'),
-        previewVisible: !!document.querySelector('.je-cron-preview'),
+        previewVisible: !!document.querySelector('[data-field="cronPreview"]'),
         rawInputVisible: !!document.querySelector('input[placeholder="0 9 * * *"]'),
         runAtVisible: !!document.querySelector('input[type="datetime-local"]'),
       };
@@ -578,7 +578,7 @@ function writeSessionFile(name) {
     await page.locator('input[type="datetime-local"]').fill('2020-01-01T00:00');
     await delay(150);
     const pastHint = await page.evaluate(() =>
-      [...document.querySelectorAll('.je-hint--warn, .sf-form-hint--warn')].some((h) =>
+      [...document.querySelectorAll('.sf-form-hint--warn')].some((h) =>
         (h.textContent ?? '').includes('run immediately'),
       ),
     );
@@ -618,6 +618,12 @@ function writeSessionFile(name) {
 
     const modeBtn = (t) => page.locator('.je-sched-seg .sf-pill-item', { hasText: t });
     const periodicBtn = (t) => page.locator('.je-periodic-seg .sf-pill-item', { hasText: t });
+    const cronPreview = () => page.locator('[data-field="cronPreview"]');
+    const readCron = async () => {
+      const text = (await cronPreview().textContent()) ?? '';
+      const m = /cron (.*?) — (.*?) · next:/.exec(text);
+      return { ref: m?.[1] ?? '', desc: m?.[2] ?? '', text };
+    };
 
     await modeBtn('Periodic').click();
     await delay(150);
@@ -637,8 +643,7 @@ function writeSessionFile(name) {
         periodicDefaults.selected === 'Daily',
       JSON.stringify(periodicDefaults),
     );
-    let cronRef = await page.locator('.je-cron-ref code').textContent();
-    let cronDesc = await page.locator('.je-cron-desc').textContent();
+    ({ ref: cronRef, desc: cronDesc } = await readCron());
     report(
       'daily mode builds a daily expression with synced reference',
       cronRef === '0 9 * * *' && !!cronDesc && cronDesc.includes('At 09:00'),
@@ -647,8 +652,7 @@ function writeSessionFile(name) {
 
     await periodicBtn('Weekly').click();
     await delay(150);
-    cronRef = await page.locator('.je-cron-ref code').textContent();
-    cronDesc = await page.locator('.je-cron-desc').textContent();
+    ({ ref: cronRef, desc: cronDesc } = await readCron());
     report(
       'weekly pattern starts on weekdays',
       cronRef === '0 9 * * mon-fri' && !!cronDesc && cronDesc.includes('Mon–Fri'),
@@ -706,7 +710,7 @@ function writeSessionFile(name) {
     });
     await page.locator('.sf-ms-item', { hasText: 'Wed' }).click();
     await delay(150);
-    cronRef = await page.locator('.je-cron-ref code').textContent();
+    cronRef = (await readCron()).ref;
     report('re-selecting the day rebuilds mon-fri', cronRef === '0 9 * * mon-fri', String(cronRef));
     const rectsAfter = await page.evaluate(() => {
       const track = document.querySelector('.sf-ms-track');
@@ -736,8 +740,7 @@ function writeSessionFile(name) {
     );
     await page.locator('.je-every-seg .sf-pill-item', { hasText: '30' }).click();
     await delay(150);
-    cronRef = await page.locator('.je-cron-ref code').textContent();
-    cronDesc = await page.locator('.je-cron-desc').textContent();
+    ({ ref: cronRef, desc: cronDesc } = await readCron());
     report(
       'minutes mode builds a step expression',
       cronRef === '*/30 * * * *' && !!cronDesc && cronDesc.includes('Every 30 min'),
@@ -756,7 +759,7 @@ function writeSessionFile(name) {
     );
     await page.locator('.je-atmin-seg .sf-pill-item', { hasText: '15' }).click();
     await delay(150);
-    cronRef = await page.locator('.je-cron-ref code').textContent();
+    cronRef = (await readCron()).ref;
     report('hourly mode builds a minute-of-hour expression', cronRef === '15 * * * *', String(cronRef));
 
     await modeBtn('Advanced').click();
@@ -774,11 +777,11 @@ function writeSessionFile(name) {
     await page.locator('input[placeholder="0 9 * * *"]').fill('99 * * * *');
     await delay(150);
     const previewBad = await page.evaluate(() => {
-      const el = document.querySelector('.je-cron-preview');
+      const el = document.querySelector('[data-field="cronPreview"]');
       if (!el) return null;
       return {
-        bad: el.classList.contains('je-cron-preview--bad'),
-        err: el.querySelector('.je-cron-error')?.textContent ?? '',
+        bad: el.className.includes('je-cron-preview-info--bad'),
+        err: el.textContent ?? '',
       };
     });
     report(
@@ -788,7 +791,7 @@ function writeSessionFile(name) {
     );
     await page.locator('input[placeholder="0 9 * * *"]').fill('15 9,17 * * mon-fri');
     await delay(150);
-    cronRef = await page.locator('.je-cron-ref code').textContent();
+    cronRef = (await readCron()).ref;
     report(
       'valid advanced expression updates the reference',
       cronRef === '15 9,17 * * mon-fri',
@@ -820,7 +823,7 @@ function writeSessionFile(name) {
       disabled: await saveBtn.isDisabled(),
       hint: await page.locator('.sf-form-footnote').textContent(),
       cronInputGone: (await page.locator('input[placeholder="0 9 * * *"]').count()) === 0,
-      boxModel: await page.locator('.je-offpeak-box .je-mono').textContent(),
+      boxModel: await page.locator('[data-field="offpeak"]').textContent(),
     };
     report(
       'off peak hides the cron field and blocks save without a model',
@@ -830,17 +833,13 @@ function writeSessionFile(name) {
         offPeakBlocked.boxModel.includes('no model picked'),
       JSON.stringify(offPeakBlocked),
     );
-    await page.locator('.je-model-btn').click();
-    await page.waitForSelector('.sf-menu-pop', { timeout: 5000 });
-    await page.locator('.sf-menu-row', { hasText: 'stub' }).hover();
-    await page.locator('.sf-menu-row', { hasText: 'Stub Mini' }).hover();
-    await page.locator('.sf-menu-row', { hasText: '(None)' }).waitFor({ timeout: 5000 });
-    await page.locator('.sf-menu-row', { hasText: '(None)' }).click();
+    await page.locator('.sf-form-field[data-field="model"] .sf-form-select').click();
+    await page.locator('.sf-select-row', { hasText: 'Stub Mini' }).first().click();
     await delay(300);
     const offPeakReady = {
       disabled: await saveBtn.isDisabled(),
-      model: await page.locator('.je-model-btn-text').textContent(),
-      boxModel: await page.locator('.je-offpeak-box .je-mono').textContent(),
+      model: await page.locator('.sf-form-field[data-field="model"] .sf-form-select').textContent(),
+      boxModel: await page.locator('[data-field="offpeak"]').textContent(),
     };
     report(
       'picking a model unblocks the off-peak save and shows the picked model',
@@ -1125,10 +1124,11 @@ function writeSessionFile(name) {
     const customState = await page.evaluate(() => {
       const seg = document.querySelector('.je-sched-seg');
       const on = seg?.querySelector('.sf-pill-item--on');
+      const infoText = document.querySelector('[data-field="cronPreview"]')?.textContent ?? '';
       return {
         patterns: seg?.querySelectorAll('.sf-pill-item').length ?? 0,
         selected: on?.textContent ?? '',
-        ref: document.querySelector('.je-cron-ref code')?.textContent ?? '',
+        ref: infoText.match(/cron (.*?) —/)?.[1] ?? '',
       };
     });
     report(
@@ -1142,10 +1142,11 @@ function writeSessionFile(name) {
     await delay(150);
     const rebuilt = await page.evaluate(() => {
       const seg = document.querySelector('.je-periodic-seg');
+      const infoText = document.querySelector('[data-field="cronPreview"]')?.textContent ?? '';
       return {
         patterns: seg?.querySelectorAll('.sf-pill-item').length ?? 0,
         selected: seg?.querySelector('.sf-pill-item--on')?.textContent ?? '',
-        ref: document.querySelector('.je-cron-ref code')?.textContent ?? '',
+        ref: infoText.match(/cron (.*?) —/)?.[1] ?? '',
       };
     });
     report(
@@ -1186,16 +1187,17 @@ function writeSessionFile(name) {
       return {
         kind: seg?.querySelector('.sf-pill-item--on')?.textContent ?? '',
         schedMode: document.querySelector('.je-sched-seg .sf-pill-item--on')?.textContent ?? '',
-        cronRef: document.querySelector('.je-cron-ref code')?.textContent ?? '',
-        offpeakBox: !!document.querySelector('.je-offpeak-box'),
-        model: document.querySelector('.je-model-btn-text')?.textContent ?? '',
+        cronRef: document.querySelector('[data-field="cronPreview"]')?.textContent ?? '',
+        offpeakBox: !!document.querySelector('[data-field="offpeak"]'),
+        model:
+          document.querySelector('.sf-form-field[data-field="model"] .sf-form-select')?.textContent ?? '',
       };
     });
     report(
       'a non-peak job round-trips into the popup from the panel edit button on the off-peak sub-type',
       npState.kind === 'off peak' &&
         npState.schedMode === 'Advanced' &&
-        npState.cronRef === '' &&
+        !/cron \S+ —/.test(npState.cronRef) &&
         npState.offpeakBox &&
         /stub/.test(npState.model),
       JSON.stringify(npState),
@@ -1298,7 +1300,7 @@ function writeSessionFile(name) {
         name: h('[data-field="name"] input'),
         runAt: h('#je-runat'),
         cwd: h('#je-cwd'),
-        modelBtn: h('.je-model-btn'),
+        modelBtn: h('[data-field="model"] .sf-form-select'),
         message: h('[data-field="message"] textarea'),
       };
     });

@@ -2,8 +2,7 @@ import { createApp } from 'vue';
 import '@sf/styles/main.css';
 import './styles/app.css';
 
-import WorkspacePanel from '@sf/components/WorkspacePanel.vue';
-import { registerPanelComponent, registerStatusComponent, registerTabContent } from '@sf/registry';
+import { registerStatusComponent, registerTabContent } from '@sf/registry';
 import BackendStatus from './components/BackendStatus.vue';
 import ChatWindow from './components/ChatWindow.vue';
 import JobsTab from './components/JobsTab.vue';
@@ -20,7 +19,5 @@ registerTabContent('model-catalog', ModelCatalog);
 registerTabContent('peak-hours', PeakHoursTab);
 
 registerStatusComponent('backend-status', BackendStatus);
-
-registerPanelComponent('workspace-panel', WorkspacePanel);
 
 createApp(StudioShell).mount('#app');

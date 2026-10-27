@@ -16,7 +16,6 @@ import {
   toUtcMinutes,
   updatePeakHours,
 } from '../peakHours';
-import TimeField from './TimeField.vue';
 
 export interface PeakHourModelChoice {
   key: string;
@@ -141,7 +140,11 @@ const dialogDoc = computed<PopupDocument>(() => {
           options: g.options.map((o) => ({ value: o.key, label: o.label })),
         })),
       }
-    : { key: 'model', type: 'slot' };
+    : {
+        key: 'model',
+        type: 'info',
+        text: `${boundKey.value} — bound to the model selected in the catalog`,
+      };
   return {
     title: dialogTitle.value,
     h1: [
@@ -153,8 +156,8 @@ const dialogDoc = computed<PopupDocument>(() => {
           {
             title: 'Peak hour',
             fields: [
-              { key: 'start', type: 'slot', label: 'Peak start', line: 'window' },
-              { key: 'end', type: 'slot', label: 'Peak end', line: 'window' },
+              { key: 'start', type: 'time', label: 'Peak start', id: 'aph-start', line: 'window' },
+              { key: 'end', type: 'time', label: 'Peak end', id: 'aph-end', line: 'window' },
               { key: 'live', type: 'info', text: liveHint.value, class: 'aph-live' },
             ],
           },
@@ -272,39 +275,10 @@ async function save() {
     @action="(id) => (id === 'save' ? save() : undefined)"
     @close="onRequestClose"
   >
-    <template #field-start>
-      <TimeField id="aph-start" :model-value="startField" @update:model-value="(v) => onStartTime(v)" />
-    </template>
-    <template #field-end>
-      <TimeField id="aph-end" :model-value="endField" @update:model-value="(v) => onEndTime(v)" />
-    </template>
-    <template v-if="!selectable" #field-model>
-      <div class="aph-model-bound" :title="boundKey">{{ boundKey }}</div>
-      <span v-if="!editing" class="aph-field-note">bound to the model selected in the catalog</span>
-    </template>
   </PopupDialog>
 </template>
 
 <style scoped>
-.aph-model-bound {
-  height: 36px;
-  display: flex;
-  align-items: center;
-  padding: 7px 10px;
-  border: 1px solid var(--sf-border);
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.15);
-  color: var(--sf-text);
-  font-family: var(--sf-mono, monospace);
-  font-size: 16px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.aph-field-note {
-  font-size: 16px;
-  color: var(--sf-text);
-}
 .aph-live {
   font-family: var(--sf-mono, monospace);
   font-size: 16px;

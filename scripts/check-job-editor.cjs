@@ -1057,6 +1057,7 @@ function writeSessionFile(name) {
       JSON.stringify(jobConfigPatches),
     );
     await page.locator('[data-sub-body="scheduler-prefs"] input[type="number"]').first().fill('4');
+    await page.locator('[data-sub-body="scheduler-prefs"] input[type="number"]').first().press('Enter');
     await delay(1200);
     const capAfter = await page.evaluate(() =>
       [...document.querySelectorAll('[data-sub-body="scheduler-prefs"] input[type="number"]')].map(

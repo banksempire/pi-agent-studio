@@ -1560,11 +1560,15 @@ async function unitChecks({ report }) {
       const body = document.querySelector('.pht-body');
       const wrap = document.querySelector('.pht .sf-tbl-wrap');
       const scroller = document.querySelector('.pht .sf-tbl-scroll');
+      const pager = document.querySelector('.pht .sf-tbl-pager');
+      const bottom = pager
+        ? Math.abs(scroller.getBoundingClientRect().bottom - pager.getBoundingClientRect().top) <= 1 &&
+          Math.abs(pager.getBoundingClientRect().bottom - wrap.getBoundingClientRect().bottom) <= 1
+        : Math.abs(scroller.getBoundingClientRect().bottom - wrap.getBoundingClientRect().bottom) <= 1;
       return {
         bodyH: Math.round(body.getBoundingClientRect().height),
         tblH: Math.round(wrap.getBoundingClientRect().height),
-        scrollFills:
-          Math.abs(scroller.getBoundingClientRect().bottom - wrap.getBoundingClientRect().bottom) <= 1,
+        scrollFills: bottom,
       };
     });
     report(

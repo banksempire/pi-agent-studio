@@ -277,8 +277,10 @@ async function schedulerTests() {
   {
     const jr = makeJournal('slightly-late-skip');
     const reg = fakeRegistry();
-    const expr = '0 3 1 6 *';
-    const prev = nextCronTime(expr, Date.now() - 120 * 86400000);
+    const anchor = new Date(Date.now() - 10 * 86400000);
+    if (anchor.getMonth() === 1 && anchor.getDate() === 29) anchor.setDate(28);
+    const expr = `0 3 ${anchor.getDate()} ${anchor.getMonth() + 1} *`;
+    const prev = nextCronTime(expr, Date.now() - 12 * 86400000);
     jr.insertJob(cronJob(expr, { missedPolicy: 'skip', nextDue: prev }));
     const s = new Scheduler({ journal: jr, registry: reg });
     await s.tick();

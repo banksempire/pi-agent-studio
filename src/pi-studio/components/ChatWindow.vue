@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import SvgIcon from '@sf/components/SvgIcon.vue';
+import { useHostedTab } from '@sf/composables/useHostedTab';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
-import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ActionBubble, ActionGroup, type ActionKind, type ActionStatus, actionName } from '../actionBubble';
 import { dataUrlOf, processImageFile } from '../imageAttach';
 import {
@@ -1046,11 +1047,7 @@ onMounted(() => {
 let suppressScrollMemo = false;
 let viewActive = true;
 
-onDeactivated(() => {
-  viewActive = false;
-});
-
-onActivated(() => {
+function onTabShown() {
   suppressScrollMemo = true;
   restoreScroll(props.sessionId);
   nextTick(() => {
@@ -1059,7 +1056,18 @@ onActivated(() => {
     });
   });
   viewActive = true;
-});
+}
+
+const hostedTab = useHostedTab();
+if (hostedTab) {
+  onMounted(() => {
+    if (hostedTab.visible.value) onTabShown();
+  });
+  watch(hostedTab.visible, (visible) => {
+    if (visible) onTabShown();
+    else viewActive = false;
+  });
+}
 
 onUnmounted(() => {
   const el = listEl.value;

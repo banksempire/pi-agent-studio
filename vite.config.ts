@@ -24,9 +24,10 @@ export default defineConfig({
     target: 'esnext',
     rollupOptions: {
       output: {
-        manualChunks: {
-          vendor: ['vue'],
-          markdown: ['marked', 'dompurify'],
+        manualChunks(id) {
+          if (/(node_modules)\/(marked|dompurify)\//.test(id)) return 'markdown';
+          if (/node_modules\/(@vue|vue)\//.test(id)) return 'vendor';
+          return undefined;
         },
       },
     },

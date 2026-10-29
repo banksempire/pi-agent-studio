@@ -528,7 +528,7 @@ const dialogDoc = computed<PopupDocument>(() => {
         class: 'je-offpeak-info',
         text: `scheduler-picked · once a day — ${form.model || 'no model picked'}. ${
           form.model
-            ? `runs at the first moment ${modelButtonText} is outside its peak windows — no fixed time, the scheduler decides`
+            ? `runs at the first moment ${modelButtonText.value} is outside its peak windows — no fixed time, the scheduler decides`
             : 'pick the model in the Model section below — peak windows are configured per model'
         }`,
       });

@@ -111,6 +111,8 @@ function writeSessions() {
           message: {
             role: 'assistant',
             content,
+            provider: 'test',
+            model: 'test-model',
             timestamp: base + n * 60000 + 1000,
             ...(t === turns - 1
               ? withError
@@ -907,15 +909,28 @@ function makeReporter() {
       await delay(600);
       const pin = await inB((el) => {
         const lr = el.getBoundingClientRect();
+        const isAgent = (s) => s.nextElementSibling?.classList.contains('chat-msg--agent') === true;
         const sep = Array.from(el.querySelectorAll('.chat-sep')).find(
           (s) => Math.abs(s.getBoundingClientRect().top - lr.top) < 2,
         );
         if (!sep) return null;
-        const row = sep.nextElementSibling;
+        let target = sep;
+        if (isAgent(sep)) {
+          let g = sep.parentElement?.previousElementSibling ?? null;
+          while (g) {
+            const s = g.firstElementChild;
+            if (g.classList.contains('chat-group') && s?.classList.contains('chat-sep') && !isAgent(s)) {
+              target = s;
+              break;
+            }
+            g = g.previousElementSibling;
+          }
+        }
+        const row = target.nextElementSibling;
         const expected = Math.round(
-          row.getBoundingClientRect().top - lr.top + el.scrollTop - sep.getBoundingClientRect().height,
+          row.getBoundingClientRect().top - lr.top + el.scrollTop - target.getBoundingClientRect().height,
         );
-        window.__t13 = { sep, row };
+        window.__t13 = { sep: target, row };
         sep.click();
         return expected;
       });
@@ -961,9 +976,77 @@ function makeReporter() {
       why.push(
         `topJump:${topOk ? 'ok' : `BAD sepTop:${afterTop1.sepTop} rowTop:${afterTop1.rowTop} scrollTop:${afterTop1.scrollTop}→${afterTop2.scrollTop} (want ≈${firstOffset}, stable)`}`,
       );
-      return { ok: jumpOk && topOk, why: why.join(' | ') };
+      await switchTab('XWin-A');
+      const aTile = page
+        .locator('.sf-tab-label:has-text("XWin-A:")')
+        .locator('xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " sf-tile ")][1]');
+      const aList = aTile.locator('.chat-messages');
+      if ((await aList.count()) !== 1) return { ok: false, why: `A tile list count ${await aList.count()}` };
+      const inA = (fn, ...args) => aList.evaluate(fn, ...args);
+      const winA = () =>
+        inA((el) => {
+          const lr = el.getBoundingClientRect();
+          const sep = window.__t13?.sep ?? null;
+          const row = window.__t13?.row ?? null;
+          return {
+            scrollTop: el.scrollTop,
+            sepTop: sep ? Math.round(sep.getBoundingClientRect().top - lr.top) : -1,
+            rowTop: row ? Math.round(row.getBoundingClientRect().top - lr.top) : -1,
+            sepH: sep ? Math.round(sep.getBoundingClientRect().height) : -1,
+          };
+        });
+      await delay(600);
+      await inA((el) => {
+        el.scrollTop = el.scrollHeight;
+      });
+      await delay(400);
+      await inA((el) => {
+        el.scrollTop -= Math.round(el.clientHeight * 2.5);
+      });
+      await delay(600);
+      const agentClicked = await inA((el) => {
+        const lr = el.getBoundingClientRect();
+        const isAgent = (s) => s.nextElementSibling?.classList.contains('chat-msg--agent') === true;
+        const cands = Array.from(el.querySelectorAll('.chat-sep')).filter((s) => {
+          const t = s.getBoundingClientRect().top - lr.top;
+          return isAgent(s) && t > 40 && t < el.clientHeight - 60;
+        });
+        const sep = cands[cands.length - 1];
+        if (!sep) return false;
+        let g = sep.parentElement?.previousElementSibling ?? null;
+        let userSep = null;
+        while (g) {
+          const s = g.firstElementChild;
+          if (g.classList.contains('chat-group') && s?.classList.contains('chat-sep') && !isAgent(s)) {
+            userSep = s;
+            break;
+          }
+          g = g.previousElementSibling;
+        }
+        if (!userSep) return false;
+        window.__t13 = { sep: userSep, row: userSep.nextElementSibling };
+        sep.click();
+        return true;
+      });
+      await delay(400);
+      const afterAgent1 = await winA();
+      await delay(900);
+      const afterAgent2 = await winA();
+      const agentOk =
+        agentClicked === true &&
+        Math.abs(afterAgent1.sepTop) <= 2 &&
+        Math.abs(afterAgent1.rowTop - afterAgent1.sepH) <= 2 &&
+        Math.abs(afterAgent2.scrollTop - afterAgent1.scrollTop) <= 3;
+      why.push(
+        `agentJump:${agentOk ? 'ok' : `BAD clicked:${agentClicked} sepTop:${afterAgent1.sepTop} rowTop:${afterAgent1.rowTop} scrollTop:${afterAgent1.scrollTop}→${afterAgent2.scrollTop}`}`,
+      );
+      return { ok: jumpOk && topOk && agentOk, why: why.join(' | ') };
     })();
-    report('T13 separator click jumps to the message start — no clip, no loadOlder yank', t13.ok, t13.why);
+    report(
+      'T13 separator click jumps to the message start — agent sep lands on the user turn above',
+      t13.ok,
+      t13.why,
+    );
 
     const t14 = await (async () => {
       await switchTab('XWin-A');

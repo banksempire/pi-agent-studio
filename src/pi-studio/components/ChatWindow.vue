@@ -433,10 +433,30 @@ function rowKey(item: ChatItem): string {
   return item.msg.id;
 }
 
+function isAgentSep(sep: HTMLElement): boolean {
+  return sep.nextElementSibling?.classList.contains('chat-msg--agent') === true;
+}
+
 function jumpToSep(e: MouseEvent) {
   const el = listEl.value;
-  const sep = e.currentTarget as HTMLElement;
+  let sep = e.currentTarget as HTMLElement;
   if (!el || !sep) return;
+  if (isAgentSep(sep)) {
+    let g = sep.parentElement?.previousElementSibling ?? null;
+    while (g) {
+      const s = g.firstElementChild;
+      if (
+        g.classList.contains('chat-group') &&
+        s instanceof HTMLElement &&
+        s.classList.contains('chat-sep') &&
+        !isAgentSep(s)
+      ) {
+        sep = s;
+        break;
+      }
+      g = g.previousElementSibling;
+    }
+  }
   const row = sep.nextElementSibling as HTMLElement | null;
   if (!row) return;
   const { max } = posInfo(el);
@@ -1152,7 +1172,7 @@ watch(
           <div
             v-if="item.kind === 'user' || (item.kind === 'agent' && item.header)"
             class="chat-sep"
-            title="Jump to the start of this message"
+            :title="item.kind === 'user' ? 'Jump to the start of this message' : 'Jump to the user message above'"
             @click="jumpToSep"
           >
             <span class="chat-sep-line" /><span class="chat-sep-text">{{ sepLabel(item) }}</span><span class="chat-sep-line" />

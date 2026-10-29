@@ -706,7 +706,7 @@ async function unitChecks({ report }) {
     const boundModel = (await page.locator('.aph-model-bound').textContent()) ?? '';
     report(
       'form is bound to the selected catalog model — no provider/model selector',
-      modelSelectCount === 0 && boundModel.trim() === 'stub/stub-pro',
+      modelSelectCount === 0 && boundModel.includes('stub/stub-pro'),
       `select=${modelSelectCount} bound=${boundModel.trim()}`,
     );
 

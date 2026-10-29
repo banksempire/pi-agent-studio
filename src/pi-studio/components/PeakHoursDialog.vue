@@ -143,6 +143,7 @@ const dialogDoc = computed<PopupDocument>(() => {
     : {
         key: 'model',
         type: 'info',
+        class: 'aph-model-bound',
         text: `${boundKey.value} — bound to the model selected in the catalog`,
       };
   return {

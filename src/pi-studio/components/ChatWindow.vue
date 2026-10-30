@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import SvgIcon from '@sf/components/SvgIcon.vue';
+import { type TabStateChange, useTabResources } from '@sf/composables/tabResources';
 import { useHostedTab } from '@sf/composables/useHostedTab';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
@@ -35,6 +36,22 @@ import MessageImages, { type MessageImage } from './MessageImages.vue';
 
 const props = defineProps<{ sessionId: string }>();
 const store = useChatStore();
+
+useTabResources({
+  _on_tab_open_request_resources() {
+    store.acquireChatView(props.sessionId);
+  },
+  _on_tab_close_release_resources() {
+    store.releaseChatTab(props.sessionId);
+  },
+  _on_tab_states_change_reload_resources(change: TabStateChange) {
+    const prev = String(change.prev?.sessionId ?? '');
+    const next = String(change.next?.sessionId ?? '');
+    if (!next || prev === next) return;
+    if (prev) store.releaseChatTab(prev);
+    store.acquireChatView(next);
+  },
+});
 
 const session = computed<ChatSession | undefined>(() => store.findSession(props.sessionId));
 const renderMd = computed(() => store.prefs.renderMarkdown);

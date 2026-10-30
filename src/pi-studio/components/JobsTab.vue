@@ -2,9 +2,10 @@
 import PopupDialog from '@sf/components/PopupDialog.vue';
 import SvgIcon from '@sf/components/SvgIcon.vue';
 import Table from '@sf/components/Table.vue';
+import { useTabResources } from '@sf/composables/tabResources';
 import type { PopupDocument } from '@sf/types/popup';
 import type { TableColumn } from '@sf/types/table';
-import { computed, onMounted, ref } from 'vue';
+import { computed, ref } from 'vue';
 import { requestConfirm } from '../confirm';
 import { fmtRelative, fmtTime, scheduleText, targetText } from '../jobText';
 import type { JobInfo } from '../store/chat';
@@ -181,8 +182,10 @@ async function remove(row: Record<string, unknown>) {
   }
 }
 
-onMounted(() => {
-  void store.refreshJobs();
+useTabResources({
+  _on_tab_open_request_resources() {
+    void store.refreshJobs();
+  },
 });
 </script>
 

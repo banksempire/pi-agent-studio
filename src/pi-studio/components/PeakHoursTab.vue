@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import SvgIcon from '@sf/components/SvgIcon.vue';
 import Table from '@sf/components/Table.vue';
+import { useTabResources } from '@sf/composables/tabResources';
 import type { TableColumn } from '@sf/types/table';
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { requestConfirm } from '../confirm';
 import type { ModelCatalogView } from '../modelInfo';
 import { loadModelCatalog } from '../modelInfo';
@@ -37,9 +38,11 @@ async function reloadCatalog() {
   }
 }
 
-onMounted(() => {
-  void store.refreshPeakHours();
-  void reloadCatalog();
+useTabResources({
+  _on_tab_open_request_resources() {
+    void store.refreshPeakHours();
+    void reloadCatalog();
+  },
 });
 
 watch(

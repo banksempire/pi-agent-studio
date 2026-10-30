@@ -7,6 +7,7 @@ Task-specific manual. The workspace contract (ground rules, workflow, ports) liv
 - Run the stack via the CLI, never by hand: `npm run studio -- …` from this repo, or `node pi-agent-studio/bin/studio.mjs …` from the pair root. Service-lifecycle commands and rules: the `pi-studio-services` skill.
 - One process: `src/pi-studio/server/index.mjs` serves the HTTP/SSE API and owns the agent registry in-process; the agent core lives in `src/pi-nest/src/` (registry, sdk-bridge, slash, journal). No separate daemon. The journal is SQLite at `<state>/studio.db`; every queue transition is committed before it happens, so graceful and SIGKILL restarts recover identically.
 - Frontend: `src/pi-studio/` (Vue). The whole UI is declarative JSON — `layout/app.layout.json` (panels bound to data providers, strict three-level hierarchy: h3 sections nest inside their owning h2's `components`, empty `components` arrays are illegal, the loader fails startup on violations) + `layout/panelData.ts` (viewmodels, action handlers, dialogs); `components/` holds workspace-tab widgets and the backend status component only. Product-specific UI never touches `StudioFramework`; framework gaps are fixed there (keep its demo + suites green).
+- **Tab resource protocol** (StudioFramework `useTabResources` — downstream must obey): every workspace-tab widget requests its resources in `_on_tab_open_request_resources` and releases them in `_on_tab_close_release_resources`; resource-bearing state changes reload via `_on_tab_states_change_reload_resources` (diff `change.prev`/`change.next` — the hook fires pre-flush). ChatWindow owns its session's backend view subscription through it: open → `acquireChatView`, close → `releaseChatTab` (also sweeps transient never-sent sessions), session switch → release + re-acquire; the store only refcounts held files and posts `/api/events/open|close` diffs. Jobs/ModelCatalog/PeakHours tabs fetch in the open hook. Covered by `check:tabresources`.
 - Vite proxies `/api` (incl. SSE) to the backend — main: 17000 → 7494.
 
 ## studio CLI notes
@@ -28,6 +29,7 @@ Area → suite (`npm run <script>`; full list in `package.json`):
 | image attachments | `check:image-attach` |
 | image-only prompt delivery (blank text guard) | `check:image-blank` |
 | new chat creation | `check:newchat` |
+| tab resource protocol (subscribe on open, unsubscribe on close) | `check:tabresources` |
 | gateway message queue | `check:msgqueue` |
 | chat windows / tabs / cross-window | `check:crosswin` |
 | session list / sync / states | `check:sync`, `check:states` |

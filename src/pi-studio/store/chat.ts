@@ -1106,6 +1106,7 @@ function mergeSessionPage(allRaws: SessionInfo[], fullList: boolean): void {
       })();
   onDisk.sort((a, b) => b.lastActivity - a.lastActivity);
   state.sessions = [...memoryOnly, ...onDisk];
+  syncViewSubscriptions();
 }
 
 async function fetchList() {
@@ -1425,16 +1426,25 @@ let esClientId: string | null = null;
 let esReconnectTimer: number | null = null;
 let hbTimer: number | null = null;
 let lastViewFiles = new Set<string>();
+let syncedViewFiles: string[] = [];
+const viewHolders = new Map<string, number>();
 let pingLostStreak = 0;
 const HEARTBEAT_INTERVAL_MS = 5000;
 const HEARTBEAT_TIMEOUT_MS = 3000;
 const PING_WINDOW_MS = 5 * 60_000;
 
-function openViewFiles(): string[] {
-  return state.sessions
-    .filter((s) => isViewOpen(s.id))
-    .map((s) => s.file)
-    .slice(0, 64);
+function decodeTabFile(sessionId: string): string {
+  try {
+    return decodeURIComponent(sessionId);
+  } catch {
+    return sessionId;
+  }
+}
+
+function viewFiles(): string[] {
+  const files = new Set<string>();
+  for (const sessionId of viewHolders.keys()) files.add(decodeTabFile(sessionId));
+  return [...files].sort().slice(0, 64);
 }
 
 function pushPingSample(ms: number | null) {
@@ -1494,18 +1504,42 @@ export function noteVisit(sessionId: string) {
 }
 
 function syncViewSubscriptions() {
-  const next = new Set(openViewFiles());
+  const next = viewFiles();
+  const nextSet = new Set(next);
   const added: string[] = [];
   const removed: string[] = [];
   for (const f of next) {
     if (!lastViewFiles.has(f)) added.push(f);
   }
   for (const f of lastViewFiles) {
-    if (!next.has(f)) removed.push(f);
+    if (!nextSet.has(f)) removed.push(f);
   }
-  lastViewFiles = next;
+  lastViewFiles = nextSet;
+  syncedViewFiles = next;
   if (added.length > 0) postStreamSignal('/api/events/open', added);
   if (removed.length > 0) postStreamSignal('/api/events/close', removed);
+}
+
+export function acquireChatView(sessionId: string) {
+  viewHolders.set(sessionId, (viewHolders.get(sessionId) ?? 0) + 1);
+  syncViewSubscriptions();
+}
+
+export function releaseChatView(sessionId: string) {
+  const n = (viewHolders.get(sessionId) ?? 0) - 1;
+  if (n <= 0) viewHolders.delete(sessionId);
+  else viewHolders.set(sessionId, n);
+  syncViewSubscriptions();
+}
+
+export function releaseChatTab(sessionId: string) {
+  releaseChatView(sessionId);
+  const s = findSession(sessionId);
+  if (!s) return;
+  if (!s.onDisk && s.messages.length === 0) {
+    forgetSessionUi(s);
+    state.sessions = state.sessions.filter((x) => x.id !== sessionId);
+  }
 }
 
 function heartbeatTick() {
@@ -1515,7 +1549,7 @@ function heartbeatTick() {
     return;
   }
   const t0 = performance.now();
-  const files = openViewFiles();
+  const files = syncedViewFiles;
   const ctrl = new AbortController();
   let timedOut = false;
   const timer = window.setTimeout(() => {
@@ -1695,8 +1729,6 @@ export function bindWorkspace(api: WorkspaceApi) {
       if (state.reviewTabId && !ids.includes(state.reviewTabId)) {
         state.reviewTabId = null;
       }
-      sweepLazySessions(new Set(ids));
-      syncViewSubscriptions();
     },
     { immediate: true },
   );
@@ -2475,20 +2507,6 @@ function forgetSessionUi(s: ChatSession) {
   saveDrafts();
 }
 
-function sweepLazySessions(openIds: Set<string>) {
-  const keep: ChatSession[] = [];
-  let changed = false;
-  for (const s of state.sessions) {
-    if (!s.onDisk && s.messages.length === 0 && !openIds.has(chatTabId(s.id))) {
-      forgetSessionUi(s);
-      changed = true;
-    } else {
-      keep.push(s);
-    }
-  }
-  if (changed) state.sessions = keep;
-}
-
 export async function deleteSession(sessionId: string): Promise<boolean> {
   const s = findSession(sessionId);
   if (!s) return false;
@@ -2833,6 +2851,8 @@ export const store = {
   bindWorkspace,
   refreshList,
   appendLocalMessage,
+  acquireChatView,
+  releaseChatTab,
 };
 
 export function useChatStore() {

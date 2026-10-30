@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import SvgIcon from '@sf/components/SvgIcon.vue';
+import { useTabResources } from '@sf/composables/tabResources';
 import { kIsMobile } from '@sf/composables/useWorkspace';
 import type { Ref } from 'vue';
 import { computed, inject, onMounted, ref, watch } from 'vue';
@@ -39,7 +40,11 @@ async function load(force = false) {
   }
 }
 
-onMounted(() => void load());
+useTabResources({
+  _on_tab_open_request_resources() {
+    void load();
+  },
+});
 
 async function refresh() {
   if (busy.value) return;

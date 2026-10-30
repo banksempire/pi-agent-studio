@@ -26,6 +26,7 @@
     "check:dockericons": "node scripts/check-docker-icons.cjs",
     "check:jobeditor": "node scripts/check-job-editor.cjs",
     "check:sse": "node scripts/check-sse-flood.cjs",
+    "check:tabresources": "node scripts/check-tab-resources.cjs",
     "check:states": "node scripts/check-session-states.cjs",
     "check:sync": "node scripts/check-session-sync.cjs",
     "check:newchat": "node scripts/check-new-chat.cjs",

@@ -49,7 +49,7 @@ Area → suite (`npm run <script>`; full list in `package.json`):
 
 Conventions:
 
-- Suites boot a private stub stack and must use `scripts/lib/suite-stack.cjs` (`spawnStackProc` + `installStackCleanup` + `sweepStaleStackProcesses` + `assertMemoryHeadroom` — startup sweep of previous-run strays, signal/exit cleanup, cgroup memory guard). Browser suites run minutes; unit-style suites are fast. Plan accordingly — one suite per command, never piped through `head`.
+- Suites boot a private stub stack and must use `scripts/lib/suite-stack.cjs` (`spawnStackProc` + `installStackCleanup` + `sweepStaleStackProcesses` + `assertMemoryHeadroom` — startup sweep of previous-run strays, signal/exit cleanup, cgroup memory guard). The guard measures unreclaimable memory only (`anon + kernel` from `memory.stat`; auto-reclaimable page cache is excluded — free mem = real free mem + cache the OS will reclaim). Browser suites run minutes; unit-style suites are fast. Plan accordingly — one suite per command, never piped through `head`.
 - Suite logs land in `/tmp/<suite>-backend.log` and `/tmp/<suite>-vite.log` — read them when a suite fails mysteriously.
 - Model seams: `PI_STUDIO_CLIENT_MODULE` swaps the agent client for the stub (`scripts/lib/stub-backend.cjs`; controlled by `STUB_CONTROL_FILE`, prompts/aborts logged to `STUB_PROMPT_LOG`/`STUB_ABORT_LOG` — extend there when a suite must assert backend delivery). `check:backend-restart` / `check:restart*` use the `PI_SDK_DIR` stub SDK (`scripts/lib/stub-sdk`): real registry + real journal, prompts hang until `STUB_STATE_DIR/release` appears.
 

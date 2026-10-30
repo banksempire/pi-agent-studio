@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { errSym, warnSym } from './ui.mjs';
@@ -104,14 +103,7 @@ export function copyModulesFrom(srcRepo, dstRepo, out = null) {
   }
   const attempts = [
     () => {
-      try {
-        execFileSync('cp', ['-al', src, dst], { stdio: 'ignore' });
-      } catch {}
-    },
-    () => {
-      try {
-        fs.cpSync(src, dst, { recursive: true, verbatimSymlinks: true });
-      } catch {}
+      fs.cpSync(src, dst, { recursive: true, verbatimSymlinks: true });
     },
     () => copyTreeJs(src, dst),
   ];

@@ -49,10 +49,13 @@ async function main() {
 
   lines.length = 0;
   let res = copyModulesFrom(srcRepo, dstRepo, out);
+  report('fresh copy completes and verifies', res === 'copied' && modulesComplete(src, dst), `res=${res}`);
+  const probeSrc = path.join(src, 'pkg-a', 'package.json');
+  const probeDst = path.join(dst, 'pkg-a', 'package.json');
   report(
-    'fresh hardlink copy completes and verifies',
-    res === 'copied' && modulesComplete(src, dst),
-    `res=${res}`,
+    'copied files are independent of the source — never hardlinks (npm install in one checkout cannot mutate another)',
+    fs.statSync(probeSrc).ino !== fs.statSync(probeDst).ino,
+    `ino src=${fs.statSync(probeSrc).ino} dst=${fs.statSync(probeDst).ino}`,
   );
   const nested = path.join(dst, 'pkg-b', 'lib', 'deep', 'nested.txt');
   report(

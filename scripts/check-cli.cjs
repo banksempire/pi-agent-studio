@@ -260,7 +260,7 @@ async function main() {
     );
     report('studio init registers the pair', initRes.status === 0);
     report(
-      'init hardlink-copies node_modules (zero-friction branch setup)',
+      'init copies node_modules (zero-friction branch setup)',
       fs.existsSync(path.join(PAIR, 'pi-agent-studio', 'node_modules', '.bin', 'vite')),
       '',
     );

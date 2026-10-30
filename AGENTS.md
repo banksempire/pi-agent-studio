@@ -12,7 +12,7 @@ Task-specific manual. The workspace contract (ground rules, workflow, ports) liv
 ## studio CLI notes
 
 - Config precedence: CLI args > `PI_STUDIO_*` env > instance config (`.studio/config/instances/`) > defaults. Services are wired via argv only — the CLI injects no env; env remains the manual/container channel (and the reason for the workspace strip ritual).
-- `worktree add` hardlink-copies `node_modules` **except `node_modules/.package-lock.json`**, which is always a private copy per checkout: npm rewrites that file in place, and on a shared inode that write would silently leak into every sibling checkout's bookkeeping while their real package directories drift (npm then trusts the stale file and skips needed installs).
+- `worktree add` copies `node_modules` as a real (never hardlinked) tree: hardlinked files share one backing file, and npm rewrites `node_modules/.package-lock.json` in place, so an install in one checkout would silently leak into every sibling checkout’s bookkeeping while their real package directories drift (npm then trusts the stale file and skips needed installs).
 - Sub-command groups: `worktree add|rm` (no `ls`; `--purge` leaves the git ref), `jobs list|add|edit|rm|run|enable|disable|runs`, `subagents ls|gc`, `guard install`. Full design doc: `docs/cli-design.md`.
 - `restart backend` reuses the recorded backend port so the running web proxy keeps working, and completes via a detached `__finish-restart` helper even if its caller dies. Other lifecycle rules: the `pi-studio-services` skill.
 

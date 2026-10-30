@@ -49,10 +49,13 @@ async function main() {
 
   lines.length = 0;
   let res = copyModulesFrom(srcRepo, dstRepo, out);
+  report('fresh copy completes and verifies', res === 'copied' && modulesComplete(src, dst), `res=${res}`);
+  const probeSrc = path.join(src, 'pkg-a', 'package.json');
+  const probeDst = path.join(dst, 'pkg-a', 'package.json');
   report(
-    'fresh hardlink copy completes and verifies',
-    res === 'copied' && modulesComplete(src, dst),
-    `res=${res}`,
+    'copied files are independent of the source — never hardlinks (npm install in one checkout cannot mutate another)',
+    fs.statSync(probeSrc).ino !== fs.statSync(probeDst).ino,
+    `ino src=${fs.statSync(probeSrc).ino} dst=${fs.statSync(probeDst).ino}`,
   );
   const nested = path.join(dst, 'pkg-b', 'lib', 'deep', 'nested.txt');
   report(
@@ -62,6 +65,23 @@ async function main() {
       fs.lstatSync(path.join(dst, '.bin', 'pkg-a')).isSymbolicLink() &&
       fs.lstatSync(path.join(dst, 'pkg-b', 'broken-link')).isSymbolicLink(),
   );
+
+  const srcLock = path.join(src, '.package-lock.json');
+  const dstLock = path.join(dst, '.package-lock.json');
+  const lockInoSrc = fs.statSync(srcLock).ino;
+  const lockInoDst = fs.statSync(dstLock).ino;
+  report(
+    'the hidden lockfile is private to the destination — never a hardlink into the source checkout',
+    lockInoSrc !== lockInoDst,
+    `ino src=${lockInoSrc} dst=${lockInoDst}`,
+  );
+  const lockBefore = fs.readFileSync(srcLock, 'utf8');
+  fs.writeFileSync(dstLock, '{"mutated":true}\n');
+  report(
+    'a worktree-side lockfile write never reaches the source checkout',
+    fs.readFileSync(srcLock, 'utf8') === lockBefore,
+  );
+  fs.writeFileSync(dstLock, lockBefore);
 
   lines.length = 0;
   res = copyModulesFrom(srcRepo, dstRepo, out);

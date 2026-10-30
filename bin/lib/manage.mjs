@@ -152,7 +152,7 @@ export async function cmdInit(out, opts = {}) {
   const copiedPa = copyModulesFrom(PRODUCT_ROOT, repo, out);
   const copiedSf = copyModulesFrom(SF_ROOT, path.join(pairRoot, 'StudioFramework'), out);
   if (copiedPa !== 'failed' && copiedSf !== 'failed' && (copiedPa === 'copied' || copiedSf === 'copied')) {
-    out.line(`${okSym} node_modules hardlink-copied (no install needed)`);
+    out.line(`${okSym} node_modules copied (no install needed)`);
   }
   const skippedPa = await npmInstallIfMissing(repo, { skip: opts.noInstall });
   const skippedSf = await npmInstallIfMissing(path.join(pairRoot, 'StudioFramework'), {

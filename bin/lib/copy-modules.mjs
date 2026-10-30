@@ -76,12 +76,29 @@ function copyTreeJs(src, dst) {
   }
 }
 
+function privatizeHiddenLockfile(dst) {
+  const lock = path.join(dst, '.package-lock.json');
+  if (!fs.existsSync(lock)) return;
+  const tmp = `${lock}.private-${process.pid}`;
+  try {
+    fs.copyFileSync(lock, tmp);
+    fs.renameSync(tmp, lock);
+  } catch {
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch {}
+  }
+}
+
 export function copyModulesFrom(srcRepo, dstRepo, out = null) {
   const src = path.join(srcRepo, 'node_modules');
   const dst = path.join(dstRepo, 'node_modules');
   if (!fs.existsSync(src)) return 'skipped';
   if (fs.existsSync(dst)) {
-    if (modulesComplete(src, dst)) return 'skipped';
+    if (modulesComplete(src, dst)) {
+      privatizeHiddenLockfile(dst);
+      return 'skipped';
+    }
     out?.line(`${warnSym} incomplete node_modules at ${dst} — recopying`);
     forceRm(dst);
   }
@@ -114,5 +131,6 @@ export function copyModulesFrom(srcRepo, dstRepo, out = null) {
     );
     return 'failed';
   }
+  privatizeHiddenLockfile(dst);
   return 'copied';
 }

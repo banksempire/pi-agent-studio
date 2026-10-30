@@ -63,6 +63,23 @@ async function main() {
       fs.lstatSync(path.join(dst, 'pkg-b', 'broken-link')).isSymbolicLink(),
   );
 
+  const srcLock = path.join(src, '.package-lock.json');
+  const dstLock = path.join(dst, '.package-lock.json');
+  const lockInoSrc = fs.statSync(srcLock).ino;
+  const lockInoDst = fs.statSync(dstLock).ino;
+  report(
+    'the hidden lockfile is private to the destination — never a hardlink into the source checkout',
+    lockInoSrc !== lockInoDst,
+    `ino src=${lockInoSrc} dst=${lockInoDst}`,
+  );
+  const lockBefore = fs.readFileSync(srcLock, 'utf8');
+  fs.writeFileSync(dstLock, '{"mutated":true}\n');
+  report(
+    'a worktree-side lockfile write never reaches the source checkout',
+    fs.readFileSync(srcLock, 'utf8') === lockBefore,
+  );
+  fs.writeFileSync(dstLock, lockBefore);
+
   lines.length = 0;
   res = copyModulesFrom(srcRepo, dstRepo, out);
   report('an already-complete destination is skipped untouched', res === 'skipped', `res=${res}`);

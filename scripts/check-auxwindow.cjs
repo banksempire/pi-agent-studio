@@ -27,7 +27,7 @@ function freePort() {
   });
 }
 
-async function pickPorts() {
+async function _pickPorts() {
   const backend = await freePort();
   const vite = await freePort();
   return { backend, vite };
@@ -85,7 +85,7 @@ function writeSessions() {
       );
       prev = `a${n}`;
     }
-    fs.writeFileSync(path.join(TEST_SESSIONS_DIR, `${id}.jsonl`), lines.join('\n') + '\n');
+    fs.writeFileSync(path.join(TEST_SESSIONS_DIR, `${id}.jsonl`), `${lines.join('\n')}\n`);
   };
   sessionFile('AuxWin-A:', 3);
   sessionFile('AuxWin-B:', 2);
@@ -166,7 +166,7 @@ async function waitHttp(url, label) {
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const errors = [];
-  const wire = (p, tag) => {
+  const wire = (p) => {
     p.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
     p.on('console', (m) => {
       if (m.type() === 'error') errors.push(`console: ${m.text()}`);

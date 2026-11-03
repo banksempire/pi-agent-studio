@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import Icon from '@sf/components/Icon.vue';
+import { usePlacement } from '@sf/composables/usePlacement';
 import { kIsMobile } from '@sf/composables/useWorkspace';
 import { computed, inject, type Ref } from 'vue';
 import { useChatStore } from '../store/chat';
 
 const store = useChatStore();
+const placement = usePlacement();
 const injectedMobile = inject<Ref<boolean> | null>(kIsMobile, null);
 const isMobile = computed(() => injectedMobile?.value ?? false);
 </script>
@@ -16,7 +18,7 @@ const isMobile = computed(() => injectedMobile?.value ?? false);
         <h1>pi-agent-studio</h1>
         <p>Your pi agent, in the Studio shell</p>
       </div>
-      <button class="welcome-btn welcome-m-cta" :disabled="store.backend === 'offline'" @click="store.newChat()">
+      <button class="welcome-btn welcome-m-cta" :disabled="store.backend === 'offline'" @click="store.newChat(placement)">
         💬 Start a new chat
       </button>
       <div class="welcome-m-cards">
@@ -55,17 +57,17 @@ const isMobile = computed(() => injectedMobile?.value ?? false);
         <h1>pi-agent-studio</h1>
         <p>Your pi agent, in the Studio shell</p>
       </div>
-      <button class="welcome-btn welcome-d-cta" :disabled="store.backend === 'offline'" @click="store.newChat()">
+      <button class="welcome-btn welcome-d-cta" :disabled="store.backend === 'offline'" @click="store.newChat(placement)">
         💬 Start a new chat
       </button>
       <div class="welcome-d-actions">
-        <button class="welcome-d-action" @click="store.openModelCatalog()">
+        <button class="welcome-d-action" @click="store.openModelCatalog(placement)">
           <Icon icon="🤖" class="welcome-d-action-icon" />Model Catalog
         </button>
-        <button class="welcome-d-action" @click="store.openPeakHours()">
+        <button class="welcome-d-action" @click="store.openPeakHours(placement)">
           <Icon icon="🕒" class="welcome-d-action-icon" />Peak Hours
         </button>
-        <button class="welcome-d-action" @click="store.openJobs()">
+        <button class="welcome-d-action" @click="store.openJobs(placement)">
           <Icon icon="⏰" class="welcome-d-action-icon" />Scheduled Jobs
         </button>
       </div>

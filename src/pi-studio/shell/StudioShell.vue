@@ -25,18 +25,19 @@ registerUtilityMenu('session-filter', () =>
 );
 
 function onAction(e: FrameworkAction) {
+  const placement = { windowId: e.auxWindow ?? 0 };
   switch (e.action) {
     case 'new-chat':
-      store.newChat();
+      void store.newChat(placement);
       break;
     case 'open-model-catalog':
-      store.openModelCatalog();
+      store.openModelCatalog(placement);
       break;
     case 'open-peak-hours':
-      store.openPeakHours();
+      store.openPeakHours(placement);
       break;
     case 'open-jobs':
-      store.openJobs();
+      store.openJobs(placement);
       break;
     case 'about':
       aboutOpen.value = true;
@@ -58,7 +59,7 @@ function onAction(e: FrameworkAction) {
 watch(
   () => dialogs.renameDialog.open,
   (open) => {
-    if (open) void nextTick(() => document.getElementById('session-name-input')?.focus());
+    if (open) void nextTick().then(() => document.getElementById('session-name-input')?.focus());
   },
 );
 

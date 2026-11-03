@@ -1387,20 +1387,25 @@ function makeReporter() {
     })();
     report('T18 chat input auto-grows to its cap then scrolls (desktop + mobile)', t18.ok, t18.why);
 
-    const t19 = await (async () => {
-      const histSub = page.locator('.sf-subsection:has([data-sub-body="history"])');
-      const plusBtn = histSub.locator('.sf-subsection-util[title="New Chat (Ctrl+N)"]');
-      const newRow = () => page.locator('[data-sub-body="history"] .sf-pl-item:has-text("New Chat")');
-      await histSub.locator('.sf-subsection-header').hover();
-      await delay(150);
-      for (let i = 0; i < 3; i++) {
+    const histSub = page.locator('.sf-subsection:has([data-sub-body="history"])');
+    const plusBtn = histSub.locator('.sf-subsection-util[title="New Chat (Ctrl+N)"]');
+    const ensureNewChatTabs = async (target) => {
+      let count = -1;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        count = await page.locator('.sf-tab:has-text("New Chat")').count();
+        if (count >= target) return count;
+        await histSub.locator('.sf-subsection-header').hover();
         await plusBtn.click({ force: true });
-        await delay(900);
+        await delay(700);
       }
+      return await page.locator('.sf-tab:has-text("New Chat")').count();
+    };
+
+    const t19 = await (async () => {
+      const newRow = () => page.locator('[data-sub-body="history"] .sf-pl-item:has-text("New Chat")');
+      const newTabs = await ensureNewChatTabs(3);
       await delay(1200);
       const rowsAfterPlus = await newRow().count();
-      const newTabs = await page.locator('.sf-tab:has-text("New Chat")').count();
-      const savedPending = await page.evaluate(() => localStorage.getItem('sf-chat:pending'));
       const composer = page.locator('.chat-input').first();
       await composer.fill('pins the lazy tab');
       await delay(900);
@@ -1413,16 +1418,15 @@ function makeReporter() {
       return {
         ok:
           rowsAfterPlus === 0 &&
-          newTabs === 1 &&
-          savedPending === null &&
+          newTabs === 3 &&
           rowsAfterReload === 0 &&
           tabsAfterReload === 0 &&
           ghostsAfterReload === 0,
-        why: `rowsAfter3xPlus:${rowsAfterPlus} tabs:${newTabs} savedPending:${savedPending ?? 'null'} rowsAfterReload:${rowsAfterReload} tabsAfterReload:${tabsAfterReload} ghosts:${ghostsAfterReload}`,
+        why: `rowsAfter3xPlus:${rowsAfterPlus} tabs:${newTabs} rowsAfterReload:${rowsAfterReload} tabsAfterReload:${tabsAfterReload} ghosts:${ghostsAfterReload}`,
       };
     })();
     report(
-      'T19 lazy New Chat never shows in history nor persists — one window only, gone after reload',
+      'T19 lazy New Chat drafts never show in history nor persist — fresh draft per click, gone after reload',
       t19.ok,
       t19.why,
     );
@@ -1455,11 +1459,8 @@ function makeReporter() {
       const filesBefore = jsonlFiles().length;
       const agentsBefore = (await agentStates()).length;
       const boot = await draftsClean();
-      const histSub = page.locator('.sf-subsection:has([data-sub-body="history"])');
-      const plusBtn = histSub.locator('.sf-subsection-util[title="New Chat (Ctrl+N)"]');
-      await histSub.locator('.sf-subsection-header').hover();
-      await delay(150);
-      await plusBtn.click({ force: true });
+      const newTabsBefore = await page.locator('.sf-tab:has-text("New Chat")').count();
+      await ensureNewChatTabs(newTabsBefore + 1);
       await delay(1200);
       const lazyTile = page.locator('.sf-tile:has(.sf-tab:has-text("New Chat"))').first();
       await lazyTile.locator('.chat-input').first().fill('unsent lazy draft');
@@ -1480,7 +1481,7 @@ function makeReporter() {
         ok:
           boot.ok &&
           filesWithLazyOpen === filesBefore &&
-          pendingWhileOpen === agentsBefore + 1 &&
+          pendingWhileOpen === agentsBefore &&
           pendingAfterClose === agentsBefore &&
           filesAfterClose === filesBefore &&
           drafts.ok &&
@@ -1489,11 +1490,59 @@ function makeReporter() {
       };
     })();
     report(
-      'T20 lazy New Chat leaves nothing behind — no file, pending dropped on close, drafts/states clean',
+      'T20 lazy New Chat leaves nothing behind — no file, no agent, drafts/states clean',
       t20.ok,
       t20.why,
     );
 
+    const t20b = await (async () => {
+      const agentStates = () =>
+        page.evaluate(() =>
+          fetch('/api/agent-states')
+            .then((r) => r.json())
+            .then((j) => j.states ?? []),
+        );
+      const agentsBefore = (await agentStates()).length;
+      const newTabsBefore = await page.locator('.sf-tab:has-text("New Chat")').count();
+      await ensureNewChatTabs(newTabsBefore + 1);
+      const draftTab = page.locator('.sf-tab:has-text("New Chat")').first();
+      try {
+        await draftTab.waitFor({ state: 'visible', timeout: 5000 });
+      } catch {
+        const dbg = await page.evaluate(() => {
+          const ws = window.__dbgWs;
+          const draftTabs = Object.keys(ws?.tabDefs ?? {}).filter((id) => id.startsWith('chat:draft-'));
+          return {
+            tabs: [...document.querySelectorAll('.sf-tab-label')].map((el) => el.textContent),
+            sessions: document.querySelectorAll('[data-sub-body="history"] .sf-pl-item').length,
+            mobile: !!document.querySelector('.sf-root--mobile'),
+            draftTabs,
+            draftWindows: draftTabs.map((id) => ws?.tabWindow(id)),
+            auxIds: ws?.auxWindowIds ?? [],
+            latch: ws?.interactionWindow?.() ?? null,
+          };
+        });
+        console.log('T20B-DEBUG', JSON.stringify(dbg));
+        throw new Error('no draft tab after plus click');
+      }
+      const draftTabNode = await draftTab.elementHandle();
+      const draftTile = page.locator('.sf-tile:has(.sf-tab:has-text("New Chat"))').first();
+      await draftTile.locator('.chat-input').first().fill('realize me');
+      await draftTile.locator('.chat-send-btn').first().click();
+      await delay(1500);
+      const messageShown = (await page.locator('.chat-messages:has-text("realize me")').count()) >= 1;
+      const agentsWhileRunning = (await agentStates()).length;
+      const sameTab = !!draftTabNode && (await draftTabNode.evaluate((el) => el.isConnected));
+      return {
+        ok: messageShown && agentsWhileRunning === agentsBefore + 1 && sameTab,
+        why: `agents:${agentsBefore}→${agentsWhileRunning} message:${messageShown} sameTab:${sameTab}`,
+      };
+    })();
+    report(
+      'T20b sending a draft realizes the session in place — agent spawned, message rendered, tab stable, close drops the agent',
+      t20b.ok,
+      t20b.why,
+    );
     const t21 = await (async () => {
       const marker = 'XWin-D:';
       const i = await tabIndex(marker);

@@ -1,3 +1,4 @@
+import type { Placement } from '@sf/composables/usePlacement';
 import { BLANK_CONTENT, type ExternalDropTarget, type WorkspaceApi } from '@sf/composables/useWorkspace';
 import type { WorkspaceTabDef } from '@sf/types/layout';
 import { readUiValue, removeUiValue, uiEpoch, writeUiValue } from '@sf/uiState';
@@ -65,6 +66,7 @@ export interface ChatSession {
   id: string;
   sessionId: string | null;
   file: string;
+  draft?: boolean;
   title: string;
   cwd: string;
   createdAt: number;
@@ -588,51 +590,6 @@ try {
   localStorage.removeItem('sf-chat:pending');
 } catch {}
 
-function pendingSessionEntry(file: string, cwd: string, createdAt: number): ChatSession {
-  return {
-    id: encodeURIComponent(file),
-    sessionId: null,
-    file,
-    title: 'New Chat',
-    cwd,
-    createdAt,
-    lastActivity: createdAt,
-    status: 'idle',
-    streaming: false,
-    compacting: false,
-    compactResult: null,
-    compactStartedAt: 0,
-    compactEndedAt: 0,
-    compactError: null,
-    preview: '',
-    stats: {
-      model: null,
-      tokensIn: 0,
-      tokensOut: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      promptTokens: 0,
-      costUsd: 0,
-      costBreakdown: [],
-      cacheWaste: { missedCost: 0, missedTokens: 0, missCount: 0 },
-      startedAt: createdAt,
-      lastActivity: createdAt,
-      messageCount: 0,
-      userMessages: 0,
-      assistantMessages: 0,
-      toolCalls: 0,
-      toolResults: 0,
-    },
-    messages: [],
-    messagesLoaded: true,
-    hasMoreOlder: false,
-    oldestId: null,
-    loadingOlder: false,
-    context: null,
-    onDisk: false,
-  };
-}
-
 const TAB_PREFIX = 'chat-';
 const chatTabId = (sessionId: string) => TAB_PREFIX + sessionId;
 
@@ -928,16 +885,14 @@ function closeJobEditor() {
   jobEditor.jobId = null;
 }
 
-function openJobs() {
+function openJobs(placement?: Placement) {
   if (!ws) return;
   const existing = ws.findTabGlobal(JOBS_TAB_ID);
   if (existing) {
     ws.ops.activateTab(existing.id, JOBS_TAB_ID);
     return;
   }
-  const tileId = targetTileId();
-  if (!tileId) return;
-  ws.ops.openTab(tileId, {
+  openTabPlaced(placement, {
     id: JOBS_TAB_ID,
     label: 'Scheduler',
     icon: '⏰',
@@ -946,16 +901,14 @@ function openJobs() {
   });
 }
 
-function openModelCatalog() {
+function openModelCatalog(placement?: Placement) {
   if (!ws) return;
   const existing = ws.findTabGlobal(MODEL_CATALOG_TAB_ID);
   if (existing) {
     ws.ops.activateTab(existing.id, MODEL_CATALOG_TAB_ID);
     return;
   }
-  const tileId = targetTileId();
-  if (!tileId) return;
-  ws.ops.openTab(tileId, {
+  openTabPlaced(placement, {
     id: MODEL_CATALOG_TAB_ID,
     label: 'Model Catalog',
     icon: '🤖',
@@ -964,16 +917,14 @@ function openModelCatalog() {
   });
 }
 
-function openPeakHours() {
+function openPeakHours(placement?: Placement) {
   if (!ws) return;
   const existing = ws.findTabGlobal(PEAK_HOURS_TAB_ID);
   if (existing) {
     ws.ops.activateTab(existing.id, PEAK_HOURS_TAB_ID);
     return;
   }
-  const tileId = targetTileId();
-  if (!tileId) return;
-  ws.ops.openTab(tileId, {
+  openTabPlaced(placement, {
     id: PEAK_HOURS_TAB_ID,
     label: 'Peak Hours',
     icon: '🕒',
@@ -1443,7 +1394,11 @@ function decodeTabFile(sessionId: string): string {
 
 function viewFiles(): string[] {
   const files = new Set<string>();
-  for (const sessionId of viewHolders.keys()) files.add(decodeTabFile(sessionId));
+  for (const sessionId of viewHolders.keys()) {
+    const s = findSession(sessionId);
+    if (!s?.file) continue;
+    files.add(decodeTabFile(sessionId));
+  }
   return [...files].sort().slice(0, 64);
 }
 
@@ -1869,25 +1824,60 @@ export function syncStateOf(s: ChatSession): SessionStateInfo | undefined {
   return state.sessionStates[s.file];
 }
 
-export async function newChat(): Promise<void> {
-  try {
-    const { file } = await api<{ file: string; cwd: string }>('/api/new-chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cwd: NEW_CHAT_CWD }),
-    });
-    const id = encodeURIComponent(file);
-    const now = Date.now();
-    if (!findSession(id)) {
-      state.sessions.unshift(pendingSessionEntry(file, NEW_CHAT_CWD, now));
-    }
-    openChat(id);
-  } catch (e) {
-    if (!(e instanceof TypeError)) {
-      state.lastError = e instanceof Error ? e.message : String(e);
-    }
-    state.backend = 'offline';
-  }
+function draftSessionEntry(cwd: string, createdAt: number): ChatSession {
+  const id = `draft-${createdAt}-${++draftSeq}`;
+  return {
+    id,
+    sessionId: null,
+    file: '',
+    draft: true,
+    title: 'New Chat',
+    cwd,
+    createdAt,
+    lastActivity: createdAt,
+    status: 'idle',
+    streaming: false,
+    compacting: false,
+    compactResult: null,
+    compactStartedAt: 0,
+    compactEndedAt: 0,
+    compactError: null,
+    preview: '',
+    stats: {
+      model: null,
+      tokensIn: 0,
+      tokensOut: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      promptTokens: 0,
+      costUsd: 0,
+      costBreakdown: [],
+      cacheWaste: { missedCost: 0, missedTokens: 0, missCount: 0 },
+      startedAt: createdAt,
+      lastActivity: createdAt,
+      messageCount: 0,
+      userMessages: 0,
+      assistantMessages: 0,
+      toolCalls: 0,
+      toolResults: 0,
+    },
+    messages: [],
+    messagesLoaded: true,
+    hasMoreOlder: false,
+    oldestId: null,
+    loadingOlder: false,
+    context: null,
+    onDisk: false,
+  };
+}
+
+let draftSeq = 0;
+
+export function newChat(placement?: Placement): void {
+  if (!ws) return;
+  const entry = draftSessionEntry(NEW_CHAT_CWD, Date.now());
+  state.sessions.unshift(entry);
+  openChat(entry.id, { placement });
 }
 
 const REVIEW_TAB_CLASS = 'sf-tab--review';
@@ -1922,6 +1912,7 @@ export function noteChatInteraction(sessionId: string) {
 }
 
 function syncSessionView(s: ChatSession) {
+  if (!s.file) return;
   if (!s.messagesLoaded) void fetchMessages(s.id);
   else void syncTail(s.id);
 }
@@ -1934,7 +1925,23 @@ export function startSessionDrag(e: DragEvent, s: ChatSession) {
   dt.effectAllowed = 'copy';
 }
 
-export function openChat(sessionId: string, opts: { visit?: boolean } = {}) {
+function openTabPlaced(placement: Placement | undefined, def: WorkspaceTabDef): void {
+  if (!ws) return;
+  const existing = ws.findTabGlobal(def.id);
+  if (existing) {
+    ws.ops.activateTab(existing.id, def.id);
+    return;
+  }
+  const aux = placement?.windowId ? ws.auxApi(placement.windowId) : null;
+  if (aux) {
+    aux.ops.openTab(aux.focusedTileId, def);
+    return;
+  }
+  const tileId = targetTileId();
+  if (tileId) ws.ops.openTab(tileId, def);
+}
+
+export function openChat(sessionId: string, opts: { visit?: boolean; placement?: Placement } = {}) {
   const s = findSession(sessionId);
   if (!s || !ws) return;
   const tabId = chatTabId(sessionId);
@@ -1942,6 +1949,16 @@ export function openChat(sessionId: string, opts: { visit?: boolean } = {}) {
   const existing = ws.findTabGlobal(tabId);
   if (existing) {
     ws.ops.activateTab(existing.id, tabId);
+    syncSessionView(s);
+    if (opts.visit !== false) noteVisit(sessionId);
+    return;
+  }
+
+  const def = chatTabDef(s);
+  const aux = opts.placement?.windowId ? ws.auxApi(opts.placement.windowId) : null;
+  if (aux) {
+    aux.ops.openTab(aux.focusedTileId, def);
+    if (!s.draft) enterReview(tabId);
     syncSessionView(s);
     if (opts.visit !== false) noteVisit(sessionId);
     return;
@@ -1955,8 +1972,8 @@ export function openChat(sessionId: string, opts: { visit?: boolean } = {}) {
     tileId = reviewTile && ws.findTileGlobal(reviewTile.id) ? reviewTile.id : targetTileId();
   }
   if (!tileId) return;
-  ws.ops.openTab(tileId, chatTabDef(s));
-  enterReview(tabId);
+  ws.ops.openTab(tileId, def);
+  if (!s.draft) enterReview(tabId);
   syncSessionView(s);
   if (opts.visit !== false) noteVisit(sessionId);
 }
@@ -1976,6 +1993,25 @@ export async function sendMessage(
   if (!s || (!trimmed && !images.length)) return;
   noteChatInteraction(sessionId);
   state.lastError = '';
+
+  if (s.draft && !s.file) {
+    try {
+      const { file } = await api<{ file: string; cwd: string }>('/api/new-chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cwd: s.cwd }),
+      });
+      s.file = file;
+      s.draft = false;
+    } catch (e) {
+      if (!(e instanceof TypeError)) {
+        setSessionError(sessionId, e instanceof Error ? e.message : String(e));
+      } else {
+        state.backend = 'offline';
+      }
+      return;
+    }
+  }
 
   const mid = `pending-${Date.now()}`;
   const reqId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -2543,7 +2579,7 @@ const messagesInflight = new Set<string>();
 
 export async function fetchMessages(sessionId: string) {
   const s = findSession(sessionId);
-  if (!s || messagesInflight.has(sessionId)) return;
+  if (!s || !s.file || messagesInflight.has(sessionId)) return;
   messagesInflight.add(sessionId);
   const params = new URLSearchParams({ file: s.file, limit: String(PAGE_SIZE) });
   try {

@@ -66,7 +66,7 @@ function toggle(id: string) {
   const header = el?.querySelector<HTMLElement>(`[data-toggle-id="${CSS.escape(id)}"]`) ?? null;
   const beforeTop = header ? header.getBoundingClientRect().top : null;
   setOpenGroup(props.sessionId, id, !open.value[id]);
-  nextTick(() => {
+  void nextTick().then(() => {
     if (!el) return;
     if (header?.isConnected && beforeTop !== null) {
       const delta = header.getBoundingClientRect().top - beforeTop;
@@ -811,7 +811,7 @@ function editQueued(q: QueuedChatMessage) {
   editingQueue.value = q;
   editingText.value = q.text;
   queueEditHold(props.sessionId);
-  nextTick(() => {
+  void nextTick().then(() => {
     queueEditEl.value?.focus();
     queueEditEl.value?.select();
   });
@@ -1058,7 +1058,7 @@ onMounted(() => {
   if (st.sticky) {
     scrollToBottom();
   } else if (el && el.scrollHeight > el.clientHeight) {
-    nextTick(() => restoreScroll(props.sessionId));
+    void nextTick().then(() => restoreScroll(props.sessionId));
   }
   window.addEventListener('resize', onViewportResize);
   window.addEventListener('keydown', onWindowShiftKey, true);
@@ -1087,8 +1087,8 @@ let viewActive = true;
 function onTabShown() {
   suppressScrollMemo = true;
   restoreScroll(props.sessionId);
-  nextTick(() => {
-    nextTick(() => {
+  void nextTick().then(() => {
+    void nextTick().then(() => {
       suppressScrollMemo = false;
     });
   });
@@ -1130,7 +1130,7 @@ function captureScroll(el: HTMLElement, mem: ReturnType<typeof chatScrollOf>) {
 }
 
 function restoreScroll(sessionId: string) {
-  nextTick(() => {
+  void nextTick().then(() => {
     const el = listEl.value;
     if (!el || props.sessionId !== sessionId) return;
     const st = chatScrollOf(sessionId);

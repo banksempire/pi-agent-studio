@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import SvgIcon from '@sf/components/SvgIcon.vue';
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { useHostedTab } from '@sf/composables/useHostedTab';
+import { createViewListenerBinder } from '@sf/lib/overlayHost';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { MessageImage } from './MessageImages.vue';
 
 const props = defineProps<{ images: MessageImage[]; start: number; text?: string }>();
@@ -19,12 +21,23 @@ function onKey(e: KeyboardEvent) {
   }
 }
 
-onMounted(() => window.addEventListener('keydown', onKey));
-onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
+const rootEl = ref<HTMLElement | null>(null);
+const hostedTab = useHostedTab();
+const keyBinding = createViewListenerBinder(
+  (view) => view.addEventListener('keydown', onKey),
+  (view) => view.removeEventListener('keydown', onKey),
+);
+onMounted(() => keyBinding.sync(rootEl.value));
+watch(
+  () => hostedTab?.view.value ?? window,
+  () => keyBinding.sync(rootEl.value),
+  { flush: 'post' },
+);
+onBeforeUnmount(() => keyBinding.release());
 </script>
 
 <template>
-  <div class="img-review" @click.self="emit('close')">
+  <div ref="rootEl" class="img-review" @click.self="emit('close')">
     <button class="img-review-close" title="Close (Esc)" @click="emit('close')"><SvgIcon name="✕" /></button>
     <div v-if="text" class="img-review-text">{{ text }}</div>
     <div class="img-review-stage">

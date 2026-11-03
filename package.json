@@ -22,6 +22,7 @@
     "check:image-blank": "node scripts/check-image-blank.cjs",
     "check:reload": "node scripts/check-reload.cjs",
     "check:worktree-nm": "node scripts/check-worktree-nm.cjs",
+    "check:workspaces": "node scripts/check-workspaces.cjs",
     "check:msgqueue": "node scripts/check-msg-queue.cjs",
     "check:dockericons": "node scripts/check-docker-icons.cjs",
     "check:jobeditor": "node scripts/check-job-editor.cjs",

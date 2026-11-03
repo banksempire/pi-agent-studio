@@ -5,6 +5,7 @@ import { registerUtilityMenu } from '@sf/registry';
 import type { PopupDocument, PopupValues } from '@sf/types/popup';
 import { computed, nextTick, ref, watch } from 'vue';
 import PeakHoursDialog from '../components/PeakHoursDialog.vue';
+import '../workspaceStorage';
 import { confirmDocument, confirmState, settleConfirm } from '../confirm';
 import { layout } from '../layout/loadLayout';
 import { handlePanelAction, usePanelDialogs } from '../layout/panelData';

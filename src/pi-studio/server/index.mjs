@@ -18,6 +18,7 @@ import { createMessageQueue, normalizeAttachments } from './message-queue.mjs';
 import { createPeakHoursStore } from './peak-hours.mjs';
 import { flagOrEnv } from './service-args.mjs';
 import { createSessionStates } from './session-states.mjs';
+import { createWorkspaceStore } from './workspaces.mjs';
 
 const PORT = Number(flagOrEnv('port', 'PI_STUDIO_PORT', 7494));
 const HOST = flagOrEnv('host', 'PI_STUDIO_HOST', '127.0.0.1');
@@ -40,6 +41,8 @@ const LEGACY_STATES_PATH = flagOrEnv(
 );
 const PEAK_HOURS_PATH =
   process.env.PI_STUDIO_PEAK_HOURS_PATH ?? path.join(path.dirname(DB_PATH), 'peak-hours.json');
+const WORKSPACES_PATH =
+  process.env.PI_STUDIO_WORKSPACES_PATH ?? path.join(path.dirname(DB_PATH), 'workspaces.json');
 const RESUME_MODE =
   (process.env.PI_STUDIO_RESUME ?? 'on') === 'off' ? 'skip' : (process.env.PI_STUDIO_RESUME_MODE ?? 'nudge');
 
@@ -912,6 +915,7 @@ const sessionStates = createSessionStates({
 sessionStates.load();
 
 const peakHours = createPeakHoursStore({ persistPath: PEAK_HOURS_PATH });
+const workspaces = createWorkspaceStore({ persistPath: WORKSPACES_PATH });
 
 async function lastUserTurn(file) {
   const content = await readFile(file, 'utf8').catch(() => null);
@@ -1677,6 +1681,65 @@ const server = createServer(async (req, res) => {
         sendJson(res, r.ok ? 200 : 400, r);
       } catch (e) {
         sendJson(res, 400, { ok: false, error: String(e?.message ?? e) });
+      }
+      return;
+    }
+
+    if (p === '/api/workspaces' && req.method === 'GET') {
+      try {
+        sendJson(res, 200, { workspaces: workspaces.list() });
+      } catch (e) {
+        sendJson(res, 500, { error: String(e?.message ?? e) });
+      }
+      return;
+    }
+
+    if (p === '/api/workspaces' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const r = workspaces.create(body);
+        if (r.error) return sendJson(res, 400, { error: r.error });
+        sendJson(res, 201, { workspace: r.entry });
+      } catch (e) {
+        sendJson(res, 500, { error: String(e?.message ?? e) });
+      }
+      return;
+    }
+
+    if (p.startsWith('/api/workspaces/') && req.method === 'GET') {
+      const id = decodeURIComponent(p.slice('/api/workspaces/'.length));
+      try {
+        const w = workspaces.get(id);
+        if (!w) return sendJson(res, 404, { error: 'workspace not found' });
+        sendJson(res, 200, { workspace: w });
+      } catch (e) {
+        sendJson(res, 500, { error: String(e?.message ?? e) });
+      }
+      return;
+    }
+
+    if (p.startsWith('/api/workspaces/') && req.method === 'PATCH') {
+      const id = decodeURIComponent(p.slice('/api/workspaces/'.length));
+      const body = await readBody(req);
+      try {
+        const r = workspaces.update(id, body);
+        if (r.error === 'workspace not found') return sendJson(res, 404, { error: r.error });
+        if (r.error) return sendJson(res, 400, { error: r.error });
+        sendJson(res, 200, { workspace: r.entry });
+      } catch (e) {
+        sendJson(res, 500, { error: String(e?.message ?? e) });
+      }
+      return;
+    }
+
+    if (p.startsWith('/api/workspaces/') && req.method === 'DELETE') {
+      const id = decodeURIComponent(p.slice('/api/workspaces/'.length));
+      try {
+        const ok = workspaces.remove(id);
+        if (!ok) return sendJson(res, 404, { error: 'workspace not found' });
+        sendJson(res, 200, { ok: true });
+      } catch (e) {
+        sendJson(res, 500, { error: String(e?.message ?? e) });
       }
       return;
     }

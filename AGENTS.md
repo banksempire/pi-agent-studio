@@ -29,6 +29,7 @@ Area → suite (`npm run <script>`; full list in `package.json`):
 | image attachments | `check:image-attach` |
 | image-only prompt delivery (blank text guard) | `check:image-blank` |
 | new chat creation | `check:newchat` |
+| workspace save/load (backend-backed, cross-frontend, CRUD) | `check:workspaces` |
 | tab resource protocol (subscribe on open, unsubscribe on close) | `check:tabresources` |
 | gateway message queue | `check:msgqueue` |
 | chat windows / tabs / cross-window | `check:crosswin` |

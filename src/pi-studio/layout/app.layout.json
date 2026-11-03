@@ -176,14 +176,27 @@
             "title": "Workspaces",
             "h2": [
               {
-                "id": "ws-panel",
+                "id": "ws-list",
                 "title": "Saved Workspaces",
                 "height": "variable",
-                "minHeight": 120,
+                "minHeight": 90,
+                "utilities": [
+                  {
+                    "id": "sf-save-workspace",
+                    "icon": "💾",
+                    "label": "Save",
+                    "tooltip": "Save the current layout as a workspace"
+                  }
+                ],
                 "components": [
                   {
-                    "type": "component",
-                    "key": "workspace-panel"
+                    "type": "banner",
+                    "bind": "workspace-banner"
+                  },
+                  {
+                    "type": "list",
+                    "bind": "workspace-list",
+                    "dismissOnActivate": true
                   }
                 ]
               }

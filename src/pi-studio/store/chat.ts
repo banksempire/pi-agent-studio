@@ -173,7 +173,6 @@ const PEAK_HOURS_CONTENT = 'peak-hours';
 interface ChatState {
   sessions: ChatSession[];
   activeChatId: string | null;
-  openViewTabIds: Set<string>;
   reviewTabId: string | null;
   selectedDirs: Set<string>;
   tree: DirNode | null;
@@ -569,7 +568,6 @@ const state = reactive<ChatState>({
   listLoaded: 0,
   loadingMore: false,
   activeChatId: null,
-  openViewTabIds: new Set(),
   reviewTabId: null,
   selectedDirs: new Set(),
   tree: null,
@@ -601,7 +599,25 @@ try {
 } catch {}
 
 const TAB_PREFIX = 'chat-';
-const chatTabId = (sessionId: string) => TAB_PREFIX + sessionId;
+const CHAT_CONTENT = 'chat-window';
+let chatTabSeq = 0;
+const nextChatTabId = () => `chat-tab-${Date.now().toString(36)}-${++chatTabSeq}`;
+
+type ChatTabProps = { sessionId?: string };
+
+function chatTabIdOf(sessionId: string): string | undefined {
+  if (!ws) return undefined;
+  for (const [tabId, def] of Object.entries(ws.tabDefs)) {
+    if (def.content !== CHAT_CONTENT) continue;
+    if ((def.props as ChatTabProps | undefined)?.sessionId === sessionId) return tabId;
+  }
+  return undefined;
+}
+
+function sessionIdOfTab(tabId: string): string {
+  const props = ws?.tabDefs[tabId]?.props as ChatTabProps | undefined;
+  return props?.sessionId ?? '';
+}
 
 function tabStatusOf(s: ChatSession): { icon: string; tabClass: string } {
   if (s.status === 'running') {
@@ -610,12 +626,12 @@ function tabStatusOf(s: ChatSession): { icon: string; tabClass: string } {
   return { icon: '💬', tabClass: '' };
 }
 
-function chatTabDef(s: ChatSession): WorkspaceTabDef {
+function chatTabDef(s: ChatSession, tabId = nextChatTabId()): WorkspaceTabDef {
   return {
-    id: chatTabId(s.id),
+    id: tabId,
     label: s.title,
     ...tabStatusOf(s),
-    content: 'chat-window',
+    content: CHAT_CONTENT,
     props: { sessionId: s.id },
   };
 }
@@ -623,8 +639,8 @@ function chatTabDef(s: ChatSession): WorkspaceTabDef {
 function syncTabStatuses() {
   if (!ws) return;
   for (const [tabId, tab] of Object.entries(ws.tabDefs)) {
-    if (!tabId.startsWith(TAB_PREFIX)) continue;
-    const s = findSession(tabId.slice(TAB_PREFIX.length));
+    if (tab.content !== CHAT_CONTENT) continue;
+    const s = findSession(sessionIdOfTab(tabId));
     if (!s) continue;
     const st = tabStatusOf(s);
     tab.icon = st.icon;
@@ -976,9 +992,10 @@ function initialInterestFiles(): string[] {
   };
   for (const id of state.pinnedIds) pushId(id);
   if (ws) {
-    for (const tabId of Object.keys(ws.tabDefs)) {
-      if (!tabId.startsWith(TAB_PREFIX)) continue;
-      pushId(tabId.slice(TAB_PREFIX.length));
+    for (const [tabId, def] of Object.entries(ws.tabDefs)) {
+      if (def.content !== CHAT_CONTENT) continue;
+      const sid = sessionIdOfTab(tabId);
+      if (sid) pushId(sid);
     }
   }
   return [...files];
@@ -1110,9 +1127,10 @@ export async function loadMoreSessions(): Promise<void> {
 function sweepGhostChatTabs() {
   if (!ws) return;
   for (const tabId of Object.keys(ws.tabDefs)) {
+    const tab = ws.tabDefs[tabId];
     if (!tabId.startsWith(TAB_PREFIX)) continue;
-    if (ws.tabDefs[tabId].content !== BLANK_CONTENT) continue;
-    if (findSession(tabId.slice(TAB_PREFIX.length))) continue;
+    if (tab.content !== BLANK_CONTENT) continue;
+    if (findSession(sessionIdOfTab(tabId))) continue;
     ws.ops.closeTab(tabId);
   }
 }
@@ -1123,7 +1141,7 @@ function sweepRestoredChatTabs() {
   if (!ws || !restoredChatTabs || restoredChatTabs.size === 0) return;
   for (const tabId of [...restoredChatTabs]) {
     restoredChatTabs.delete(tabId);
-    if (findSession(tabId.slice(TAB_PREFIX.length))) continue;
+    if (findSession(sessionIdOfTab(tabId))) continue;
     ws.ops.closeTab(tabId);
   }
 }
@@ -1648,22 +1666,25 @@ function targetTileId(): string {
 
 export function bindWorkspace(api: WorkspaceApi) {
   ws = api;
-  restoredChatTabs = new Set(Object.keys(api.tabDefs).filter((id) => id.startsWith(TAB_PREFIX)));
+  restoredChatTabs = new Set(
+    Object.keys(api.tabDefs).filter((id) => api.tabDefs[id]?.content === CHAT_CONTENT),
+  );
 
   api.setWindowStateProvider({
     read: () => {
       const out: Record<string, unknown> = {};
-      const open = new Set(openTabIds());
-      for (const [file, ui] of Object.entries(windowUi)) {
-        if (open.has(TAB_PREFIX + file)) out[TAB_PREFIX + file] = { composerHeight: ui.composerHeight };
+      for (const [sid, ui] of Object.entries(windowUi)) {
+        const tabId = chatTabIdOf(sid);
+        if (tabId && api.findTabGlobal(tabId)) out[tabId] = { composerHeight: ui.composerHeight };
       }
       return out;
     },
     apply: (state) => {
       const next: Record<string, WindowUi> = {};
       for (const [tabId, ui] of Object.entries(state)) {
-        if (!tabId.startsWith(TAB_PREFIX)) continue;
-        next[tabId.slice(TAB_PREFIX.length)] = {
+        const sid = sessionIdOfTab(tabId);
+        if (!sid) continue;
+        next[sid] = {
           composerHeight: (ui as WindowUi | null)?.composerHeight ?? null,
         };
       }
@@ -1675,7 +1696,8 @@ export function bindWorkspace(api: WorkspaceApi) {
   watch(
     () => activeTabOfFocusedTile(),
     (tabId) => {
-      state.activeChatId = tabId?.startsWith(TAB_PREFIX) ? tabId.slice(TAB_PREFIX.length) : null;
+      const def = tabId ? api.tabDefs[tabId] : undefined;
+      state.activeChatId = def?.content === CHAT_CONTENT ? sessionIdOfTab(tabId) : null;
     },
     { immediate: true },
   );
@@ -1683,7 +1705,6 @@ export function bindWorkspace(api: WorkspaceApi) {
   watch(
     () => openTabIds(),
     (ids) => {
-      state.openViewTabIds = new Set(ids);
       if (state.reviewTabId && !ids.includes(state.reviewTabId)) {
         state.reviewTabId = null;
       }
@@ -1697,7 +1718,8 @@ export function bindWorkspace(api: WorkspaceApi) {
 
   api.setTabClickHandler((tabId) => {
     if (tabId === state.reviewTabId) exitReview();
-    if (tabId.startsWith(TAB_PREFIX)) noteVisit(tabId.slice(TAB_PREFIX.length));
+    const sid = sessionIdOfTab(tabId);
+    if (sid) noteVisit(sid);
   });
 
   api.setTabLongPressHandler((tabId) => {
@@ -1710,19 +1732,19 @@ export function bindWorkspace(api: WorkspaceApi) {
       const sessionId = e.dataTransfer?.getData(CHAT_DROP_TYPE) ?? '';
       const s = sessionId ? findSession(sessionId) : undefined;
       if (!s || !ws) return;
-      const tab = chatTabDef(s);
-      const existing = ws.findTabGlobal(tab.id);
+      const existingId = chatTabIdOf(s.id);
+      const existing = existingId ? ws.findTabGlobal(existingId) : null;
       if (target.zone === 'center') {
-        if (existing) {
-          ws.ops.moveTab(tab.id, target.tileId, target.index);
+        if (existing && existingId) {
+          ws.ops.moveTab(existingId, target.tileId, target.index);
         } else {
-          ws.ops.insertTab(target.tileId, target.index, tab);
+          ws.ops.insertTab(target.tileId, target.index, chatTabDef(s));
           syncSessionView(s);
         }
       } else {
         const dir = target.zone === 'left' || target.zone === 'right' ? 'row' : 'column';
         const side = target.zone === 'left' || target.zone === 'top' ? 'start' : 'end';
-        ws.ops.splitOpen(target.tileId, dir, side, tab);
+        ws.ops.splitOpen(target.tileId, dir, side, chatTabDef(s));
         syncSessionView(s);
       }
     },
@@ -1784,15 +1806,10 @@ function hasPersistedLayout(): boolean {
 function reconcileGhostWindows() {
   if (!ws) return;
   for (const id of Object.keys(ws.tabDefs)) {
-    if (!id.startsWith(TAB_PREFIX)) continue;
-    const s = findSession(id.slice(TAB_PREFIX.length));
-    if (!s) continue;
     const def = ws.tabDefs[id];
-    if (def.content === BLANK_CONTENT) {
-      ws.tabDefs[id] = chatTabDef(s);
-      syncSessionView(s);
-      continue;
-    }
+    if (def.content !== CHAT_CONTENT) continue;
+    const s = findSession(sessionIdOfTab(id));
+    if (!s) continue;
     const st = tabStatusOf(s);
     def.icon = st.icon;
     def.tabClass = statusTabClass(id, s);
@@ -1806,7 +1823,8 @@ export function findSession(sessionId: string): ChatSession | undefined {
 }
 
 export function isViewOpen(sessionId: string): boolean {
-  return state.openViewTabIds.has(chatTabId(sessionId));
+  const tabId = chatTabIdOf(sessionId);
+  return tabId !== undefined && !!ws?.findTabGlobal(tabId);
 }
 
 function cwdMatches(s: ChatSession, dirs: Set<string>): boolean {
@@ -1893,8 +1911,9 @@ function statusTabClass(tabId: string, s: ChatSession | undefined): string {
 function enterReview(tabId: string) {
   state.reviewTabId = tabId;
   if (ws) {
-    ws.tabDefs[tabId].tabClass = statusTabClass(tabId, findSession(tabId.slice(TAB_PREFIX.length)));
-    ws.tabDefs[tabId].transient = true;
+    const def = ws.tabDefs[tabId];
+    def.tabClass = statusTabClass(tabId, findSession(sessionIdOfTab(tabId)));
+    def.transient = true;
   }
 }
 
@@ -1904,14 +1923,14 @@ function exitReview() {
   const def = ws.tabDefs[tabId];
   state.reviewTabId = null;
   if (def) {
-    def.tabClass = statusTabClass(tabId, findSession(tabId.slice(TAB_PREFIX.length)));
+    def.tabClass = statusTabClass(tabId, findSession(sessionIdOfTab(tabId)));
     def.transient = false;
   }
   scheduleWindowPersist();
 }
 
 export function noteChatInteraction(sessionId: string) {
-  if (state.reviewTabId === chatTabId(sessionId)) exitReview();
+  if (state.reviewTabId && state.reviewTabId === chatTabIdOf(sessionId)) exitReview();
 }
 
 function syncSessionView(s: ChatSession) {
@@ -1947,21 +1966,24 @@ function openTabPlaced(placement: Placement | undefined, def: WorkspaceTabDef): 
 export function openChat(sessionId: string, opts: { visit?: boolean; placement?: Placement } = {}) {
   const s = findSession(sessionId);
   if (!s || !ws) return;
-  const tabId = chatTabId(sessionId);
 
-  const existing = ws.findTabGlobal(tabId);
-  if (existing) {
-    ws.ops.activateTab(existing.id, tabId);
-    syncSessionView(s);
-    if (opts.visit !== false) noteVisit(sessionId);
-    return;
+  const existingId = chatTabIdOf(sessionId);
+  if (existingId) {
+    const tile = ws.findTabGlobal(existingId);
+    if (tile) {
+      ws.ops.activateTab(tile.id, existingId);
+      syncSessionView(s);
+      if (opts.visit !== false) noteVisit(sessionId);
+      return;
+    }
+    delete ws.tabDefs[existingId];
   }
 
   const def = chatTabDef(s);
   const aux = opts.placement?.windowId ? ws.auxApi(opts.placement.windowId) : null;
   if (aux) {
     aux.ops.openTab(aux.focusedTileId, def);
-    if (!s.draft) enterReview(tabId);
+    if (!s.draft) enterReview(def.id);
     syncSessionView(s);
     if (opts.visit !== false) noteVisit(sessionId);
     return;
@@ -1976,7 +1998,7 @@ export function openChat(sessionId: string, opts: { visit?: boolean; placement?:
   }
   if (!tileId) return;
   ws.ops.openTab(tileId, def);
-  if (!s.draft) enterReview(tabId);
+  if (!s.draft) enterReview(def.id);
   syncSessionView(s);
   if (opts.visit !== false) noteVisit(sessionId);
 }
@@ -2518,10 +2540,9 @@ export function appendLocalMessage(sessionId: string, msg: Partial<DisplayMessag
 }
 
 export function closeChatView(sessionId: string) {
-  const s = findSession(sessionId);
-  if (!s || !ws) return;
-  const tabId = chatTabId(sessionId);
-  if (ws.findTabGlobal(tabId)) ws.ops.closeTab(tabId);
+  if (!ws) return;
+  const tabId = chatTabIdOf(sessionId);
+  if (tabId && ws.findTabGlobal(tabId)) ws.ops.closeTab(tabId);
 }
 
 export async function renameSession(sessionId: string, name: string): Promise<boolean> {
@@ -2760,9 +2781,6 @@ export const store = {
   toggleTreeCollapsed,
   get activeChatId() {
     return state.activeChatId;
-  },
-  get openViewTabIds() {
-    return state.openViewTabIds;
   },
   get backend() {
     return state.backend;

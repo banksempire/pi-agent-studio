@@ -2,6 +2,7 @@
 import SvgIcon from '@sf/components/SvgIcon.vue';
 import { type TabStateChange, useTabResources } from '@sf/composables/tabResources';
 import { useHostedTab } from '@sf/composables/useHostedTab';
+import { createViewListenerBinder, hostDocOf, hostViewOf } from '@sf/lib/overlayHost';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
@@ -726,6 +727,7 @@ function compactContext() {
 
 const MOBILE_INPUT_MAX_PX = 120;
 const isMobile = ref(window.innerWidth < 500);
+const hostedTab = useHostedTab();
 
 function autoGrowInput() {
   const el = inputEl.value;
@@ -742,7 +744,7 @@ function autoGrowInput() {
 }
 
 function onViewportResize() {
-  isMobile.value = window.innerWidth < 500;
+  isMobile.value = (hostedTab?.view.value ?? window).innerWidth < 500;
   autoGrowInput();
 }
 
@@ -985,6 +987,25 @@ function onWindowShiftKey(e: KeyboardEvent) {
   }
 }
 
+const hostViewBinding = createViewListenerBinder(
+  (view) => {
+    view.addEventListener('resize', onViewportResize);
+    view.addEventListener('keydown', onWindowShiftKey, true);
+    view.addEventListener('keyup', onWindowShiftKey, true);
+  },
+  (view) => {
+    view.removeEventListener('resize', onViewportResize);
+    view.removeEventListener('keydown', onWindowShiftKey, true);
+    view.removeEventListener('keyup', onWindowShiftKey, true);
+  },
+);
+
+watch(
+  () => hostedTab?.view.value ?? window,
+  () => hostViewBinding.sync(inputEl.value),
+  { flush: 'post' },
+);
+
 function onKeydown(e: KeyboardEvent) {
   const realShift = e.shiftKey && (shiftDown || performance.now() - lastShiftDown < SHIFT_TRUST_WINDOW);
   const sendPressed =
@@ -1024,6 +1045,8 @@ let resizeCleanup: (() => void) | null = null;
 function startResize(e: MouseEvent) {
   if (isMobile.value) return;
   e.preventDefault();
+  const view = hostViewOf(inputEl.value);
+  const doc = hostDocOf(inputEl.value);
   const startY = e.clientY;
   const startH = manualHeight.value ?? inputEl.value?.offsetHeight ?? 80;
   const el = inputEl.value;
@@ -1034,17 +1057,17 @@ function startResize(e: MouseEvent) {
     manualHeight.value = Math.min(maxH, Math.max(minH, startH + (startY - ev.clientY)));
   };
   const onUp = () => {
-    window.removeEventListener('mousemove', onMove);
-    window.removeEventListener('mouseup', onUp);
-    document.body.style.cursor = '';
-    document.body.style.userSelect = '';
+    view.removeEventListener('mousemove', onMove);
+    view.removeEventListener('mouseup', onUp);
+    doc.body.style.cursor = '';
+    doc.body.style.userSelect = '';
     resizeCleanup = null;
   };
   resizeCleanup = onUp;
-  document.body.style.cursor = 'row-resize';
-  document.body.style.userSelect = 'none';
-  window.addEventListener('mousemove', onMove);
-  window.addEventListener('mouseup', onUp);
+  doc.body.style.cursor = 'row-resize';
+  doc.body.style.userSelect = 'none';
+  view.addEventListener('mousemove', onMove);
+  view.addEventListener('mouseup', onUp);
 }
 
 function resetResize() {
@@ -1060,13 +1083,11 @@ onMounted(() => {
   } else if (el && el.scrollHeight > el.clientHeight) {
     void nextTick().then(() => restoreScroll(props.sessionId));
   }
-  window.addEventListener('resize', onViewportResize);
-  window.addEventListener('keydown', onWindowShiftKey, true);
-  window.addEventListener('keyup', onWindowShiftKey, true);
   el?.addEventListener('touchstart', onTouchStart);
   el?.addEventListener('touchend', onTouchEnd);
   el?.addEventListener('touchcancel', onTouchEnd);
   nextTick(autoGrowInput);
+  hostViewBinding.sync(inputEl.value);
   if (el) {
     let firstObs = true;
     listObserver = new ResizeObserver(() => {
@@ -1095,7 +1116,6 @@ function onTabShown() {
   viewActive = true;
 }
 
-const hostedTab = useHostedTab();
 if (hostedTab) {
   onMounted(() => {
     if (hostedTab.visible.value) onTabShown();
@@ -1110,9 +1130,7 @@ onUnmounted(() => {
   const el = listEl.value;
   if (el) captureScroll(el, chatScrollOf(props.sessionId));
   closeQueueEdit();
-  window.removeEventListener('resize', onViewportResize);
-  window.removeEventListener('keydown', onWindowShiftKey, true);
-  window.removeEventListener('keyup', onWindowShiftKey, true);
+  hostViewBinding.release();
   el?.removeEventListener('touchstart', onTouchStart);
   el?.removeEventListener('touchend', onTouchEnd);
   el?.removeEventListener('touchcancel', onTouchEnd);

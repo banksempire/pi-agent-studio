@@ -203,6 +203,7 @@ function makeReporter() {
   };
 
   let browser;
+  let page = null;
   try {
     const ports = await pickPorts();
     console.log(`stack: backend :${ports.backend} vite :${ports.vite}`);
@@ -244,7 +245,7 @@ function makeReporter() {
     await waitHttp(`http://127.0.0.1:${ports.vite}/`, 'vite');
 
     browser = await chromium.launch();
-    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     const errors = [];
     page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
     page.on('console', (m) => {
@@ -866,6 +867,111 @@ function makeReporter() {
       return { ok: ok1 && ok2 && ok3 && ok4, why: why.join(' | ') };
     })();
     report('T12 composer send-key isolation (iOS spurious shiftKey, both modes)', t12.ok, t12.why);
+
+    const t12b = await (async () => {
+      const why = [];
+      const stubChatFetch = () =>
+        page.evaluate(() => {
+          window.__chatPosts = 0;
+          const realFetch = window.fetch.bind(window);
+          window.fetch = (url, init) => {
+            if (typeof url === 'string' && url.includes('/api/chat')) {
+              window.__chatPosts += 1;
+              return Promise.resolve({ ok: true, json: async () => ({}) });
+            }
+            return realFetch(url, init);
+          };
+        });
+      const posts = () => page.evaluate(() => window.__chatPosts ?? 0);
+      const auxState = () =>
+        aux.evaluate(() => ({
+          value: document.querySelector('.chat-input')?.value ?? '',
+          rows: document.querySelectorAll('.chat-msg').length,
+        }));
+      const prime = async (sendKey) => {
+        await page.addInitScript((k) => {
+          try {
+            const raw = localStorage.getItem('sf.ui.state');
+            const j = raw ? JSON.parse(raw) : null;
+            const values = j && typeof j.values === 'object' && j.values ? { ...j.values } : {};
+            values['app.chat.prefs'] = { sendKey: k, renderMarkdown: true };
+            localStorage.setItem('sf.ui.state', JSON.stringify({ version: 1, values }));
+          } catch {}
+        }, sendKey);
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await page.waitForSelector('.chat-messages', { timeout: 30000 });
+        await aux.waitForSelector('[data-test="aux-content"] .chat-input', { timeout: 30000 });
+        await delay(3000);
+      };
+
+      const popupPromise = page.context().waitForEvent('page');
+      await page.evaluate(() => {
+        const label = Array.from(document.querySelectorAll('.sf-tab-label')).find((el) =>
+          el.textContent?.includes('XWin-B:'),
+        );
+        const tab = label?.closest('.sf-tab');
+        if (!tab) throw new Error('XWin-B tab element not found');
+        tab.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: new DataTransfer() }));
+        tab.dispatchEvent(new DragEvent('dragend', { bubbles: true, screenX: 900, screenY: 400 }));
+      });
+      const aux = await popupPromise;
+      try {
+        await aux.waitForSelector('[data-test="aux-content"] .chat-messages', { timeout: 30000 });
+        await aux.waitForSelector('[data-test="aux-content"] .chat-input', { timeout: 30000 });
+        const auxInput = aux.locator('[data-test="aux-content"] .chat-input');
+        await delay(1500);
+
+        await prime('shiftEnter');
+        await aux.waitForSelector('[data-test="aux-content"] .chat-input', { timeout: 30000 });
+        await delay(1500);
+        await stubChatFetch();
+        await auxInput.click({ force: true });
+        await aux.keyboard.type('aux-sendkey-probe');
+        const pre = await auxState();
+        await aux.keyboard.press('Enter');
+        const c1 = await auxState();
+        const ok1 = c1.value.includes('\n') && c1.rows === pre.rows && (await posts()) === 0;
+        why.push(`plainEnter:${ok1 ? 'ok' : `BAD ${JSON.stringify({ ...c1, posts: await posts() })}`}`);
+        await aux.keyboard.down('Shift');
+        await aux.keyboard.press('Enter');
+        await aux.keyboard.up('Shift');
+        await delay(800);
+        const c2 = await auxState();
+        const ok2 = c2.value === '' && c2.rows === pre.rows + 1 && (await posts()) === 1;
+        why.push(`realShiftEnter:${ok2 ? 'ok' : `BAD ${JSON.stringify({ ...c2, posts: await posts() })}`}`);
+
+        await prime('enter');
+        await aux.waitForSelector('[data-test="aux-content"] .chat-input', { timeout: 30000 });
+        await delay(1500);
+        await stubChatFetch();
+        await auxInput.click({ force: true });
+        await aux.keyboard.type('aux-sendkey-probe-2');
+        const e0 = await auxState();
+        await aux.keyboard.down('Shift');
+        await aux.keyboard.press('Enter');
+        await aux.keyboard.up('Shift');
+        await delay(800);
+        const e1 = await auxState();
+        const ok3 = e1.value.includes('\n') && e1.rows === e0.rows && (await posts()) === 0;
+        why.push(
+          `enterModeShiftEnter:${ok3 ? 'ok' : `BAD ${JSON.stringify({ ...e1, posts: await posts() })}`}`,
+        );
+        await aux.keyboard.press('Enter');
+        await delay(800);
+        const e2 = await auxState();
+        const ok4 = e2.value === '' && e2.rows === e0.rows + 1 && (await posts()) === 1;
+        why.push(
+          `enterModePlainEnter:${ok4 ? 'ok' : `BAD ${JSON.stringify({ ...e2, posts: await posts() })}`}`,
+        );
+
+        return { ok: ok1 && ok2 && ok3 && ok4, why: why.join(' | ') };
+      } finally {
+        await aux.close();
+        await page.waitForSelector('.sf-tab-label:has-text("XWin-B:")', { timeout: 30000 }).catch(() => {});
+        await delay(1500);
+      }
+    })();
+    report('T12b aux window composer send-key isolation (both modes)', t12b.ok, t12b.why);
 
     const t13 = await (async () => {
       await switchTab('XWin-B');
@@ -1645,6 +1751,15 @@ function makeReporter() {
     process.exitCode = failed ? 1 : 0;
   } catch (e) {
     console.error(`check-cross-window: ${e.message}`);
+    try {
+      const labels = await page.evaluate(() =>
+        Array.from(document.querySelectorAll('.sf-tab-label')).map((el) => el.textContent),
+      );
+      console.error(`  [crash-state] labels=${JSON.stringify(labels)}`);
+      await page.screenshot({ path: '/tmp/xwin-crash.png', fullPage: false });
+    } catch (e2) {
+      console.error(`  [crash-state] page gone: ${e2.message}`);
+    }
     process.exitCode = 1;
   } finally {
     if (browser) await browser.close().catch(() => {});

@@ -189,6 +189,7 @@ async function waitIdle(port, file) {
 
     let notFoundFlash = null;
     let composerBlock = null;
+    let bubbleSeen = false;
     let bubbleLost = null;
     const deadline = Date.now() + 8000;
     while (Date.now() < deadline) {
@@ -197,12 +198,14 @@ async function waitIdle(port, file) {
       if (nf && notFoundFlash === null) notFoundFlash = nf;
       if (s.block && composerBlock === null) composerBlock = s.block;
       const kept = s.groups.some((t) => t.includes(messageText));
-      if (!kept && bubbleLost === null) bubbleLost = 'user bubble vanished';
+      if (kept) bubbleSeen = true;
+      else if (bubbleSeen && bubbleLost === null) bubbleLost = 'user bubble vanished';
       if (notFoundFlash && composerBlock && bubbleLost) break;
       await delay(100);
     }
     report('no "Session not found" flash after first send', notFoundFlash === null, notFoundFlash ?? '');
     report('no composer block after first send', composerBlock === null, composerBlock ?? '');
+    report('optimistic bubble appears once the draft realizes', bubbleSeen);
     report('user message stays visible across the session upsert', bubbleLost === null, bubbleLost ?? '');
 
     let listed = null;
@@ -254,6 +257,24 @@ async function waitIdle(port, file) {
       'chat window healthy after settle',
       !settledSnap.empties.some((t) => t.includes('Session not found')) &&
         settledSnap.groups.some((t) => t.includes(messageText)),
+    );
+
+    await delay(1200);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.sf-tab', { timeout: 20000 });
+    let restoredTab = false;
+    let notFoundAfterReload = null;
+    for (let i = 0; i < 40 && !restoredTab; i++) {
+      const s = await snap();
+      const nf = s.empties.find((t) => t.includes('Session not found'));
+      if (nf && notFoundAfterReload === null) notFoundAfterReload = nf;
+      restoredTab = s.groups.some((t) => t.includes(messageText));
+      if (!restoredTab) await delay(250);
+    }
+    report(
+      'realized draft tab survives a reload on its canonical identity',
+      restoredTab && notFoundAfterReload === null,
+      restoredTab ? '' : (notFoundAfterReload ?? 'no restored tab shows the session'),
     );
     report('no page errors', pageErrors.length === 0, pageErrors.join(' | '));
   } catch (e) {

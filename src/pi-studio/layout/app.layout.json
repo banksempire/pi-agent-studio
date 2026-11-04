@@ -165,45 +165,7 @@
       }
     },
     {
-      "id": "workspace",
-      "displayName": "Workspace",
-      "icon": "🗂",
-      "panel": {
-        "title": "Workspaces",
-        "h1": [
-          {
-            "id": "workspaces",
-            "title": "Workspaces",
-            "h2": [
-              {
-                "id": "ws-list",
-                "title": "Saved Workspaces",
-                "height": "variable",
-                "minHeight": 90,
-                "utilities": [
-                  {
-                    "id": "sf-save-workspace",
-                    "icon": "💾",
-                    "label": "Save",
-                    "tooltip": "Save the current layout as a workspace"
-                  }
-                ],
-                "components": [
-                  {
-                    "type": "banner",
-                    "bind": "workspace-banner"
-                  },
-                  {
-                    "type": "list",
-                    "bind": "workspace-list",
-                    "dismissOnActivate": true
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      }
+      "builtin": "workspaces"
     }
   ],
   "rightPanels": {

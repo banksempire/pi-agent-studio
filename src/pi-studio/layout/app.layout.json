@@ -165,32 +165,7 @@
       }
     },
     {
-      "id": "workspace",
-      "displayName": "Workspace",
-      "icon": "🗂",
-      "panel": {
-        "title": "Workspaces",
-        "h1": [
-          {
-            "id": "workspaces",
-            "title": "Workspaces",
-            "h2": [
-              {
-                "id": "ws-panel",
-                "title": "Saved Workspaces",
-                "height": "variable",
-                "minHeight": 120,
-                "components": [
-                  {
-                    "type": "component",
-                    "key": "workspace-panel"
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      }
+      "builtin": "workspaces"
     }
   ],
   "rightPanels": {

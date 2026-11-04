@@ -55,6 +55,27 @@ async function waitHttp(url, label, tries = 40) {
   throw new Error(`${label} did not come up`);
 }
 
+function httpJson(port, path_) {
+  return new Promise((resolve, reject) => {
+    const req = http.get({ host: '127.0.0.1', port, path: path_ }, (r) => {
+      let data = '';
+      r.on('data', (c) => (data += c));
+      r.on('end', () => {
+        try {
+          resolve(JSON.parse(data));
+        } catch (e) {
+          reject(e);
+        }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(3000, () => {
+      req.destroy();
+      reject(new Error('timeout'));
+    });
+  });
+}
+
 function makeReporter() {
   let failed = false;
   const report = (name, ok, extra = '') => {
@@ -174,7 +195,6 @@ function writeSession() {
 
     const DRAFT_A = 'draft alpha xyzzy';
     const DRAFT_B = 'draft beta quux';
-    const wsName = `Drafts WS ${Date.now()}`;
 
     await page.fill('.chat-input', DRAFT_A);
     await delay(800);
@@ -197,40 +217,38 @@ function writeSession() {
     report('draft survives a page refresh', afterReload === DRAFT_A, `"${afterReload}"`);
 
     const wsPanelVisible = async () => {
-      const el = await page.$('.sf-ws-panel');
+      const el = await page.$('[data-sub-body="ws-list"]');
       return el !== null && (await el.isVisible());
     };
     while (!(await wsPanelVisible())) {
       await page.click('.sf-docker-app[title="Workspace"]');
       await delay(400);
     }
-    await page.fill('.sf-ws-save .sf-ws-input', wsName);
-    await page.click('.sf-ws-save .sf-ws-btn--primary');
-    await delay(500);
+    await page.click('.sf-subsection-util[title="Save the current layout as a workspace"]');
+    await delay(600);
+    const savedName = (await page.textContent('[data-sub-body="ws-list"] .sf-pl-item .sf-pl-label'))?.trim();
 
-    const snapshotCheck = await page.evaluate(
-      ({ name, draftA }) => {
-        const list = JSON.parse(localStorage.getItem('sf.workspaces') || '[]');
-        const item = list.find((w) => w.name === name);
-        const raw = JSON.stringify(item ?? null);
-        const liveUi = JSON.parse(localStorage.getItem('sf.ui.state') || '{}').values ?? {};
-        return {
-          found: !!item,
-          uiHasDrafts: !!item && 'app.chat.drafts' in (item.snapshot?.ui ?? {}),
-          rawContainsDraftA: raw.includes(draftA),
-          liveUiHasDrafts: 'app.chat.drafts' in liveUi,
-        };
-      },
-      { name: wsName, draftA: DRAFT_A },
+    const remote = await httpJson(backend, '/api/workspaces');
+    const entry = (remote.workspaces ?? []).find((w) => w.name === savedName);
+    let rawJson = null;
+    let uiHasDraftsKey = false;
+    let liveUiHasDrafts = false;
+    if (entry) {
+      const full = await httpJson(backend, `/api/workspaces/${encodeURIComponent(entry.id)}`);
+      rawJson = JSON.stringify(full.workspace ?? null);
+      uiHasDraftsKey = 'app.chat.drafts' in (full.workspace?.snapshot?.ui ?? {});
+    }
+    liveUiHasDrafts = await page.evaluate(
+      () => 'app.chat.drafts' in (JSON.parse(localStorage.getItem('sf.ui.state') || '{}').values ?? {}),
     );
-    report('saved workspace exists', snapshotCheck.found);
+    report('saved workspace exists on the backend', !!entry);
     report(
       'mandatory rule: snapshot ui block has no drafts key',
-      snapshotCheck.uiHasDrafts === false && snapshotCheck.liveUiHasDrafts === false,
+      uiHasDraftsKey === false && liveUiHasDrafts === false,
     );
     report(
       'draft text appears nowhere in the saved workspace json',
-      snapshotCheck.rawContainsDraftA === false,
+      rawJson !== null && rawJson.includes(DRAFT_A) === false,
     );
 
     const backToComposer = async () => {
@@ -253,10 +271,7 @@ function writeSession() {
       await page.click('.sf-docker-app[title="Workspace"]');
       await delay(400);
     }
-    await page
-      .locator('.sf-ws-item', { hasText: wsName })
-      .locator('.sf-ws-btn[title="Load this workspace"]')
-      .click();
+    await page.locator('[data-sub-body="ws-list"] .sf-pl-item', { hasText: savedName }).click();
     await delay(800);
     await backToComposer();
     const afterLoad = await page.inputValue('.chat-input');

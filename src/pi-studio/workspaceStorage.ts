@@ -1,6 +1,8 @@
-import { registerWorkspaceStorage } from '@sf/workspace/manager';
+import { registerWorkspaceProfileIdentity, registerWorkspaceStorage } from '@sf/workspace/manager';
 import type { WorkspaceSnapshot } from '@sf/workspace/snapshots';
 import { api } from './store/chat';
+
+registerWorkspaceProfileIdentity('pi-agent-studio');
 
 export interface WorkspaceMeta {
   id: string;

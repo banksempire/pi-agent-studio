@@ -306,6 +306,24 @@ const tileTabsOf = (node, acc) => {
     const stored = await httpJson(backendUrl, '/api/workspaces');
     const entry = (stored.json?.workspaces ?? []).find((w) => w.name === 'Shared WS');
     report('W1 saved workspace is on the backend', !!entry, JSON.stringify(stored.json)?.slice(0, 200));
+
+    const [download] = await Promise.all([
+      page.waitForEvent('download', { timeout: 5000 }),
+      itemMenu(page, 'Shared WS', 'Export to file'),
+    ]);
+    const exportPath = path.join(RUN_ROOT, 'shared-ws-profile.json');
+    await download.saveAs(exportPath);
+    const envelope = JSON.parse(fs.readFileSync(exportPath, 'utf8'));
+    report(
+      'W1b exported profile carries the app identity and the saved snapshot',
+      envelope.format === 'sf.workspace-profile' &&
+        envelope.profileVersion === 1 &&
+        envelope.app === 'pi-agent-studio' &&
+        envelope.name === 'Shared WS' &&
+        envelope.snapshot?.version === 1 &&
+        Array.isArray(envelope.snapshot?.roots),
+      JSON.stringify({ format: envelope.format, app: envelope.app }),
+    );
     report(
       'W1 backend entry counts tiles and tabs',
       entry?.tiles === 2 && entry?.tabs === 2 && entry?.windows === 0,

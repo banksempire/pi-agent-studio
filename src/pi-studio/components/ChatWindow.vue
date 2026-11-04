@@ -731,13 +731,17 @@ const hostedTab = useHostedTab();
 
 function autoGrowInput() {
   const el = inputEl.value;
-  if (!el) return;
+  if (!el?.isConnected) return;
+  if (hostedTab && !hostedTab.visible.value) return;
   el.style.height = 'auto';
   const borders = el.offsetHeight - el.clientHeight;
   const contentH = el.scrollHeight + borders;
+  if (el.offsetHeight === 0) return;
   const fs = parseFloat(getComputedStyle(el).fontSize) || 16;
+  const minH = fs * MIN_INPUT_EM;
   const maxH = isMobile.value ? MOBILE_INPUT_MAX_PX : fs * MAX_INPUT_EM;
-  const baseH = !isMobile.value && manualHeight.value !== null ? manualHeight.value : 0;
+  const storedH = !isMobile.value && manualHeight.value !== null ? manualHeight.value : null;
+  const baseH = storedH !== null ? Math.min(maxH, Math.max(minH, storedH)) : 0;
   const h = Math.min(Math.max(contentH, baseH), maxH);
   el.style.height = `${h}px`;
   el.style.overflowY = contentH > h ? 'auto' : 'hidden';
@@ -1048,11 +1052,11 @@ function startResize(e: MouseEvent) {
   const view = hostViewOf(inputEl.value);
   const doc = hostDocOf(inputEl.value);
   const startY = e.clientY;
-  const startH = manualHeight.value ?? inputEl.value?.offsetHeight ?? 80;
   const el = inputEl.value;
   const fs = parseFloat(el ? getComputedStyle(el).fontSize : '') || 16;
   const minH = fs * MIN_INPUT_EM;
   const maxH = fs * MAX_INPUT_EM;
+  const startH = Math.min(maxH, Math.max(minH, manualHeight.value ?? inputEl.value?.offsetHeight ?? 80));
   const onMove = (ev: MouseEvent) => {
     manualHeight.value = Math.min(maxH, Math.max(minH, startH + (startY - ev.clientY)));
   };
@@ -1086,7 +1090,7 @@ onMounted(() => {
   el?.addEventListener('touchstart', onTouchStart);
   el?.addEventListener('touchend', onTouchEnd);
   el?.addEventListener('touchcancel', onTouchEnd);
-  nextTick(autoGrowInput);
+  nextTick(onViewportResize);
   hostViewBinding.sync(inputEl.value);
   if (el) {
     let firstObs = true;
@@ -1109,6 +1113,7 @@ function onTabShown() {
   suppressScrollMemo = true;
   restoreScroll(props.sessionId);
   void nextTick().then(() => {
+    autoGrowInput();
     void nextTick().then(() => {
       suppressScrollMemo = false;
     });

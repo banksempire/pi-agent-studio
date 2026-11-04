@@ -15,6 +15,7 @@
     "format": "biome format --write .",
     "check:crosswin": "node scripts/check-cross-window.cjs",
     "check:drafts": "node scripts/check-drafts.cjs",
+    "check:composer-height": "node scripts/check-composer-height.cjs",
     "check:mobile": "node scripts/check-mobile-open.cjs",
     "check:send-stop": "node scripts/check-send-stop.cjs",
     "check:queue": "node scripts/check-queue-msg.cjs",

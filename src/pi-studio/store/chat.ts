@@ -239,15 +239,9 @@ function saveStateFilter() {
   writePersistedObject('app.chat.stateFilter', STATE_FILTER_KEY, state.stateFilter);
 }
 
-function pinIdOf(sessionId: string): string {
-  const s = findSession(sessionId);
-  return encodeURIComponent(s?.file || sessionId);
-}
-
 function isPinned(sessionId: string): boolean {
-  return state.pinnedIds.has(pinIdOf(sessionId));
+  return state.pinnedIds.has(sessionId);
 }
-
 function applyPins(files: string[]) {
   state.pinnedIds = new Set(files.map((f) => encodeURIComponent(f)));
 }
@@ -315,26 +309,21 @@ function pinFiles(): string[] {
 }
 
 function togglePinned(sessionId: string) {
-  const s = findSession(sessionId);
   let file = sessionId;
-  if (s?.file) file = s.file;
-  else {
-    try {
-      file = decodeURIComponent(sessionId);
-    } catch {}
-  }
-  const pinId = encodeURIComponent(file);
-  const nowPinned = !state.pinnedIds.has(pinId);
-  if (nowPinned) state.pinnedIds.add(pinId);
-  else state.pinnedIds.delete(pinId);
+  try {
+    file = decodeURIComponent(sessionId);
+  } catch {}
+  const nowPinned = !state.pinnedIds.has(sessionId);
+  if (nowPinned) state.pinnedIds.add(sessionId);
+  else state.pinnedIds.delete(sessionId);
   if (nowPinned) ensurePinnedSessionsVisible();
   void api('/api/pins', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ file, pinned: nowPinned }),
   }).catch(() => {
-    if (nowPinned) state.pinnedIds.delete(pinId);
-    else state.pinnedIds.add(pinId);
+    if (nowPinned) state.pinnedIds.delete(sessionId);
+    else state.pinnedIds.add(sessionId);
     state.lastError = 'Could not sync pin — backend unreachable';
   });
 }
@@ -1005,7 +994,6 @@ function sessionFromRaw(raw: SessionInfo, old: ChatSession | undefined): ChatSes
   const s = toSession(raw);
   s.onDisk = true;
   if (old) {
-    s.id = old.id;
     s.messages = old.messages;
     s.messagesLoaded = old.messagesLoaded;
     s.hasMoreOlder = old.hasMoreOlder;
@@ -1214,6 +1202,81 @@ function byFile(file: string): ChatSession | undefined {
 }
 const pendingSends = new Map<string, { sessionId: string; mid: string; acked: boolean }>();
 
+function rekeySessionId(oldId: string, newId: string): void {
+  if (state.drafts[oldId] !== undefined) {
+    state.drafts[newId] = state.drafts[oldId];
+    delete state.drafts[oldId];
+  }
+  if (windowUi[oldId]) {
+    windowUi[newId] = windowUi[oldId];
+    delete windowUi[oldId];
+  }
+  if (state.sessionErrors[oldId]) {
+    state.sessionErrors[newId] = state.sessionErrors[oldId];
+    delete state.sessionErrors[oldId];
+  }
+  if (sessionAttachments[oldId]) {
+    sessionAttachments[newId] = sessionAttachments[oldId];
+    delete sessionAttachments[oldId];
+  }
+  if (sessionOpenGroups[oldId]) {
+    sessionOpenGroups[newId] = sessionOpenGroups[oldId];
+    delete sessionOpenGroups[oldId];
+  }
+  const scroll = scrollMemory.get(oldId);
+  if (scroll) {
+    scrollMemory.set(newId, scroll);
+    scrollMemory.delete(oldId);
+  }
+  const hold = queueHoldBeats.get(oldId);
+  if (hold) {
+    queueHoldBeats.set(newId, hold);
+    queueHoldBeats.delete(oldId);
+  }
+  for (const p of pendingSends.values()) {
+    if (p.sessionId === oldId) p.sessionId = newId;
+  }
+  if (state.activeChatId === oldId) state.activeChatId = newId;
+  saveDrafts();
+}
+
+function adoptDraftSession(s: ChatSession, file: string): void {
+  const trueId = encodeURIComponent(file);
+  if (s.id === trueId) {
+    s.file = file;
+    s.draft = false;
+    s.onDisk = true;
+    return;
+  }
+  const oldId = s.id;
+  rekeySessionId(oldId, trueId);
+  s.id = trueId;
+  s.file = file;
+  s.draft = false;
+  s.onDisk = true;
+  if (ws) {
+    for (const def of Object.values(ws.tabDefs)) {
+      if (def.content !== CHAT_CONTENT) continue;
+      const props = def.props as ChatTabProps | undefined;
+      if (props?.sessionId !== oldId) continue;
+      def.props = { ...props, sessionId: trueId };
+    }
+  }
+  const twinIdx = state.sessions.findIndex((x) => x !== s && x.onDisk && x.file === file);
+  if (twinIdx >= 0) {
+    const twin = state.sessions[twinIdx];
+    if (twin.messagesLoaded && !s.messagesLoaded) {
+      s.messages = twin.messages;
+      s.messagesLoaded = true;
+      s.hasMoreOlder = twin.hasMoreOlder;
+      s.oldestId = twin.oldestId;
+    }
+    state.sessions.splice(twinIdx, 1);
+  }
+  syncTabStatuses();
+  scheduleWindowPersist();
+}
+
 function upsert(s: ChatSession, m: DisplayMessage) {
   const msgs = s.messages;
   const lastIdx = msgs.length - 1;
@@ -1385,6 +1448,12 @@ function handleEvent(ev: any) {
       break;
     }
     case 'session_upsert': {
+      const clientId = typeof ev.clientId === 'string' ? ev.clientId : '';
+      const upsertFile = typeof ev.session?.file === 'string' ? ev.session.file : '';
+      if (clientId && upsertFile) {
+        const draft = findSession(clientId);
+        if (draft?.draft && !draft.file) adoptDraftSession(draft, upsertFile);
+      }
       if (ev.session?.file) {
         mergeSessionPage([ev.session as SessionInfo], false);
         syncTabStatuses();
@@ -2024,22 +2093,9 @@ export async function sendMessage(
       const { file } = await api<{ file: string; cwd: string }>('/api/new-chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cwd: s.cwd }),
+        body: JSON.stringify({ cwd: s.cwd, clientId: s.id }),
       });
-      s.file = file;
-      s.draft = false;
-      s.onDisk = true;
-      const twinIdx = state.sessions.findIndex((x) => x !== s && x.onDisk && x.file === file);
-      if (twinIdx >= 0) {
-        const twin = state.sessions[twinIdx];
-        if (twin.messagesLoaded && !s.messagesLoaded) {
-          s.messages = twin.messages;
-          s.messagesLoaded = true;
-          s.hasMoreOlder = twin.hasMoreOlder;
-          s.oldestId = twin.oldestId;
-        }
-        state.sessions.splice(twinIdx, 1);
-      }
+      adoptDraftSession(s, file);
     } catch (e) {
       if (!(e instanceof TypeError)) {
         setSessionError(sessionId, e instanceof Error ? e.message : String(e));
@@ -2050,10 +2106,11 @@ export async function sendMessage(
     }
   }
 
+  const live = findSession(s.id) ?? s;
   const mid = `pending-${Date.now()}`;
   const reqId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-  pendingSends.set(reqId, { sessionId, mid, acked: false });
-  s.messages.push({
+  pendingSends.set(reqId, { sessionId: live.id, mid, acked: false });
+  live.messages.push({
     id: mid,
     role: 'user',
     text: trimmed,
@@ -2065,7 +2122,7 @@ export async function sendMessage(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        file: s.file,
+        file: live.file,
         message: trimmed,
         reqId,
         ...(images.length ? { images } : {}),
@@ -2077,12 +2134,12 @@ export async function sendMessage(
     const acked = pendingSends.get(reqId)?.acked;
     pendingSends.delete(reqId);
     if (acked) return;
-    const i = s.messages.findIndex((m) => m.id === mid);
+    const i = live.messages.findIndex((m) => m.id === mid);
     if (i >= 0) {
-      s.messages[i] = { ...s.messages[i], sendFailed: true };
+      live.messages[i] = { ...live.messages[i], sendFailed: true };
     }
     if (!(e instanceof TypeError)) {
-      setSessionError(sessionId, e instanceof Error ? e.message : String(e));
+      setSessionError(live.id, e instanceof Error ? e.message : String(e));
     } else {
       state.backend = 'offline';
     }
@@ -2568,7 +2625,7 @@ export async function renameSession(sessionId: string, name: string): Promise<bo
 
 function forgetSessionUi(s: ChatSession) {
   forgetVisit(s.file);
-  state.pinnedIds.delete(pinIdOf(s.id));
+  state.pinnedIds.delete(s.id);
   delete state.drafts[s.id];
   delete windowUi[s.id];
   delete state.sessionErrors[s.id];

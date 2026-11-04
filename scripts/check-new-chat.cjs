@@ -258,6 +258,24 @@ async function waitIdle(port, file) {
       !settledSnap.empties.some((t) => t.includes('Session not found')) &&
         settledSnap.groups.some((t) => t.includes(messageText)),
     );
+
+    await delay(1200);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.sf-tab', { timeout: 20000 });
+    let restoredTab = false;
+    let notFoundAfterReload = null;
+    for (let i = 0; i < 40 && !restoredTab; i++) {
+      const s = await snap();
+      const nf = s.empties.find((t) => t.includes('Session not found'));
+      if (nf && notFoundAfterReload === null) notFoundAfterReload = nf;
+      restoredTab = s.groups.some((t) => t.includes(messageText));
+      if (!restoredTab) await delay(250);
+    }
+    report(
+      'realized draft tab survives a reload on its canonical identity',
+      restoredTab && notFoundAfterReload === null,
+      restoredTab ? '' : (notFoundAfterReload ?? 'no restored tab shows the session'),
+    );
     report('no page errors', pageErrors.length === 0, pageErrors.join(' | '));
   } catch (e) {
     report('suite completed', false, String(e?.message ?? e));

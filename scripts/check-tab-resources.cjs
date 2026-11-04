@@ -150,14 +150,22 @@ async function waitHttp(url, label, tries = 60) {
 
     await page.click('.welcome-d-cta');
     await page.waitForSelector('.chat-window', { timeout: 20000 });
+    await page.waitForTimeout(800);
+    report(
+      'an unsent draft tab subscribes nothing (no file to subscribe)',
+      signals.open.length === 0,
+      JSON.stringify(signals.open),
+    );
 
+    await page.locator('.chat-input').fill('realize the draft for the stream');
+    await page.locator('.chat-send-btn:not(.chat-send-btn--stop):not(.chat-send-btn--queue)').click();
     let openedFile = null;
     for (let i = 0; i < 40 && openedFile === null; i++) {
       if (signals.open.length > 0) openedFile = signals.open[0];
       else await delay(250);
     }
     report(
-      'opening a chat tab subscribes its session stream exactly once',
+      'realizing the draft subscribes its session stream exactly once',
       signals.open.length === 1 && openedFile !== null,
       JSON.stringify(signals.open),
     );
@@ -171,7 +179,7 @@ async function waitHttp(url, label, tries = 60) {
       JSON.stringify(signals.open),
     );
 
-    await page.locator('.sf-tab', { hasText: 'New Chat' }).first().click({ button: 'middle' });
+    await page.locator('.sf-tab', { hasText: 'realize the draft' }).first().click({ button: 'middle' });
     await page.waitForTimeout(400);
 
     let closed = false;
@@ -184,6 +192,7 @@ async function waitHttp(url, label, tries = 60) {
       signals.close.length === 1 && closed,
       JSON.stringify(signals.close),
     );
+    fs.writeFileSync(path.join(STUB_STATE_DIR, 'release'), '1');
     report('no page errors', pageErrors.length === 0, pageErrors.join(' | '));
   } catch (e) {
     report('suite completed', false, String(e?.message ?? e));

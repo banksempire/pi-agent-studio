@@ -808,6 +808,26 @@ function rowSignatureOf(info) {
   ].join('|');
 }
 
+const DRAFT_ALIAS_TTL_MS = Number(process.env.PI_STUDIO_DRAFT_ALIAS_TTL_MS ?? 120_000);
+const draftAliases = new Map();
+
+function draftAliasOf(file) {
+  const alias = draftAliases.get(file);
+  if (!alias) return null;
+  if (alias.expiresAt <= Date.now()) {
+    draftAliases.delete(file);
+    return null;
+  }
+  return alias;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, alias] of draftAliases) {
+    if (alias.expiresAt <= now) draftAliases.delete(key);
+  }
+}, 30_000).unref();
+
 async function pushSessionRow(file) {
   if (conns.size === 0 || !client) return;
   try {
@@ -825,7 +845,10 @@ async function pushSessionRow(file) {
     const sig = rowSignatureOf(info);
     if (rowSignatures.get(file) === sig) return;
     rowSignatures.set(file, sig);
-    emit({ type: 'session_upsert', session: info });
+    const event = { type: 'session_upsert', session: info };
+    const alias = draftAliasOf(file);
+    if (alias) event.clientId = alias.clientId;
+    emit(event);
   } catch {}
 }
 
@@ -1823,11 +1846,14 @@ const server = createServer(async (req, res) => {
     }
 
     if (p === '/api/new-chat' && req.method === 'POST') {
-      const { cwd } = await readBody(req);
+      const { cwd, clientId } = await readBody(req);
       const targetCwd = cwd || NEW_CHAT_CWD;
       const { file } = await client.createSession({ cwd: targetCwd });
       await applyImplicitNewChatDefault(registry, file);
-      sendJson(res, 200, { file, cwd: targetCwd, virtual: true });
+      if (typeof clientId === 'string' && clientId) {
+        draftAliases.set(file, { clientId, expiresAt: Date.now() + DRAFT_ALIAS_TTL_MS });
+      }
+      sendJson(res, 200, { file, cwd: targetCwd, clientId: clientId || undefined, virtual: true });
       return;
     }
 

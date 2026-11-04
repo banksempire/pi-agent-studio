@@ -240,8 +240,13 @@ function saveStateFilter() {
   writePersistedObject('app.chat.stateFilter', STATE_FILTER_KEY, state.stateFilter);
 }
 
+function pinIdOf(sessionId: string): string {
+  const s = findSession(sessionId);
+  return encodeURIComponent(s?.file || sessionId);
+}
+
 function isPinned(sessionId: string): boolean {
-  return state.pinnedIds.has(sessionId);
+  return state.pinnedIds.has(pinIdOf(sessionId));
 }
 
 function applyPins(files: string[]) {
@@ -311,21 +316,26 @@ function pinFiles(): string[] {
 }
 
 function togglePinned(sessionId: string) {
+  const s = findSession(sessionId);
   let file = sessionId;
-  try {
-    file = decodeURIComponent(sessionId);
-  } catch {}
-  const nowPinned = !state.pinnedIds.has(sessionId);
-  if (nowPinned) state.pinnedIds.add(sessionId);
-  else state.pinnedIds.delete(sessionId);
+  if (s?.file) file = s.file;
+  else {
+    try {
+      file = decodeURIComponent(sessionId);
+    } catch {}
+  }
+  const pinId = encodeURIComponent(file);
+  const nowPinned = !state.pinnedIds.has(pinId);
+  if (nowPinned) state.pinnedIds.add(pinId);
+  else state.pinnedIds.delete(pinId);
   if (nowPinned) ensurePinnedSessionsVisible();
   void api('/api/pins', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ file, pinned: nowPinned }),
   }).catch(() => {
-    if (nowPinned) state.pinnedIds.delete(sessionId);
-    else state.pinnedIds.add(sessionId);
+    if (nowPinned) state.pinnedIds.delete(pinId);
+    else state.pinnedIds.add(pinId);
     state.lastError = 'Could not sync pin — backend unreachable';
   });
 }
@@ -978,6 +988,7 @@ function sessionFromRaw(raw: SessionInfo, old: ChatSession | undefined): ChatSes
   const s = toSession(raw);
   s.onDisk = true;
   if (old) {
+    s.id = old.id;
     s.messages = old.messages;
     s.messagesLoaded = old.messagesLoaded;
     s.hasMoreOlder = old.hasMoreOlder;
@@ -1384,20 +1395,12 @@ const HEARTBEAT_INTERVAL_MS = 5000;
 const HEARTBEAT_TIMEOUT_MS = 3000;
 const PING_WINDOW_MS = 5 * 60_000;
 
-function decodeTabFile(sessionId: string): string {
-  try {
-    return decodeURIComponent(sessionId);
-  } catch {
-    return sessionId;
-  }
-}
-
 function viewFiles(): string[] {
   const files = new Set<string>();
   for (const sessionId of viewHolders.keys()) {
     const s = findSession(sessionId);
     if (!s?.file) continue;
-    files.add(decodeTabFile(sessionId));
+    files.add(s.file);
   }
   return [...files].sort().slice(0, 64);
 }
@@ -2003,6 +2006,18 @@ export async function sendMessage(
       });
       s.file = file;
       s.draft = false;
+      s.onDisk = true;
+      const twinIdx = state.sessions.findIndex((x) => x !== s && x.onDisk && x.file === file);
+      if (twinIdx >= 0) {
+        const twin = state.sessions[twinIdx];
+        if (twin.messagesLoaded && !s.messagesLoaded) {
+          s.messages = twin.messages;
+          s.messagesLoaded = true;
+          s.hasMoreOlder = twin.hasMoreOlder;
+          s.oldestId = twin.oldestId;
+        }
+        state.sessions.splice(twinIdx, 1);
+      }
     } catch (e) {
       if (!(e instanceof TypeError)) {
         setSessionError(sessionId, e instanceof Error ? e.message : String(e));
@@ -2532,7 +2547,7 @@ export async function renameSession(sessionId: string, name: string): Promise<bo
 
 function forgetSessionUi(s: ChatSession) {
   forgetVisit(s.file);
-  state.pinnedIds.delete(s.id);
+  state.pinnedIds.delete(pinIdOf(s.id));
   delete state.drafts[s.id];
   delete windowUi[s.id];
   delete state.sessionErrors[s.id];

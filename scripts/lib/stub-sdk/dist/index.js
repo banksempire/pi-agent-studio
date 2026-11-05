@@ -82,6 +82,7 @@ export class SessionManager {
     this.cwd = cwd;
     this.dir = dir;
     this.file = file;
+    if (dir && file) fs.mkdirSync(dir, { recursive: true });
   }
 
   static open(file) {

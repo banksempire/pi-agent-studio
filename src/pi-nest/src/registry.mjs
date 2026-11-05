@@ -136,6 +136,7 @@ const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 export class AgentRegistry extends EventEmitter {
   #live = new Map();
   #pending = new Map();
+  #opening = new Map();
   #journal;
   #subagents = null;
 
@@ -191,6 +192,18 @@ export class AgentRegistry extends EventEmitter {
   async open(agentId) {
     const live = this.#live.get(agentId);
     if (live) return live;
+    const inflight = this.#opening.get(agentId);
+    if (inflight) return inflight;
+    const creating = this.#openUncached(agentId);
+    this.#opening.set(agentId, creating);
+    try {
+      return await creating;
+    } finally {
+      this.#opening.delete(agentId);
+    }
+  }
+
+  async #openUncached(agentId) {
     if (this.#pending.has(agentId)) {
       const { cwd, dir, model, thinkLevel } = this.#pending.get(agentId);
       this.#pending.delete(agentId);
@@ -472,7 +485,7 @@ export class AgentRegistry extends EventEmitter {
         lastError: '',
       };
     }
-    if (this.#pending.has(agentId)) {
+    if (this.#pending.has(agentId) || this.#opening.has(agentId)) {
       return {
         agentId,
         status: 'pending',

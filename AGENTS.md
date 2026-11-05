@@ -45,6 +45,7 @@ Area → suite (`npm run <script>`; full list in `package.json`):
 | scheduler + job dialog UI | `check:scheduler`, `check:jobeditor` |
 | sub-agents + workflow engine | `check:subagents` |
 | journal drain/recover, stale-run force-settle | `check:registry` |
+| registry open race (one session per in-flight open; lazy-draft realization) | `check:openrace` |
 | restart recovery (SIGTERM/SIGKILL mid-generation) | `check:backend-restart`, `check:restart`, `check:restart-selfkill` |
 | docker icon geometry | `check:dockericons` |
 | types / prod build | `typecheck` (vue-tsc — plain `tsc` does NOT check `.vue`), `build` |

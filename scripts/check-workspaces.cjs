@@ -46,9 +46,12 @@ function collectPageErrors(page, errors) {
   page.on('response', (r) => {
     if (r.status() < 400) return;
     if (r.url().endsWith('/api/events/heartbeat')) return;
+    if (expectBackendOutage && r.status() >= 500 && r.url().includes('/api/')) return;
     errors.push(`http ${r.status()}: ${r.url()}`);
   });
 }
+
+let expectBackendOutage = false;
 
 async function waitHttp(url, label, tries = 40) {
   for (let i = 0; i < tries; i++) {
@@ -157,6 +160,18 @@ async function itemMenu(page, name, option) {
   await page.locator(`${PANEL} .sf-pl-item`, { hasText: name }).first().click({ button: 'right' });
   await page.waitForSelector('.sf-sm-menu', { timeout: 5000 });
   await page.locator('.sf-sm-menu-row', { hasText: option }).first().click();
+  await delay(400);
+}
+
+async function confirmDialog(page, action, mustInclude) {
+  await page.waitForSelector('.sf-dialog', { timeout: 5000 });
+  const text = (await page.locator('.sf-dialog').textContent()) ?? '';
+  for (const needle of mustInclude) {
+    if (!text.includes(needle)) {
+      throw new Error(`confirm dialog does not mention "${needle}": ${text.slice(0, 200)}`);
+    }
+  }
+  await page.locator('.sf-dialog-foot button', { hasText: action }).click();
   await delay(400);
 }
 
@@ -411,6 +426,16 @@ const tileTabsOf = (node, acc) => {
     const savedAtBefore = entry.savedAt;
     await openWsPanel(pageB);
     await itemMenu(pageB, 'Shared WS', 'Overwrite with current');
+    await confirmDialog(pageB, 'Cancel', ['Shared WS', 'Overwrite']);
+    const beforeConfirm = await httpJson(backendUrl, '/api/workspaces');
+    const beforeEntry = (beforeConfirm.json?.workspaces ?? []).find((w) => w.name === 'Shared WS');
+    report(
+      'W7c cancelled overwrite leaves the backend snapshot untouched',
+      beforeEntry?.savedAt === savedAtBefore && beforeEntry?.tiles === 2,
+      JSON.stringify(beforeEntry),
+    );
+    await itemMenu(pageB, 'Shared WS', 'Overwrite with current');
+    await confirmDialog(pageB, 'Overwrite', ['Shared WS', 'Overwrite']);
     const afterOverwrite = await httpJson(backendUrl, '/api/workspaces');
     const entry2 = (afterOverwrite.json?.workspaces ?? []).find((w) => w.name === 'Shared WS');
     report(
@@ -425,13 +450,17 @@ const tileTabsOf = (node, acc) => {
       'W9 re-loading the overwritten workspace collapses to one tile',
       (await pageB.locator('.sf-tile').count()) === 1,
     );
+    await pageB.close();
 
+    expectBackendOutage = true;
     killProc(backend);
     procs.length = 0;
     if (!(await waitDown(`${backendUrl}/api/health`))) throw new Error('backend did not stop');
     backend = spawnBackend();
     procs.push(backend);
     await waitHttp(`${backendUrl}/api/health`, 'backend after restart');
+    expectBackendOutage = false;
+    await delay(1200);
     const afterRestart = await httpJson(backendUrl, '/api/workspaces');
     report(
       'W10 workspaces survive a backend restart (file-backed store)',
@@ -440,7 +469,14 @@ const tileTabsOf = (node, acc) => {
 
     await openWsPanel(page);
     await itemMenu(page, 'Shared WS', 'Delete');
-    await delay(600);
+    await page.waitForSelector('.sf-dialog', { timeout: 5000 });
+    report(
+      'W11 pre delete confirm keeps the workspace',
+      (await page.locator(`${PANEL} .sf-pl-item`).count()) === 1 &&
+        ((await page.locator('.sf-dialog').textContent()) ?? '').includes('Shared WS'),
+    );
+    await confirmDialog(page, 'Delete', ['Shared WS', 'cannot be undone']);
+    await delay(200);
     const afterDelete = await httpJson(backendUrl, '/api/workspaces');
     report(
       'W11 delete removes the workspace from the list and the backend',

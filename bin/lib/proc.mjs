@@ -93,7 +93,11 @@ function viteArgMatches(arg) {
 }
 
 function viteConfigMatches(arg) {
-  return arg === 'vite.config.ts' || /(^|\/)pi-agent-studio\/vite\.config\.ts$/.test(arg);
+  return (
+    arg === 'vite.config.ts' ||
+    /(^|\/)pi-agent-studio\/vite\.config\.ts$/.test(arg) ||
+    /vite\.config\.allow-hosts\.mjs$/.test(arg)
+  );
 }
 
 export function serviceOfCmdline(argv, cwd = null) {

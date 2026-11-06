@@ -419,6 +419,22 @@ async function ensureBackend(out, instance, { sessionsDir, used, ports, spawned,
   });
 }
 
+function writeAllowHostsConfig(instance, repo, hosts) {
+  const wrapper = path.join(instanceStateDir(instance.id), 'vite.config.allow-hosts.mjs');
+  fs.mkdirSync(path.dirname(wrapper), { recursive: true });
+  fs.writeFileSync(
+    wrapper,
+    `import baseConfig from ${JSON.stringify(path.join(repo, 'vite.config.ts'))};\n` +
+      `const extra = ${JSON.stringify(hosts)};\n` +
+      `const base = Array.isArray(baseConfig?.server?.allowedHosts) ? baseConfig.server.allowedHosts : [];\n` +
+      `export default {\n` +
+      `  ...baseConfig,\n` +
+      `  server: { ...baseConfig.server, allowedHosts: [...new Set([...base, ...extra])] },\n` +
+      `};\n`,
+  );
+  return wrapper;
+}
+
 async function ensureWeb(out, instance, { used, ports, spawned, opts }) {
   const adopted = await tryAdopt(out, instance, 'web');
   if (adopted) {
@@ -451,12 +467,17 @@ async function ensureWeb(out, instance, { used, ports, spawned, opts }) {
   }
   const host = resolveWebHost(instance, opts);
   const repo = instanceRepoRoot(instance);
+  const allowHosts = Array.isArray(opts.allowHosts)
+    ? opts.allowHosts.filter((h) => typeof h === 'string' && h)
+    : [];
+  const configArgs = allowHosts.length
+    ? ['--config', writeAllowHostsConfig(instance, repo, allowHosts), '--configLoader', 'runner']
+    : ['--config', 'vite.config.ts'];
   const pid = spawnDetached({
     cmd: 'node',
     args: [
       path.join('node_modules', '.bin', 'vite'),
-      '--config',
-      'vite.config.ts',
+      ...configArgs,
       '--host',
       host,
       '--port',
@@ -466,7 +487,7 @@ async function ensureWeb(out, instance, { used, ports, spawned, opts }) {
     cwd: repo,
     logFile: logPath(instance.id, 'web'),
     pidfile: pidfilePath(instance.id, 'web'),
-    record: { service: 'web', instance: instance.id, port, host, backendPort: ports.backend },
+    record: { service: 'web', instance: instance.id, port, host, backendPort: ports.backend, allowHosts },
   });
   spawned.push(pid);
   out.event({

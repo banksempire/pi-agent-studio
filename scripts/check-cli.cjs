@@ -963,6 +963,32 @@ async function main() {
     report('instance record removed', !fs.existsSync(path.join(CFG, 'instances', `${ID}.json`)), '');
     report('sessions purged with the pair', !fs.existsSync(path.join(PAIR, '.studio')), '');
 
+    const proc = await import(path.join(PRODUCT_ROOT, 'bin', 'lib', 'proc.mjs'));
+    const wrapperArgv = [
+      'node',
+      'node_modules/.bin/vite',
+      '--config',
+      '/tmp/anywhere/state/vite.config.allow-hosts.mjs',
+      '--configLoader',
+      'runner',
+      '--host',
+      '0.0.0.0',
+      '--port',
+      '17099',
+      '--strictPort',
+    ];
+    report(
+      'allow-hosts wrapper argv still classifies as web (restart/attribution guard)',
+      proc.serviceOfCmdline(wrapperArgv, PRODUCT_ROOT) === 'web',
+    );
+    report(
+      'plain vite.config.ts argv classifies as web (unchanged path)',
+      proc.serviceOfCmdline(
+        ['node', 'node_modules/.bin/vite', '--config', 'vite.config.ts'],
+        PRODUCT_ROOT,
+      ) === 'web',
+    );
+
     return isFailed() ? 1 : 0;
   } finally {
     studio(['-i', ID, 'down', '--yes']);

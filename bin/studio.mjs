@@ -93,6 +93,9 @@ options:
   --port web=17004          ephemeral port override (web|backend)
   --sessions <dir>          sessions dir override
   --host <host>             web bind host override
+  --allow-host <name>       extra vite allowedHosts entry for web (repeatable or
+                            comma-separated); machine-specific names belong here,
+                            passed at start — not in vite.config.ts
   --json                    machine-readable output (ndjson events for up)
   -q, --quiet               suppress human output
   --yes                     skip guard prompts (backend restart/kill)
@@ -135,6 +138,33 @@ function portSpec(value) {
     if (k && p && Number.isFinite(Number(p))) out[k.trim()] = Number(p);
   }
   return out;
+}
+
+function normalizeAllowHosts(values) {
+  const out = new Set();
+  for (const value of values ?? []) {
+    for (const part of String(value).split(',')) {
+      const host = part.trim();
+      if (host) out.add(host);
+    }
+  }
+  return [...out];
+}
+
+function extractAllowHosts(args) {
+  const collected = [];
+  for (let i = args.length - 1; i >= 0; i--) {
+    const t = args[i];
+    if (t === '--allow-host') {
+      if (i + 1 >= args.length) throw new CliError('--allow-host expects a value', 2);
+      collected.unshift(...String(args[i + 1]).split(','));
+      args.splice(i, 2);
+    } else if (t.startsWith('--allow-host=')) {
+      collected.unshift(...t.slice(13).split(','));
+      args.splice(i, 1);
+    }
+  }
+  return normalizeAllowHosts(collected);
 }
 
 const STRICT = /^(1|true|yes)$/.test(String(process.env.PI_STUDIO_STRICT ?? '').toLowerCase());
@@ -189,6 +219,7 @@ async function main() {
 
   switch (command) {
     case 'up': {
+      const allowHosts = extractAllowHosts(args);
       const { positional, flags } = parseRest(args, ['port', 'sessions', 'host', 'lines']);
       if (STRICT && !instanceId) strictRefuse('up');
       const inst = resolveInstance(instanceId);
@@ -197,6 +228,7 @@ async function main() {
         port: portSpec(flags.port),
         sessions: flags.sessions,
         host: flags.host,
+        allowHosts,
         yes: !!flags.yes,
       };
       await cmdUp(out, inst, opts);
@@ -226,6 +258,7 @@ async function main() {
     }
     case 'restart':
     case 'kill': {
+      const allowHosts = extractAllowHosts(args);
       const { positional, flags } = parseRest(args, ['port', 'sessions', 'host']);
       if (STRICT && !instanceId) strictRefuse(command);
       const inst = resolveInstance(instanceId);
@@ -237,6 +270,7 @@ async function main() {
         yes: !!flags.yes,
         port: portSpec(flags.port),
         host: flags.host,
+        allowHosts,
       };
       if (command === 'restart') await cmdRestart(out, inst, opts);
       else await cmdKill(out, inst, opts);

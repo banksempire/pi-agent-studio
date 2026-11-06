@@ -1,4 +1,4 @@
-# `studio` CLI — Design
+# `pi-agent-studio` CLI — Design
 
 A CLI to manage pi-agent-studio service stacks (backend, web): start,
 stop, inspect, and isolate multiple instances on one machine — for production
@@ -144,10 +144,10 @@ line to `<state>/audit.log` (ts, reason, service, pid, caller argv).
   pair for human verification; `dev-*` branches = one pair per dev/agent line.
 - The `@sf` vite alias is relative (`../StudioFramework/src`), so a
   pi-agent-studio worktree only builds with a sibling StudioFramework checkout —
-  the pair is the unit, created together by `studio worktree add`.
+  the pair is the unit, created together by `pi-agent-studio worktree add`.
 - An instance record binds `pairRoot` → `{ id, webPort, host, sessionsDir,
   createdAt, branch }`. `branch` is informational (recorded at `init`);
-- `studio` commands run inside a pair auto-select that instance. Outside any
+- `pi-agent-studio` commands run inside a pair auto-select that instance. Outside any
   pair: `-i <id>` or default `main`.
 - Dev → test → main merging, review, and pushing stay **git's job**. The CLI's
   role: give every worktree an isolated, restartable stack and a stable URL to
@@ -207,9 +207,9 @@ Every tunable resolves through four layers, first hit wins:
 
 | Layer | Example | Who sets it |
 |:--|:--|:--|
-| 1. CLI args | `studio up --port web=7601 --sessions /tmp/s` | Ad-hoc override; never persisted |
+| 1. CLI args | `pi-agent-studio up --port web=7601 --sessions /tmp/s` | Ad-hoc override; never persisted |
 | 2. Environment | `PI_STUDIO_PORT`, `PI_STUDIO_SESSIONS`, … | Shell / container |
-| 3. Instance config | `<workdir>/.studio/config/instances/<id>.json` | `studio init` / `instance set` |
+| 3. Instance config | `<workdir>/.studio/config/instances/<id>.json` | `pi-agent-studio init` / `instance set` |
 | 4. Built-in defaults | see §10 table | The services themselves |
 
 - The **services themselves** implement argv > env > default. The CLI passes
@@ -227,7 +227,7 @@ Every tunable resolves through four layers, first hit wins:
 ## 7. Command tree
 
 ```
-studio [-i <instance>] <command> …        # auto-detects instance from CWD's pair
+pi-agent-studio [-i <instance>] <command> …        # auto-detects instance from CWD's pair
 
   up [service]                idempotent start, dependency order, health-gated;
                               default: backend then web
@@ -301,7 +301,7 @@ studio [-i <instance>] <command> …        # auto-detects instance from CWD's p
 - **`PI_STUDIO_STRICT=1`** (env): `up`/`down`/`restart`/`kill` refuse to run
   on defaults — cwd auto-detection and the main fallback are disabled until
   an explicit `-i <id>` names the target. Opt-in guard for agent shells /
-  dev containers where a bare `studio up` must not be able to touch the
+  dev containers where a bare `pi-agent-studio up` must not be able to touch the
   product stack; instance ids are unique (one registry file per id), so a
   named target is always unambiguous. Read-only commands stay permissive.
 - orphan found, no pidfile → adopt (write pidfile, report);
@@ -348,7 +348,7 @@ CLI passes; env is the container/manual channel):
 | CLI only | `PI_STUDIO_WEB_HOST` / `PI_STUDIO_WEB_PORT` | instance config | web bind host / port fallbacks below args and above instance config |
 
 Container usage: the CLI is the only supported way to start an instance —
-run `studio up` in the container and pass overrides as CLI args. ENV stays
+run `pi-agent-studio up` in the container and pass overrides as CLI args. ENV stays
 honored as the container config channel beneath args (argv always wins), so
 pinning ENV there still yields deterministic ports for manually started
 single services.
@@ -375,8 +375,8 @@ single services.
 
 **Implemented** (this doc now describes the shipped CLI):
 
-- `bin/studio.mjs` (entry + dispatch) + `bin/lib/{instances,proc,stack,manage,ui}.mjs`;
-  npm script `npm run studio -- …`.
+- `bin/pi-agent-studio.mjs` (entry + dispatch) + `bin/lib/{instances,proc,stack,manage,ui}.mjs`;
+  npm script `npm run pi-agent-studio -- …`.
 - Zero new runtime deps: `node:child_process` + `/proc` + the repo's own
   `src/pi-nest/src/client.mjs` (which gained a `close()` so callers can release
   the gRPC handle).
@@ -406,9 +406,9 @@ single services.
   if needed); `status` surfaces the
   backend's latest `[mem:…]` line; `clean --snapshots` removes
   `Heap-*.heapsnapshot` leftovers.
-- Shape: ESM bin `bin/studio.mjs` + modules in `bin/lib/`
+- Shape: ESM bin `bin/pi-agent-studio.mjs` + modules in `bin/lib/`
   (`instances`, `stack`, `manage`, `proc`, `ui`), npm script
-  `"studio": "node bin/studio.mjs"`.
+  `"pi-agent-studio": "node bin/pi-agent-studio.mjs"`.
   Zero runtime deps beyond Node built-ins + the SDK import in the backend.
   No comments in source, per workspace rules.
 - Regression: committed check script (pattern of `check:*`), testing against
@@ -418,29 +418,29 @@ single services.
 ## 13. Example sessions
 
 ```
-$ studio worktree add test --from test
+$ pi-agent-studio worktree add test --from test
   created pair ~/wt/test (pi-agent-studio@test, StudioFramework@main)
   instance test: web 7512 · sessions ~/wt/test/.studio/sessions
 
-$ studio -i test up
+$ pi-agent-studio -i test up
   test/backend  pid 51044  :34195  /api/health ok
   test/web      pid 51082  :7512   http://127.0.0.1:7512
 
-$ studio status
+$ pi-agent-studio status
   INSTANCE  SERVICE   PID     STATE  PORT    DETAIL
   main      backend  14353   up     7494    2 agents (1 running) · rss 412 MB · 3 sse
   main      web      42416   up     17000
   test      nest      51017   up     34191   0 agents
   test      gateway   51044   up     34195   rss 88 MB
   test      web       51082   up     7512    branch test · ~/wt/test
-  —         orphans   4 (3 gateway · 1 vite) → studio doctor --fix
+  —         orphans   4 (3 gateway · 1 vite) → pi-agent-studio doctor --fix
 
-$ studio -i test open          # human verification of the test branch
-$ studio -i test restart gateway   # internal port reused; main untouched
-$ studio -i test down          # full stack teardown — nest guard applies
-$ studio worktree rm test --purge # full teardown incl. its sessions
+$ pi-agent-studio -i test open          # human verification of the test branch
+$ pi-agent-studio -i test restart gateway   # internal port reused; main untouched
+$ pi-agent-studio -i test down          # full stack teardown — nest guard applies
+$ pi-agent-studio worktree rm test --purge # full teardown incl. its sessions
 
-$ studio -i main restart nest
+$ pi-agent-studio -i main restart nest
   ⚠ 1 running agent (…/session-x.jsonl, running 4m) — restart kills it. Continue? [y/N] n
   Aborted (exit 5)
 ```
@@ -491,7 +491,7 @@ SIGKILL restarts identically — same covenant as the prompt queue.
 - **Boot sweep**: run rows stuck `queued` from a previous boot are marked
   `interrupted` (their prompt may still have been replayed by journal
   recovery via the queue item).
-- **Surfaces**: `studio jobs …` CLI (humans + agents), the Scheduler workspace
+- **Surfaces**: `pi-agent-studio jobs …` CLI (humans + agents), the Scheduler workspace
   tab in the web UI (JobsTab table: enable toggle, run-now, history, edit;
   JobDialog popup for CRUD), SSE
   `job_event` for live updates, REST under `/api/jobs`.
@@ -535,7 +535,7 @@ tab); the CLI is the batch/agent surface.
 Example — rate-limit window for a whole provider, working days only:
 
 ```
-$ studio -i main peak-hours add --provider zai-coding-cn \
+$ pi-agent-studio -i main peak-hours add --provider zai-coding-cn \
     --start 14:00 --end 18:00 --offset UTC+8 --weekdays mon-fri
 created zai-coding-cn/glm-4.7 — (UTC+8) 14:00-18:00 · Mon–Fri
 …

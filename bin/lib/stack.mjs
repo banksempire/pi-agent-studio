@@ -300,7 +300,7 @@ async function resolveServicePort(instance, service, opts, used) {
   const pin = service === 'backend' ? instance.backendPort : instance.webPort;
   if (pin) return Number(pin);
   if (service === 'web') {
-    throw new CliError(`instance ${instance.id} has no web port — run studio init`, 2);
+    throw new CliError(`instance ${instance.id} has no web port — run pi-agent-studio init`, 2);
   }
   const rec = readPidfile(pidfilePath(instance.id, service));
   if (rec?.port && !used.has(rec.port)) {
@@ -419,6 +419,22 @@ async function ensureBackend(out, instance, { sessionsDir, used, ports, spawned,
   });
 }
 
+function writeAllowHostsConfig(instance, repo, hosts) {
+  const wrapper = path.join(instanceStateDir(instance.id), 'vite.config.allow-hosts.mjs');
+  fs.mkdirSync(path.dirname(wrapper), { recursive: true });
+  fs.writeFileSync(
+    wrapper,
+    `import baseConfig from ${JSON.stringify(path.join(repo, 'vite.config.ts'))};\n` +
+      `const extra = ${JSON.stringify(hosts)};\n` +
+      `const base = Array.isArray(baseConfig?.server?.allowedHosts) ? baseConfig.server.allowedHosts : [];\n` +
+      `export default {\n` +
+      `  ...baseConfig,\n` +
+      `  server: { ...baseConfig.server, allowedHosts: [...new Set([...base, ...extra])] },\n` +
+      `};\n`,
+  );
+  return wrapper;
+}
+
 async function ensureWeb(out, instance, { used, ports, spawned, opts }) {
   const adopted = await tryAdopt(out, instance, 'web');
   if (adopted) {
@@ -436,14 +452,14 @@ async function ensureWeb(out, instance, { used, ports, spawned, opts }) {
     const backendPort = Number(rec?.port ?? process.env.PI_STUDIO_PORT ?? instance.backendPort ?? 0);
     if (!backendPort) {
       throw new CliError(
-        `backend port unknown for ${instance.id} — start the pair first: studio up backend`,
+        `backend port unknown for ${instance.id} — start the pair first: pi-agent-studio up backend`,
         2,
       );
     }
     const health = await serviceHealth('backend', backendPort);
     if (!health.ok) {
       throw new CliError(
-        `backend not healthy on :${backendPort} — start the pair first: studio up backend`,
+        `backend not healthy on :${backendPort} — start the pair first: pi-agent-studio up backend`,
         3,
       );
     }
@@ -451,12 +467,17 @@ async function ensureWeb(out, instance, { used, ports, spawned, opts }) {
   }
   const host = resolveWebHost(instance, opts);
   const repo = instanceRepoRoot(instance);
+  const allowHosts = Array.isArray(opts.allowHosts)
+    ? opts.allowHosts.filter((h) => typeof h === 'string' && h)
+    : [];
+  const configArgs = allowHosts.length
+    ? ['--config', writeAllowHostsConfig(instance, repo, allowHosts), '--configLoader', 'runner']
+    : ['--config', 'vite.config.ts'];
   const pid = spawnDetached({
     cmd: 'node',
     args: [
       path.join('node_modules', '.bin', 'vite'),
-      '--config',
-      'vite.config.ts',
+      ...configArgs,
       '--host',
       host,
       '--port',
@@ -466,7 +487,7 @@ async function ensureWeb(out, instance, { used, ports, spawned, opts }) {
     cwd: repo,
     logFile: logPath(instance.id, 'web'),
     pidfile: pidfilePath(instance.id, 'web'),
-    record: { service: 'web', instance: instance.id, port, host, backendPort: ports.backend },
+    record: { service: 'web', instance: instance.id, port, host, backendPort: ports.backend, allowHosts },
   });
   spawned.push(pid);
   out.event({
@@ -516,7 +537,7 @@ async function upLocked(out, instance, opts = {}) {
   }
   if (!fs.existsSync(path.join(repo, 'node_modules', '.bin', 'vite'))) {
     throw new CliError(
-      `instance ${instance.id}: node_modules missing in ${repo} — run npm install (or studio init)`,
+      `instance ${instance.id}: node_modules missing in ${repo} — run npm install (or pi-agent-studio init)`,
       1,
     );
   }
@@ -709,7 +730,7 @@ async function downLocked(out, instance, opts = {}) {
 }
 
 function spawnRestartFinisher(instance, oldPid, graceMs) {
-  const cli = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'studio.mjs');
+  const cli = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'pi-agent-studio.mjs');
   const env = { ...process.env };
   const child = spawn(
     process.execPath,
@@ -763,7 +784,7 @@ export async function cmdFinishRestart(instance, { oldPid = 0, deadlineMs = 0 } 
     reason: 'restart-finisher-timeout',
     service: 'backend',
     pid: oldPid,
-    caller: `studio __finish-restart ${lastError ? String(lastError.message).slice(0, 120) : ''}`,
+    caller: `pi-agent-studio __finish-restart ${lastError ? String(lastError.message).slice(0, 120) : ''}`,
   });
   throw new CliError(`restart finisher timed out for ${instance.id}`, 1);
 }
@@ -876,7 +897,7 @@ export async function cmdStatus(out, instances) {
   if (orphans.length > 0 || strayTotal > 0) {
     out.line('');
     out.line(
-      `${warnSym} ${orphans.length} unattributed + ${strayTotal} stray process(es) → studio doctor [--fix]`,
+      `${warnSym} ${orphans.length} unattributed + ${strayTotal} stray process(es) → pi-agent-studio doctor [--fix]`,
     );
   }
 }

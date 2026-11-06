@@ -93,7 +93,11 @@ function viteArgMatches(arg) {
 }
 
 function viteConfigMatches(arg) {
-  return arg === 'vite.config.ts' || /(^|\/)pi-agent-studio\/vite\.config\.ts$/.test(arg);
+  return (
+    arg === 'vite.config.ts' ||
+    /(^|\/)pi-agent-studio\/vite\.config\.ts$/.test(arg) ||
+    /vite\.config\.allow-hosts\.mjs$/.test(arg)
+  );
 }
 
 export function serviceOfCmdline(argv, cwd = null) {
@@ -340,7 +344,7 @@ export async function withLock(dir, fn) {
   if (fs.existsSync(lockDir)) {
     const held = Number(readPidfile(holder)?.pid ?? 0);
     if (held && alive(held) && held !== process.pid) {
-      throw new Error(`another studio command is running for this instance (pid ${held})`);
+      throw new Error(`another pi-agent-studio command is running for this instance (pid ${held})`);
     }
     fs.rmSync(lockDir, { recursive: true, force: true });
   }

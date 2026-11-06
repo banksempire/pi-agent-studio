@@ -5,7 +5,7 @@ import { readPidfile } from './proc.mjs';
 import { CliError, httpJson, pingBackend, postJson } from './stack.mjs';
 import { paint, printTable } from './ui.mjs';
 
-const ADD_USAGE = `usage: studio jobs add <name> [options]
+const ADD_USAGE = `usage: pi-agent-studio jobs add <name> [options]
 
 schedule (pick one):
   --at <time>       one-time job — ISO 8601, epoch-ms, or HH:MM (today, or
@@ -81,7 +81,7 @@ async function requireBackend(instance) {
   const port = await backendPortFor(instance);
   const ping = await pingBackend(port, 2500);
   if (!ping.ok) {
-    throw new CliError(`backend not healthy on :${port} — start the stack first: studio up`, 3);
+    throw new CliError(`backend not healthy on :${port} — start the stack first: pi-agent-studio up`, 3);
   }
   return port;
 }
@@ -186,7 +186,7 @@ export async function cmdJobs(out, instance, args) {
     if (r.status !== 200) throw new CliError(r.json?.error ?? `backend error ${r.status}`, 1);
     const jobs = r.json?.jobs ?? [];
     if (jobs.length === 0) {
-      out.line('no scheduled jobs — studio jobs add <name> …');
+      out.line('no scheduled jobs — pi-agent-studio jobs add <name> …');
       return;
     }
     if (out.json) {
@@ -329,7 +329,7 @@ export async function cmdJobs(out, instance, args) {
     return;
   }
   throw new CliError(
-    `unknown jobs subcommand: ${sub}\nusage: studio jobs list|add|edit|rm|run|enable|disable|runs`,
+    `unknown jobs subcommand: ${sub}\nusage: pi-agent-studio jobs list|add|edit|rm|run|enable|disable|runs`,
     2,
   );
 }

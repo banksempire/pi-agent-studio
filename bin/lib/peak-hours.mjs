@@ -4,7 +4,7 @@ import { readPidfile } from './proc.mjs';
 import { CliError, httpJson, pingBackend, postJson } from './stack.mjs';
 import { paint, printTable } from './ui.mjs';
 
-const ADD_USAGE = `usage: studio peak-hours add [options]
+const ADD_USAGE = `usage: pi-agent-studio peak-hours add [options]
 
 target (pick one):
   --provider <id>            every model of this provider in the live catalog
@@ -24,9 +24,9 @@ options:
   --note <text>              note (max 200 chars)
   --disabled                 create disabled`;
 
-const RM_USAGE = `usage: studio peak-hours rm <id>
-       studio peak-hours rm --key <provider/model>
-       studio peak-hours rm --provider <id>`;
+const RM_USAGE = `usage: pi-agent-pi-agent-studio peak-hours rm <id>
+       pi-agent-studio peak-hours rm --key <provider/model>
+       pi-agent-studio peak-hours rm --provider <id>`;
 
 function requestJson(port, method, p, body, timeoutMs = 8000) {
   return new Promise((resolve) => {
@@ -65,7 +65,7 @@ async function requireBackend(instance) {
   const port = await backendPortFor(instance);
   const ping = await pingBackend(port, 2500);
   if (!ping.ok) {
-    throw new CliError(`backend not healthy on :${port} — start the stack first: studio up`, 3);
+    throw new CliError(`backend not healthy on :${port} — start the stack first: pi-agent-studio up`, 3);
   }
   return port;
 }
@@ -210,7 +210,7 @@ export async function cmdPeakHours(out, instance, args) {
     let entries = await listEntries(port);
     if (flags.provider) entries = entries.filter((e) => e.provider === String(flags.provider));
     if (!entries.length) {
-      out.line('no peak-hour windows — studio peak-hours add …');
+      out.line('no peak-hour windows — pi-agent-studio peak-hours add …');
       return;
     }
     if (out.json) {
@@ -340,7 +340,7 @@ export async function cmdPeakHours(out, instance, args) {
     return;
   }
   throw new CliError(
-    `unknown peak-hours subcommand: ${sub}\nusage: studio peak-hours list|add|rm|enable|disable`,
+    `unknown peak-hours subcommand: ${sub}\nusage: pi-agent-studio peak-hours list|add|rm|enable|disable`,
     2,
   );
 }

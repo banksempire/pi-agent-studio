@@ -35,7 +35,7 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 17000,
-    allowedHosts: ['localhost', '.local'],
+    allowedHosts: ['localhost', '.local', '.ts.net'],
     watch: {
       awaitWriteFinish: {
         stabilityThreshold: 150,

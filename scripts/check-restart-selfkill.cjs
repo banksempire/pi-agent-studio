@@ -12,7 +12,7 @@ const {
 
 const PRODUCT_ROOT = path.join(__dirname, '..');
 const SF_ROOT = path.join(path.dirname(PRODUCT_ROOT), 'StudioFramework');
-const BIN = path.join(PRODUCT_ROOT, 'bin', 'studio.mjs');
+const BIN = path.join(PRODUCT_ROOT, 'bin', 'pi-agent-studio.mjs');
 const STUB_SDK = path.join(PRODUCT_ROOT, 'scripts', 'lib', 'stub-sdk');
 const RUN_ID = `restart-selfkill-${process.pid}-${Date.now()}`;
 const TMPROOT = path.join(os.tmpdir(), 'studio-restart-selfkill');

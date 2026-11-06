@@ -4,15 +4,15 @@ Task-specific manual. The workspace contract (ground rules, workflow, ports) liv
 
 ## Setup
 
-- Run the stack via the CLI, never by hand: `npm run studio -- …` from this repo, or `node pi-agent-studio/bin/studio.mjs …` from the pair root. Service-lifecycle commands and rules: the `pi-studio-services` skill.
-- `up`/`restart web` accept `--allow-host <name>` (repeatable or comma-separated): names are merged into vite `allowedHosts` through a generated wrapper config in the instance state dir (vite spawned with `--configLoader runner`). Machine-specific hostnames (LAN name, `*.ts.net`) ride the CLI at start time — `vite.config.ts` carries only the generic defaults (`localhost`, `.local`).
+- Run the stack via the CLI, never by hand: `npm run pi-agent-studio -- …` from this repo, or `node pi-agent-studio/bin/pi-agent-studio.mjs …` from the pair root. Service-lifecycle commands and rules: the `pi-studio-services` skill.
+- `up`/`restart web` accept `--allow-host <name>` (repeatable or comma-separated): names are merged into vite `allowedHosts` through a generated wrapper config in the instance state dir (vite spawned with `--configLoader runner`). Defaults already allow `localhost`, `.local`, `.ts.net`; machine-specific hostnames ride the CLI — **agents must pass `--allow-host mbp` on every `up` and `restart web`** so LAN-name access keeps working.
 - One process: `src/pi-studio/server/index.mjs` serves the HTTP/SSE API and owns the agent registry in-process; the agent core lives in `src/pi-nest/src/` (registry, sdk-bridge, slash, journal). No separate daemon. The journal is SQLite at `<state>/studio.db`; every queue transition is committed before it happens, so graceful and SIGKILL restarts recover identically.
 - Frontend: `src/pi-studio/` (Vue). The whole UI is declarative JSON — `layout/app.layout.json` (panels bound to data providers, strict three-level hierarchy: h3 sections nest inside their owning h2's `components`, empty `components` arrays are illegal, the loader fails startup on violations) + `layout/panelData.ts` (viewmodels, action handlers, dialogs); `components/` holds workspace-tab widgets and the backend status component only. Product-specific UI never touches `StudioFramework`; framework gaps are fixed there (keep its demo + suites green). Framework-provided docker apps are builtins: **enabled by default** (an unplaced builtin is appended to the docker bar) — PAS pins the saved-workspaces app's position with `{ "builtin": "workspaces" }` in its docker array; `"builtins": { "workspaces": false }` opts out. `workspaceStorage.ts` only talks to the backend once the list panel actually renders.
 - **Tab resource protocol** (StudioFramework `useTabResources` — downstream must obey): every workspace-tab widget requests its resources in `_on_tab_open_request_resources` and releases them in `_on_tab_close_release_resources`; resource-bearing state changes reload via `_on_tab_states_change_reload_resources` (diff `change.prev`/`change.next` — the hook fires pre-flush). ChatWindow owns its session's backend view subscription through it: open → `acquireChatView`, close → `releaseChatTab` (also sweeps transient never-sent sessions), session switch → release + re-acquire; the store only refcounts held files and posts `/api/events/open|close` diffs. Jobs/ModelCatalog/PeakHours tabs fetch in the open hook. Covered by `check:tabresources`.
 - **Tab id ≠ session identity**: chat tab ids (`chat-tab-…`) are opaque workspace handles; the session a tab shows is `def.props.sessionId` — mutable content state (framework deep-watches `tabDefs` and fires the resource-reload hook on props identity change; auto-snapshots persist props). Never decode session ids out of tab ids; find tabs by props (`chatTabIdOf`). A lazy draft realizes via an adoption protocol: the send carries the draft id as `clientId`, `/api/new-chat` records an in-memory `clientId → file` alias (TTL ~2 min, `PI_STUDIO_DRAFT_ALIAS_TTL_MS`), `session_upsert` echoes the `clientId` while it lives, and the store's `adoptDraftSession` re-keys the draft to the canonical `encodeURIComponent(file)` id in place — migrating id-keyed UI maps and re-pointing open tabs — so realized drafts are canonical sessions and their tabs survive reloads (covered by `check:newchat`).
 - Vite proxies `/api` (incl. SSE) to the backend — main: 17000 → 7494.
 
-## studio CLI notes
+## pi-agent-studio CLI notes
 
 - Config precedence: CLI args > `PI_STUDIO_*` env > instance config (`.studio/config/instances/`) > defaults. Services are wired via argv only — the CLI injects no env; env remains the manual/container channel (and the reason for the workspace strip ritual).
 - `worktree add` copies `node_modules` as a real (never hardlinked) tree: hardlinked files share one backing file, and npm rewrites `node_modules/.package-lock.json` in place, so an install in one checkout would silently leak into every sibling checkout’s bookkeeping while their real package directories drift (npm then trusts the stale file and skips needed installs).
@@ -25,7 +25,7 @@ Area → suite (`npm run <script>`; full list in `package.json`):
 
 | Area | Suites |
 |---|---|
-| studio CLI | `check:cli`, `check:worktree-nm` |
+| pi-agent-studio CLI | `check:cli`, `check:worktree-nm` |
 | composer send/stop/queue/retry, drafts, grip reorder | `check:queue`, `check:send-stop`, `check:drafts` |
 | context reload button | `check:reload` |
 | image attachments | `check:image-attach` |
@@ -61,13 +61,13 @@ Conventions:
 
 - Composer action button is four-state (Send / Queue / Stop / Retry); typed text never interrupts a running session — Stop is the only UI interrupt path.
 - The message queue is gateway-side and durable: FIFO flushed on session-idle, edit-hold gate, drag reorder, queued compact and model changes, error pause cleared by retry.
-- Sub-agents: read-only child sessions spawned in-process (no recursion); `subagent` (parallel tasks) and `workflow` (deterministic JSON DAG — every node requires `model` + `thinking`, validated before any child spawns; no runtime replanning). Child artifacts land under `<SESSIONS_ROOT>/_subagents/`, hidden from the chat list, cleanable via `studio subagents ls|gc`.
+- Sub-agents: read-only child sessions spawned in-process (no recursion); `subagent` (parallel tasks) and `workflow` (deterministic JSON DAG — every node requires `model` + `thinking`, validated before any child spawns; no runtime replanning). Child artifacts land under `<SESSIONS_ROOT>/_subagents/`, hidden from the chat list, cleanable via `pi-agent-studio subagents ls|gc`.
 - No TUI lock: the web UI can prompt any session, including one live in the pi TUI.
 
 ## Operational notes
 
 - `doctor` orphan sweeps are registry-scoped to the instance's own pair roots — run from `/workspace/sf` for a global sweep. It also sweeps PPID-1 browser strays; some survive doctor — kill them by PID. Every CLI-initiated terminate is audited in `<state>/audit.log` (ts, reason, service, pid, caller) — check it first when a process died unexpectedly.
-- OOM: the backend runs with `--heapsnapshot-near-heap-limit=2` (snapshots land in the start CWD; `studio clean --snapshots` deletes them after analysis). Container cgroup limit is 16 GiB. Forensics + checklist: `.memory/oom.md`.
+- OOM: the backend runs with `--heapsnapshot-near-heap-limit=2` (snapshots land in the start CWD; `pi-agent-studio clean --snapshots` deletes them after analysis). Container cgroup limit is 16 GiB. Forensics + checklist: `.memory/oom.md`.
 
 ## Repo-specific Biome overrides
 

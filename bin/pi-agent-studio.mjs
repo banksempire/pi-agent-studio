@@ -24,9 +24,9 @@ const VERSION = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8'),
 ).version;
 
-const USAGE = `studio — manage pi-agent-studio stacks (backend · web)
+const USAGE = `pi-agent-studio — manage pi-agent-studio stacks (backend · web)
 
-usage: studio [-i <instance>] <command> [options]
+usage: pi-agent-studio [-i <instance>] <command> [options]
 
 commands:
   up [service]              start the stack (backend → web), health-gated;
@@ -179,12 +179,12 @@ function strictRefuse(command) {
 function resolveInstance(id) {
   if (id) {
     const inst = loadInstance(id) ?? (id === 'main' ? ensureMain() : null);
-    if (!inst) throw new CliError(`instance '${id}' not found — studio instance ls`, 2);
+    if (!inst) throw new CliError(`instance '${id}' not found — pi-agent-studio instance ls`, 2);
     return inst;
   }
   const inst = instanceForCwd(process.cwd());
   if (!inst) {
-    throw new CliError('no instance for this directory — pass -i <id> or run studio init', 2);
+    throw new CliError('no instance for this directory — pass -i <id> or run pi-agent-studio init', 2);
   }
   return inst;
 }
@@ -389,7 +389,7 @@ async function main() {
         });
         return 0;
       }
-      throw new CliError('usage: studio worktree add|rm …', 2);
+      throw new CliError('usage: pi-agent-studio worktree add|rm …', 2);
     }
     case 'instance': {
       const { positional } = parseRest(args, []);
@@ -399,21 +399,22 @@ async function main() {
         return 0;
       }
       if (sub === 'show') {
-        if (!positional[1]) throw new CliError('usage: studio instance show <id>', 2);
+        if (!positional[1]) throw new CliError('usage: pi-agent-studio instance show <id>', 2);
         await manage.cmdInstanceShow(out, positional[1]);
         return 0;
       }
       if (sub === 'set') {
-        if (positional.length < 3) throw new CliError('usage: studio instance set <id> key=value …', 2);
+        if (positional.length < 3)
+          throw new CliError('usage: pi-agent-studio instance set <id> key=value …', 2);
         await manage.cmdInstanceSet(out, positional[1], positional.slice(2));
         return 0;
       }
       if (sub === 'rm') {
-        if (!positional[1]) throw new CliError('usage: studio instance rm <id>', 2);
+        if (!positional[1]) throw new CliError('usage: pi-agent-studio instance rm <id>', 2);
         await manage.cmdInstanceRm(out, positional[1]);
         return 0;
       }
-      throw new CliError('usage: studio instance ls|show|set|rm', 2);
+      throw new CliError('usage: pi-agent-studio instance ls|show|set|rm', 2);
     }
     default:
       process.stderr.write(`unknown command: ${command}\n\n${USAGE}\n`);

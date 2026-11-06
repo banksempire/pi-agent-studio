@@ -7,7 +7,7 @@ const path = require('node:path');
 
 const PRODUCT_ROOT = path.join(__dirname, '..');
 const SF_ROOT = path.join(path.dirname(PRODUCT_ROOT), 'StudioFramework');
-const BIN = path.join(PRODUCT_ROOT, 'bin', 'studio.mjs');
+const BIN = path.join(PRODUCT_ROOT, 'bin', 'pi-agent-studio.mjs');
 const workspaceHooksDir = () => {
   const segs = PRODUCT_ROOT.split(path.sep);
   const bi = segs.indexOf('.branch');
@@ -69,7 +69,7 @@ function studio(args, { env = {}, expect = null, label = '', cwd = null } = {}) 
     },
   });
   if (expect != null && res.status !== expect) {
-    console.log(`--- studio ${args.join(' ')} ${label} ---`);
+    console.log(`--- pi-agent-studio ${args.join(' ')} ${label} ---`);
     console.log(res.stdout);
     console.error(res.stderr);
   }
@@ -258,7 +258,7 @@ async function main() {
         label: 'init',
       },
     );
-    report('studio init registers the pair', initRes.status === 0);
+    report('pi-agent-studio init registers the pair', initRes.status === 0);
     report(
       'init copies node_modules (zero-friction branch setup)',
       fs.existsSync(path.join(PAIR, 'pi-agent-studio', 'node_modules', '.bin', 'vite')),
@@ -281,7 +281,7 @@ async function main() {
     report('pre-commit passes when biome-clean', b2.status === 0, b2.stderr);
 
     const upRes = studio(['-i', ID, 'up'], { env, expect: 0, label: 'up' });
-    report('studio up starts the stack', upRes.status === 0, upRes.status === 0 ? '' : upRes.stderr);
+    report('pi-agent-studio up starts the stack', upRes.status === 0, upRes.status === 0 ? '' : upRes.stderr);
 
     const backendRec = pidfile('backend');
     const webRec = pidfile('web');
@@ -661,7 +661,7 @@ async function main() {
       if (k.startsWith('PI_STUDIO_') || k === 'PI_API_PROXY') delete cleanEnv[k];
     }
     const branchCliRun = (args) =>
-      spawnSync('node', [path.join(branchCli, 'bin', 'studio.mjs'), ...args], {
+      spawnSync('node', [path.join(branchCli, 'bin', 'pi-agent-studio.mjs'), ...args], {
         cwd: BASE,
         encoding: 'utf8',
         env: cleanEnv,
@@ -923,7 +923,7 @@ async function main() {
       label: 'strict blocks bare kill',
     });
     report(
-      'PI_STUDIO_STRICT blocks bare studio kill',
+      'PI_STUDIO_STRICT blocks bare pi-agent-studio kill',
       strictKill.status === 2 && /PI_STUDIO_STRICT/.test(strictKill.stderr),
       strictKill.stderr.slice(0, 120),
     );

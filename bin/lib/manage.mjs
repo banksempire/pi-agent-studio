@@ -169,7 +169,7 @@ export async function cmdInit(out, opts = {}) {
   });
   out.line(`${okSym} instance ${paint('bold', id)} → ${pairRoot}`);
   out.line(`    branch ${branch} · web :${webPort} (${host}) · sessions ${sessionsDir}`);
-  out.line(`    start with: studio -i ${id} up`);
+  out.line(`    start with: pi-agent-studio -i ${id} up`);
   if (skippedPa || skippedSf) {
     out.line(`${warnSym} node_modules missing and --no-install given — run npm install before 'up'`);
   }
@@ -260,7 +260,7 @@ export async function cmdInstanceLs(out) {
     return;
   }
   if (rows.length === 0) {
-    out.line('no instances (run studio init or studio worktree add)');
+    out.line('no instances (run pi-agent-studio init or studio worktree add)');
     return;
   }
   printTable(['INSTANCE', 'BRANCH', 'WEB', 'UP', 'PAIR ROOT', ''], rows);
@@ -314,7 +314,10 @@ export async function cmdInstanceRm(out, id) {
   for (const svc of ['backend', 'web']) {
     const rec = readPidfile(pidfilePath(id, svc));
     if (rec?.pid && alive(rec.pid)) {
-      throw new CliError(`instance '${id}' still has a live ${svc} — run studio -i ${id} down first`, 1);
+      throw new CliError(
+        `instance '${id}' still has a live ${svc} — run pi-agent-studio -i ${id} down first`,
+        1,
+      );
     }
   }
   removeInstance(id);
@@ -428,7 +431,7 @@ export async function cmdGuard(out, { action = 'status' } = {}) {
   }
   for (const repo of [PRODUCT_ROOT, SF_ROOT, QS_ROOT]) {
     const cur = git(['config', 'core.hooksPath'], repo, { allowFail: true });
-    out.line(`${path.basename(repo)}: ${cur ?? '(not set) — studio guard install'}`);
+    out.line(`${path.basename(repo)}: ${cur ?? '(not set) — pi-agent-studio guard install'}`);
   }
 }
 
@@ -445,7 +448,7 @@ function guardCheck(results) {
         scope: 'guard',
         name: path.basename(repo),
         level: 'warn',
-        detail: 'core.hooksPath not set — studio guard install',
+        detail: 'core.hooksPath not set — pi-agent-studio guard install',
       });
     }
   }
@@ -516,7 +519,7 @@ export async function cmdDoctor(out, opts = {}) {
         scope: 'cross',
         name: 'dead instance',
         level: 'warn',
-        detail: `${id}: pair root ${inst.pairRoot} gone → studio clean --instances`,
+        detail: `${id}: pair root ${inst.pairRoot} gone → pi-agent-studio clean --instances`,
       });
     }
   }

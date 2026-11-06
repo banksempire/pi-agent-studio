@@ -440,6 +440,7 @@ const dialogActions = computed((): PopupAction[] => [
           tone: 'danger' as const,
           align: 'left' as const,
           disabled: busy.value,
+          close: false,
           class: 'je-delete',
         },
       ]
@@ -451,6 +452,7 @@ const dialogActions = computed((): PopupAction[] => [
     tone: 'accent',
     disabled: !canSave.value,
     title: saveHint.value,
+    close: false,
     class: 'je-save',
   },
 ]);

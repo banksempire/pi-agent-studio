@@ -98,7 +98,7 @@ const renameDoc = computed(
     ],
     actions: [
       { id: 'cancel', label: 'Cancel', close: true },
-      { id: 'save', label: 'Save', tone: 'danger' },
+      { id: 'save', label: 'Save', tone: 'danger', close: false },
     ],
   }),
 );

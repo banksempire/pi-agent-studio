@@ -125,6 +125,7 @@ const dialogActions = computed((): PopupAction[] => [
     label: busy.value ? 'Saving…' : 'Save',
     tone: 'accent',
     disabled: !canSave.value,
+    close: false,
     class: 'aph-save',
   },
 ]);

@@ -146,7 +146,7 @@ const confirmDoc = computed(
     ],
     actions: [
       { id: 'cancel', label: 'Cancel', close: true, class: 'jobs-confirm-cancel' },
-      { id: 'run', label: 'Run now', tone: 'accent', class: 'jobs-confirm-run' },
+      { id: 'run', label: 'Run now', tone: 'accent', close: false, class: 'jobs-confirm-run' },
     ],
   }),
 );

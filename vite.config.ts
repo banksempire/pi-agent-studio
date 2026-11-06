@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath, URL } from 'node:url';
 import vue from '@vitejs/plugin-vue';
 import { defineConfig } from 'vite';
+import { sfPwa } from '../StudioFramework/src/pwa/vite';
 
 function apiProxyTarget() {
   try {
@@ -14,7 +15,17 @@ function apiProxyTarget() {
 }
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [
+    vue(),
+    sfPwa({
+      name: 'pi-agent-studio',
+      shortName: 'pi-studio',
+      description: 'Web UI for the pi coding agent',
+      themeColor: '#000000',
+      backgroundColor: '#1e1e1e',
+      iconUrl: '/favicon.svg',
+    }),
+  ],
   resolve: {
     alias: {
       '@sf': fileURLToPath(new URL('../StudioFramework/src', import.meta.url)),

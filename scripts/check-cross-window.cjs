@@ -967,8 +967,17 @@ function makeReporter() {
         return { ok: ok1 && ok2 && ok3 && ok4, why: why.join(' | ') };
       } finally {
         await aux.close();
-        await page.waitForSelector('.sf-tab-label:has-text("XWin-B:")', { timeout: 30000 }).catch(() => {});
-        await delay(1500);
+        await page
+          .waitForFunction(
+            () =>
+              ![...document.querySelectorAll('.sf-tab-label')].some((t) =>
+                t.textContent?.includes('XWin-B:'),
+              ),
+            { timeout: 30000 },
+          )
+          .catch(() => {});
+        await delay(500);
+        await openSession('XWin-B:');
       }
     })();
     report('T12b aux window composer send-key isolation (both modes)', t12b.ok, t12b.why);

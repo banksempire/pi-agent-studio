@@ -207,16 +207,16 @@ function readSlashCalls() {
       const pos = count
         ? await page.evaluate(() => {
             const rl = document.querySelector('.chat-reload-btn').getBoundingClientRect();
-            const sc = document.querySelector('.chat-scroll-btn').getBoundingClientRect();
-            return { reloadLeft: rl.left, scrollLeft: sc.left, sameRow: Math.abs(rl.top - sc.top) < 5 };
+            const ib = document.querySelector('.chat-image-btn').getBoundingClientRect();
+            return { reloadLeft: rl.left, imageLeft: ib.left, sameRow: Math.abs(rl.top - ib.top) < 5 };
           })
         : null;
       return {
-        ok: count === 1 && visible && !!pos && pos.reloadLeft < pos.scrollLeft && pos.sameRow,
+        ok: count === 1 && visible && !!pos && pos.reloadLeft < pos.imageLeft && pos.sameRow,
         why: JSON.stringify(pos),
       };
     })();
-    report('composer has a reload button left of the scroll button', t1.ok, t1.why);
+    report('composer has a reload button left of the image button', t1.ok, t1.why);
 
     const t2 = await (async () => {
       await reloadBtn.click();

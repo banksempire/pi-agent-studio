@@ -198,10 +198,15 @@ async function runPass(browser, baseUrl, file, emit, label) {
     return e.scrollHeight - e.clientHeight;
   });
   if (!(max > 100)) throw new Error(`${label}: session list does not overflow (max=${max})`);
+  const jumpHiddenAtBottom = await page.evaluate(() => !document.querySelector('.chat-jump-btn'));
   await page.evaluate((m) => {
     document.querySelector('.chat-messages').scrollTop = -Math.round(m * 0.5);
   }, max);
   await delay(400);
+  const jumpShownWhenUp = await page.evaluate(() => {
+    const b = document.querySelector('.chat-jump-btn');
+    return !!b && b.getBoundingClientRect().width > 0;
+  });
 
   await page.evaluate(() => {
     window.__frames = [];
@@ -235,6 +240,14 @@ async function runPass(browser, baseUrl, file, emit, label) {
   });
 
   const frames = await page.evaluate(() => window.__frames);
+  const jumpClick = await (async () => {
+    await page.locator('.chat-jump-btn').click();
+    await delay(400);
+    return page.evaluate(() => {
+      const e = document.querySelector('.chat-messages');
+      return { atBottom: Math.abs(e.scrollTop) <= 1, gone: !document.querySelector('.chat-jump-btn') };
+    });
+  })();
   await page.close();
 
   const firstGrowth = frames.findIndex((f, i) => i > 0 && f.sh > frames[i - 1].sh);
@@ -275,7 +288,21 @@ async function runPass(browser, baseUrl, file, emit, label) {
   let drift = 0;
   const n = Math.min(first.length, last.length);
   for (let k = 0; k < n; k++) drift = Math.max(drift, Math.abs(last[k] - first[k]));
-  return { movingRatio, pairs, moved, worst, drift, frames: frames.length, errors };
+  return {
+    movingRatio,
+    pairs,
+    moved,
+    worst,
+    drift,
+    frames: frames.length,
+    errors,
+    jump: {
+      hiddenAtBottom: jumpHiddenAtBottom,
+      shownWhenUp: jumpShownWhenUp,
+      clickAtBottom: jumpClick.atBottom,
+      clickHides: jumpClick.gone,
+    },
+  };
 }
 
 (async () => {
@@ -343,6 +370,11 @@ async function runPass(browser, baseUrl, file, emit, label) {
       'T2 no cumulative drift over a 30-chunk stream at 125% scale',
       r1.drift < MAX_DRIFT_PX,
       `drift=${Math.round(r1.drift * 1000) / 1000}px limit=${MAX_DRIFT_PX}`,
+    );
+    report(
+      'T4 jump-to-bottom button: hidden at bottom, shown when scrolled up, click returns to bottom and hides it',
+      r1.jump.hiddenAtBottom && r1.jump.shownWhenUp && r1.jump.clickAtBottom && r1.jump.clickHides,
+      JSON.stringify(r1.jump),
     );
 
     browserB = await chromium.launch({ args: ['--force-device-scale-factor=1.1'] });

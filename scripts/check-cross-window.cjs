@@ -649,22 +649,22 @@ function makeReporter() {
         const block = win?.querySelector('.chat-composer-block');
         const input = win?.querySelector('.chat-input');
         const send = win?.querySelector('.chat-send-btn');
-        const scroll = win?.querySelector('.chat-scroll-btn');
         const img = win?.querySelector('.chat-image-btn');
+        const jump = win?.querySelector('.chat-jump-btn');
         return {
           blockText: block?.textContent?.trim() ?? '',
           inputDisabled: input?.disabled ?? null,
           sendDisabled: send?.disabled ?? null,
-          scrollDisabled: scroll?.disabled ?? null,
           imgDisabled: img?.disabled ?? null,
+          jumpUsable: !jump || (!jump.disabled && jump.getBoundingClientRect().width > 0),
         };
       });
       const blockOk =
         blocked.blockText.length > 0 &&
         blocked.inputDisabled &&
         blocked.sendDisabled &&
-        blocked.scrollDisabled &&
-        blocked.imgDisabled;
+        blocked.imgDisabled &&
+        blocked.jumpUsable;
       await switchTab('XWin-B');
       const other = await page.evaluate(() => {
         const wins = Array.from(document.querySelectorAll('.chat-window'));
@@ -682,7 +682,7 @@ function makeReporter() {
           blockOk &&
           other.blocked === 1 &&
           other.usable >= 1,
-        why: `E before{blocks:${before.blocks},input:${before.inputDisabled}} E blocked{banner:${JSON.stringify(blocked.blockText)},input:${blocked.inputDisabled},send:${blocked.sendDisabled},scroll:${blocked.scrollDisabled},img:${blocked.imgDisabled}} windows{total:${other.total},blocked:${other.blocked},usable:${other.usable}}`,
+        why: `E before{blocks:${before.blocks},input:${before.inputDisabled}} E blocked{banner:${JSON.stringify(blocked.blockText)},input:${blocked.inputDisabled},send:${blocked.sendDisabled},img:${blocked.imgDisabled}} windows{total:${other.total},blocked:${other.blocked},usable:${other.usable}}`,
       };
     })();
     report('T10 vanished session blocks the composer with a banner on top', t10.ok, t10.why);

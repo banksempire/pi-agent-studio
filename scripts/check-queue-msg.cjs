@@ -339,7 +339,6 @@ function patchStatus(port, p, body) {
           return { x: +r.x.toFixed(1), y: +r.y.toFixed(1), w: +r.width.toFixed(1), h: +r.height.toFixed(1) };
         };
         return {
-          scroll: pick('.chat-scroll-btn'),
           image: pick('.chat-image-btn'),
           send: pick('.chat-send-btn'),
         };
@@ -436,15 +435,11 @@ function patchStatus(port, p, body) {
       `send:${JSON.stringify(idleRects.send)} queue:${JSON.stringify(runningRects.send)}`,
     );
     const rowOk =
-      !!runningRects.scroll &&
       !!runningRects.image &&
       !!runningRects.send &&
-      runningRects.scroll.x < runningRects.image.x &&
       runningRects.image.x < runningRects.send.x &&
-      [runningRects.scroll, runningRects.image, runningRects.send].every(
-        (r) => Math.abs(r.y - runningRects.send.y) <= 1,
-      );
-    report('button row order is [to bottom][image][action] on one line', rowOk, JSON.stringify(runningRects));
+      [runningRects.image, runningRects.send].every((r) => Math.abs(r.y - runningRects.send.y) <= 1);
+    report('button row order is [image][action] on one line', rowOk, JSON.stringify(runningRects));
 
     await clickWhenVisible(queueBtn);
     await delay(400);

@@ -22,6 +22,14 @@
   background: var(--sf-panel-bg);
 }
 
+.chat-msg-area {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
 .chat-messages {
   flex: 1;
   min-height: 0;
@@ -30,6 +38,33 @@
   padding: 0 20px 12px;
   display: flex;
   flex-direction: column-reverse;
+}
+
+.chat-jump-btn {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  z-index: 5;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--sf-panel-bg) 85%, transparent);
+  border: 1px solid var(--sf-border);
+  color: var(--sf-text);
+  font-family: var(--sf-font);
+  font-size: 16px;
+  cursor: pointer;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+}
+
+.chat-jump-btn:hover {
+  color: var(--sf-text-bright);
+  background: color-mix(in srgb, var(--sf-panel-bg) 95%, transparent);
 }
 
 .chat-flow {
@@ -667,7 +702,6 @@
   min-width: calc(3.5em + 32px);
 }
 
-.chat-scroll-btn,
 .chat-image-btn,
 .chat-reload-btn {
   background: var(--sf-bg);
@@ -682,7 +716,6 @@
   flex-shrink: 0;
 }
 
-.chat-scroll-btn:hover,
 .chat-image-btn:hover:not(:disabled),
 .chat-reload-btn:hover:not(:disabled) {
   box-shadow: inset 0 0 0 999px var(--sf-hover-overlay);

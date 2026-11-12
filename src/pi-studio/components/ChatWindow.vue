@@ -103,6 +103,7 @@ const input = computed({
   set: (v: string) => store.setDraft(props.sessionId, v),
 });
 const listEl = ref<HTMLElement | null>(null);
+const showJumpBtn = ref(false);
 const inputEl = ref<HTMLTextAreaElement | null>(null);
 
 function formatTokens(n: number): string {
@@ -181,6 +182,7 @@ function scrollToBottom() {
   const { max } = posInfo(el);
   scrollBias = 0;
   el.scrollTop = zeroIsBottom ? 0 : max;
+  showJumpBtn.value = false;
 }
 
 let zeroIsBottom: boolean | null = null;
@@ -315,6 +317,7 @@ function onScroll() {
   const st = chatScrollOf(props.sessionId);
   const { max, st: stv, distFromTop } = posInfo(el);
   st.sticky = distFromTop > max - STICKY_ZONE;
+  showJumpBtn.value = !st.sticky;
   st.top = stv;
   if (touchDownCount === 0) maybeLoadOlder();
 }
@@ -1150,6 +1153,7 @@ function captureScroll(el: HTMLElement, mem: ReturnType<typeof chatScrollOf>) {
   const { max, st, distFromTop } = posInfo(el);
   mem.top = st;
   mem.sticky = distFromTop > max - STICKY_ZONE;
+  showJumpBtn.value = !mem.sticky;
 }
 
 function restoreScroll(sessionId: string) {
@@ -1194,7 +1198,8 @@ watch(
     @wheel.passive="noteVisit"
     @keydown="noteVisit"
   >
-    <div ref="listEl" class="chat-messages" @scroll="onScroll">
+    <div class="chat-msg-area">
+      <div ref="listEl" class="chat-messages" @scroll="onScroll">
       <div class="chat-flow">
         <div v-if="!session" class="chat-empty">Session not found.</div>
         <div v-else-if="session.messages.length === 0" class="chat-empty">No messages yet — say hello.</div>
@@ -1347,6 +1352,13 @@ watch(
         </div>
       </template>
       </div>
+      </div>
+      <button
+        v-if="showJumpBtn"
+        class="chat-jump-btn"
+        title="Scroll to bottom"
+        @click="scrollToBottomNow"
+      ><SvgIcon name="↓" /></button>
     </div>
 
     <div class="chat-composer">
@@ -1451,12 +1463,6 @@ watch(
             :disabled="!!composerBlock || session?.compacting || session?.status === 'running' || reloadingContext"
             @click="reloadContextFiles"
           ><SvgIcon :name="reloadedFlash ? '✓' : '↻'" /></button>
-          <button
-            class="chat-scroll-btn"
-            title="Scroll to bottom"
-            :disabled="!!composerBlock"
-            @click="scrollToBottomNow"
-          ><SvgIcon name="↓" /></button>
           <button
             class="chat-image-btn"
             :title="attachments.length ? `Attach another image (${attachments.length}/4)` : 'Attach an image to send with your message'"

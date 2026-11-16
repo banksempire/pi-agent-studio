@@ -168,6 +168,14 @@ async function runChildPrompt(session, file, message) {
     session.emit({ type: 'agent_settled' });
     return;
   }
+  if (behavior === 'slow') {
+    await delay(rule.ms ?? 50);
+    const msg = assistantMessage([{ type: 'text', text: reply }]);
+    appendEntry(file, msg);
+    session.emit({ type: 'message_end', message: msg });
+    session.emit({ type: 'agent_settled' });
+    return;
+  }
   if (behavior === 'stream') {
     session.emit({
       type: 'message_update',
@@ -193,11 +201,30 @@ async function runChildPrompt(session, file, message) {
   session.emit({ type: 'agent_settled' });
 }
 
-export async function createAgentSession({ sessionManager, thinkingLevel }) {
+export async function createAgentSession(options = {}) {
+  const { sessionManager, thinkingLevel } = options;
   const file = sessionManager.file;
   const child = isChildSession(sessionManager);
   let curThinking = thinkingLevel ?? 'off';
-  if (child) fs.appendFileSync(childSessionsLog, `${JSON.stringify({ file, thinkingLevel: curThinking })}\n`);
+  if (child) {
+    let contract = null;
+    const override = options.resourceLoader?.options?.appendSystemPromptOverride;
+    if (typeof override === 'function') {
+      try {
+        const parts = override([]);
+        contract = parts[parts.length - 1] ?? null;
+      } catch {}
+    }
+    fs.appendFileSync(
+      childSessionsLog,
+      `${JSON.stringify({
+        file,
+        thinkingLevel: curThinking,
+        tools: Array.isArray(options.tools) ? options.tools : null,
+        contract,
+      })}\n`,
+    );
+  }
   let listener = () => {};
   let aborted = false;
   let compacting = false;

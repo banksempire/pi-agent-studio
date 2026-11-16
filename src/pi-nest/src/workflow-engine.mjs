@@ -45,6 +45,12 @@ export function validateSpec(spec) {
     if (raw.onFailure !== undefined && raw.onFailure !== 'fail' && raw.onFailure !== 'continue') {
       return { ok: false, error: `node '${raw.id}': onFailure must be 'fail' or 'continue'` };
     }
+    if (raw.mode !== undefined && raw.mode !== 'read' && raw.mode !== 'write') {
+      return { ok: false, error: `node '${raw.id}': mode must be 'read' or 'write'` };
+    }
+    if (raw.branch !== undefined && (typeof raw.branch !== 'string' || !raw.branch.trim())) {
+      return { ok: false, error: `node '${raw.id}': branch must be a non-empty string` };
+    }
     const needs = raw.needs ?? [];
     if (!Array.isArray(needs) || needs.some((n) => typeof n !== 'string')) {
       return { ok: false, error: `node '${raw.id}': needs must be an array of node ids` };
@@ -113,6 +119,8 @@ export function validateSpec(spec) {
         cwd: raw.cwd ?? null,
         role: raw.role ?? null,
         thinking: raw.thinking,
+        mode: raw.mode ?? 'read',
+        branch: raw.branch ?? null,
         onFailure: raw.onFailure ?? 'fail',
       })),
     },

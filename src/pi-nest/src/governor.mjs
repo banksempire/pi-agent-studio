@@ -21,6 +21,7 @@ export class SlotGovernor {
       globalMax: normLimit(limits.globalMax, 2),
       providerMax: normLimit(limits.providerMax, 2),
       modelMax: normLimit(limits.modelMax, 1),
+      writePerCwd: normLimit(limits.writePerCwd, 1),
     };
   }
 
@@ -37,11 +38,12 @@ export class SlotGovernor {
       globalMax: normLimit(next.globalMax, this.#limits.globalMax),
       providerMax: normLimit(next.providerMax, this.#limits.providerMax),
       modelMax: normLimit(next.modelMax, this.#limits.modelMax),
+      writePerCwd: normLimit(next.writePerCwd, this.#limits.writePerCwd),
     };
     this.#notify();
   }
 
-  tryAcquire(key) {
+  tryAcquire(key, writeLane = null) {
     const norm = normKey(key);
     if (this.#inflight.size >= this.#limits.globalMax) return null;
     if (norm) {
@@ -54,7 +56,14 @@ export class SlotGovernor {
       }
       if (perProvider >= this.#limits.providerMax || perModel >= this.#limits.modelMax) return null;
     }
-    const slot = { key: norm };
+    if (writeLane) {
+      let perLane = 0;
+      for (const slot of this.#inflight) {
+        if (slot.writeLane === writeLane) perLane++;
+      }
+      if (perLane >= this.#limits.writePerCwd) return null;
+    }
+    const slot = { key: norm, writeLane: writeLane ?? null };
     this.#inflight.add(slot);
     return slot;
   }
@@ -65,9 +74,9 @@ export class SlotGovernor {
     this.#notify();
   }
 
-  async waitForSlot(key) {
+  async waitForSlot(key, writeLane = null) {
     for (;;) {
-      const slot = this.tryAcquire(key);
+      const slot = this.tryAcquire(key, writeLane);
       if (slot) return slot;
       await new Promise((resolve) => this.#changeWaiters.add(resolve));
     }

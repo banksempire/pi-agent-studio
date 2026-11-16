@@ -61,6 +61,7 @@ Conventions:
 
 - Composer action button is four-state (Send / Queue / Stop / Retry); typed text never interrupts a running session — Stop is the only UI interrupt path.
 - The message queue is gateway-side and durable: FIFO flushed on session-idle, edit-hold gate, drag reorder, queued compact and model changes, error pause cleared by retry.
+- New Chat shows the effective default model/thinking in the Session panel's Model section; Change Model on a never-sent chat stores a client-side choice that is applied to the pending session between `/api/new-chat` and the first prompt (`check:modelapi`).
 - Sub-agents: read-only child sessions spawned in-process (no recursion); `subagent` (parallel tasks) and `workflow` (deterministic JSON DAG — every node requires `model` + `thinking`, validated before any child spawns; no runtime replanning). Child artifacts land under `<SESSIONS_ROOT>/_subagents/`, hidden from the chat list, cleanable via `pi-agent-studio subagents ls|gc`.
 - No TUI lock: the web UI can prompt any session, including one live in the pi TUI.
 

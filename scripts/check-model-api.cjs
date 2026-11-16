@@ -212,6 +212,7 @@ const STUB_MODELS = [
       latestChatId: 'stub-pro',
       posts: [],
       gets: [],
+      flow: [],
     };
     await page.route('**/api/models*', async (route) => {
       const req = route.request();
@@ -219,10 +220,16 @@ const STUB_MODELS = [
       if (req.method() === 'POST') {
         const body = req.postDataJSON();
         state.posts.push(body);
-        if (body.model === 'stub/stub-pro' && body.thinkLevel === 'high') {
+        if (body.file) state.flow.push('apply-model');
+        if (body.model === 'stub/stub-pro') {
           state.currentId = 'stub-pro';
           state.currentName = 'Stub Pro';
-          state.currentLevel = 'high';
+        } else if (body.model === 'stub/stub-mini') {
+          state.currentId = 'stub-mini';
+          state.currentName = 'Stub Mini';
+        }
+        if (body.thinkLevel !== undefined && body.thinkLevel !== null) {
+          state.currentLevel = body.thinkLevel;
         }
         await route.fulfill({
           status: 200,
@@ -251,6 +258,30 @@ const STUB_MODELS = [
     await page.goto(`http://127.0.0.1:${vitePort}/`, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.sf-docker', { timeout: 60000 });
 
+    const modelRow = (key) =>
+      page.locator(`[data-sub-body="session-model"] .kv-row:has(.kv-key:text-is("${key}")) .kv-value`);
+
+    await page.locator('.sf-subsection-util[title="New Chat (Ctrl+N)"]').first().click();
+    await page.waitForSelector('.sf-tab:has-text("New Chat")', { timeout: 10000 });
+    let coldGet = false;
+    for (let i = 0; i < 40 && !coldGet; i++) {
+      await delay(250);
+      coldGet = state.gets.includes('');
+    }
+    report(
+      'opening a New Chat fetches the no-file catalog on a cold app',
+      coldGet,
+      JSON.stringify(state.gets),
+    );
+    await modelRow('Model').waitFor({ timeout: 10000 });
+    const nModel = (await modelRow('Model').textContent()) ?? '';
+    const nThinking = (await modelRow('Thinking').textContent()) ?? '';
+    report(
+      'new chat shows the effective default model and thinking level before any send',
+      nModel === 'Stub Mini' && nThinking === '(None)',
+      `${nModel}/${nThinking}`,
+    );
+
     const itemSel = '.sf-pl-item:has-text("model-api-check")';
     await page.waitForSelector(itemSel, { timeout: 60000 });
     await delay(1000);
@@ -259,8 +290,6 @@ const STUB_MODELS = [
     report('chat window opens with message content', true);
 
     await page.waitForSelector('[data-sub-body="session-model"] .kv-row', { timeout: 10000 });
-    const modelRow = (key) =>
-      page.locator(`[data-sub-body="session-model"] .kv-row:has(.kv-key:text-is("${key}")) .kv-value`);
     await modelRow('Model').waitFor({ timeout: 10000 });
     const beforeProvider = await modelRow('Provider').textContent();
     const beforeModel = await modelRow('Model').textContent();
@@ -796,6 +825,93 @@ const STUB_MODELS = [
       `pickerPops=${pickerOpen}`,
     );
     await page.keyboard.press('Escape');
+
+    state.gets.length = 0;
+    state.flow.length = 0;
+    const draftPostsBase = state.posts.length;
+    await page.route('**/api/sessions/messages*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ messages: [], oldestId: null, hasMore: false }),
+      });
+    });
+    await page.route('**/api/new-chat', async (route) => {
+      state.flow.push('new-chat');
+      await route.continue();
+    });
+    await page.route('**/api/chat', async (route) => {
+      state.flow.push('chat');
+      await route.continue();
+    });
+    await page.locator('.sf-subsection-util[title="New Chat (Ctrl+N)"]').first().click();
+    await page.waitForSelector('.sf-tab:has-text("New Chat")', { timeout: 10000 });
+
+    await delay(500);
+    await page.waitForSelector('[data-sub-body="session-model"] .kv-row', { timeout: 10000 });
+    const dProvider = (await modelRow('Provider').textContent()) ?? '';
+    const dModel = (await modelRow('Model').textContent()) ?? '';
+    const dThinking = (await modelRow('Thinking').textContent()) ?? '';
+    report(
+      'new chat shows the effective default model in the Session panel',
+      dProvider === 'stub' && dModel === 'Stub Pro' && dThinking === 'high',
+      `${dProvider}/${dModel}/${dThinking}`,
+    );
+    report(
+      'the new-chat default renders from the cached no-file catalog (no per-file GET)',
+      state.gets.length === 0,
+      JSON.stringify(state.gets),
+    );
+
+    await page.locator('[data-sub-body="session-model"] .sf-pc-menubtn').click();
+    await page.waitForSelector('.sf-menu-pop', { timeout: 5000 });
+    await page.locator('.sf-menu-row', { hasText: 'stub' }).hover();
+    await page.locator('.sf-menu-row', { hasText: 'Stub Pro' }).waitFor({ timeout: 5000 });
+    await page.locator('.sf-menu-row', { hasText: 'Stub Pro' }).hover();
+    await page.locator('.sf-menu-row', { hasText: 'low' }).waitFor({ timeout: 5000 });
+    await page.locator('.sf-menu-row', { hasText: 'low' }).click();
+    await delay(400);
+    report(
+      'choosing a model on a New Chat stays client-side (no POST until first send)',
+      state.posts.length === draftPostsBase,
+      `posts=${state.posts.length - draftPostsBase}`,
+    );
+    const cModel = (await modelRow('Model').textContent()) ?? '';
+    const cThinking = (await modelRow('Thinking').textContent()) ?? '';
+    report(
+      'the New Chat model rows reflect the pre-send choice',
+      cModel === 'Stub Pro' && cThinking === 'low',
+      `${cModel}/${cThinking}`,
+    );
+
+    const draftInput = page.locator('.chat-input');
+    await draftInput.click();
+    await draftInput.fill('hello draft');
+    await draftInput.press('Enter');
+    await page.waitForSelector('.chat-msg:has-text("hello draft")', { timeout: 15000 });
+    const applyPost = state.posts.find(
+      (p) =>
+        typeof p.file === 'string' &&
+        p.file.length > 0 &&
+        p.model === 'stub/stub-pro' &&
+        p.thinkLevel === 'low',
+    );
+    report(
+      'first send realizes the draft and applies the chosen model before prompting',
+      !!applyPost &&
+        state.flow[0] === 'new-chat' &&
+        state.flow[1] === 'apply-model' &&
+        state.flow[2] === 'chat',
+      JSON.stringify({ flow: state.flow, apply: applyPost ?? null }),
+    );
+    await modelRow('Thinking').filter({ hasText: 'low' }).waitFor({ timeout: 10000 });
+    const rModel = (await modelRow('Model').textContent()) ?? '';
+    const rThinking = (await modelRow('Thinking').textContent()) ?? '';
+    report(
+      'realized chat keeps showing the chosen model from GET /api/models?file=',
+      rModel === 'Stub Pro' && rThinking === 'low',
+      `${rModel}/${rThinking}`,
+    );
 
     const sdkPort = await freePort();
     const sdkSessions = path.join(RUN_ROOT, 'sdk-sessions');

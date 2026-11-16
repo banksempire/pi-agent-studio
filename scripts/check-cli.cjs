@@ -958,6 +958,65 @@ async function main() {
       `argv ok=${!!argvHealth?.ok} env port serving=${!envPortGone}`,
     );
 
+    const taskName = 'probe-task';
+    const taskBranch = `${ID}-task-${taskName}`;
+    const taskRoot = path.join(PAIR, 'tasks', taskName);
+    const taskRepo = path.join(taskRoot, 'pi-agent-studio');
+    const parentTip = sh('git', ['rev-parse', 'HEAD'], { cwd: PRODUCT_ROOT });
+    const addTaskRes = studio(['worktree', 'add-task', ID, taskName, '--from', 'HEAD'], {
+      expect: 0,
+      label: 'worktree add-task',
+    });
+    report(
+      'worktree add-task creates the task worktree (branch + node_modules, no instance)',
+      addTaskRes.status === 0 &&
+        fs.existsSync(taskRepo) &&
+        fs.existsSync(path.join(taskRepo, 'node_modules')) &&
+        !fs.existsSync(path.join(CFG, 'instances', `${taskName}.json`)),
+      addTaskRes.stderr,
+    );
+    const sfLink = path.join(taskRoot, 'StudioFramework');
+    let sfLinkOk = false;
+    try {
+      sfLinkOk =
+        fs.lstatSync(sfLink).isSymbolicLink() &&
+        fs.realpathSync(sfLink) === fs.realpathSync(path.join(PAIR, 'StudioFramework'));
+    } catch {}
+    report('task StudioFramework sibling is a symlink to the parent pair', sfLinkOk);
+    const taskTip = sh('git', ['rev-parse', '--verify', `refs/heads/${taskBranch}`], {
+      cwd: PRODUCT_ROOT,
+      allowFail: true,
+    });
+    report(
+      'task branch is stacked on the parent tip',
+      taskTip.status === 0 && taskTip.stdout.trim() === parentTip.stdout.trim(),
+      `${taskTip.stdout?.trim()} vs ${parentTip.stdout.trim()}`,
+    );
+    fs.appendFileSync(path.join(taskRepo, 'package.json'), '\n');
+    const rmDirty = studio(['worktree', 'rm-task', ID, taskName], {
+      expect: 2,
+      label: 'rm-task refuses dirty',
+    });
+    report(
+      'rm-task refuses uncommitted tracked changes without --force',
+      rmDirty.status === 2 && /uncommitted/.test(rmDirty.stderr),
+      rmDirty.stderr,
+    );
+    const rmTaskRes = studio(['worktree', 'rm-task', ID, taskName, '--force', '--branch'], {
+      expect: 0,
+      label: 'rm-task --force --branch',
+    });
+    report(
+      'rm-task --force removes the task worktree',
+      rmTaskRes.status === 0 && !fs.existsSync(taskRoot),
+      rmTaskRes.stderr,
+    );
+    const branchGone = sh('git', ['rev-parse', '--verify', `refs/heads/${taskBranch}`], {
+      cwd: PRODUCT_ROOT,
+      allowFail: true,
+    });
+    report('rm-task --branch deletes the task branch ref', branchGone.status !== 0);
+
     const rmRes = studio(['worktree', 'rm', ID, '--purge', '--yes'], { expect: 0, label: 'worktree rm' });
     report('worktree rm tears down the pair', rmRes.status === 0 && !fs.existsSync(PAIR), rmRes.stderr);
     report('instance record removed', !fs.existsSync(path.join(CFG, 'instances', `${ID}.json`)), '');

@@ -81,6 +81,17 @@ commands:
   init                      register the pair root in cwd as an instance
   worktree add <id> [--from <ref>] [--new]   git worktree pair + init
   worktree rm <id> [--purge]                down + remove worktree pair + instance
+  worktree add-task <parent> <task> [--from <ref>]
+                                            task worktree for a write sub-agent: branch
+                                            <parent>-task-<task> off the parent dev branch under
+                                            .branch/<parent>/tasks/<task>/ (no instance;
+                                            flat ref name - git forbids nesting a branch
+                                            under an existing leaf name);
+                                            StudioFramework sibling symlinked
+  worktree rm-task <parent> <task> [--branch] [--force]
+                                            remove the task worktree (refuses uncommitted
+                                            tracked changes without --force; branch ref kept
+                                            unless --branch)
   instance ls | show <id> | set <id> k=v | rm <id>
 
 options:
@@ -389,7 +400,24 @@ async function main() {
         });
         return 0;
       }
-      throw new CliError('usage: pi-agent-studio worktree add|rm …', 2);
+      if (sub === 'add-task') {
+        await manage.cmdWorktreeAddTask(out, {
+          parent: positional[1],
+          task: positional[2],
+          from: flags.from,
+        });
+        return 0;
+      }
+      if (sub === 'rm-task') {
+        await manage.cmdWorktreeRmTask(out, {
+          parent: positional[1],
+          task: positional[2],
+          force: !!flags.force,
+          branch: !!flags.branch,
+        });
+        return 0;
+      }
+      throw new CliError('usage: pi-agent-studio worktree add|rm|add-task|rm-task …', 2);
     }
     case 'instance': {
       const { positional } = parseRest(args, []);

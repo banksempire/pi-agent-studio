@@ -330,6 +330,14 @@ async function managerTests() {
       subDef.promptGuidelines.some((g) => /Never plan to keep working while a subagent call runs/.test(g)),
   );
   report(
+    'subagent guidelines tell the model not to mirror its own thinking level',
+    subDef.promptGuidelines.some((g) => /Do not copy your own thinking level/.test(g)),
+  );
+  report(
+    'workflow guidelines tell the model not to mirror its own thinking level',
+    wfDef.promptGuidelines.some((g) => /do not mirror your own level/.test(g)),
+  );
+  report(
     'workflow description states blocking semantics',
     /synchronous and blocking/.test(wfDef.description),
   );
@@ -802,6 +810,11 @@ async function managerTests() {
     rXhigh.error,
   );
   report(
+    'unsupported level error lists the supported levels',
+    !rXhigh.ok && /\(supported: .+\)/.test(rXhigh.error),
+    rXhigh.error,
+  );
+  report(
     'unsupported level spawned zero sessions',
     !childSessions().some((s) => s.thinkingLevel === 'xhigh'),
   );
@@ -811,7 +824,8 @@ async function managerTests() {
   ]);
   report(
     'non-reasoning model rejects low',
-    miniLow.status === 'failed' && miniLow.error === "unsupported thinking level 'low' for model stub-mini",
+    miniLow.status === 'failed' &&
+      miniLow.error === "unsupported thinking level 'low' for model stub-mini (supported: off)",
     miniLow.error,
   );
   const [miniOff] = await manager.runTasks(parentId, [

@@ -67,6 +67,11 @@ export interface DirNode {
   children: DirNode[];
 }
 
+export interface DraftModelChoice {
+  model: ModelInfo;
+  level: string;
+}
+
 export interface ChatSession {
   id: string;
   sessionId: string | null;
@@ -190,6 +195,7 @@ interface ChatState {
   lastError: string;
   sessionErrors: Record<string, string>;
   drafts: Record<string, string>;
+  draftModelChoice: Record<string, DraftModelChoice>;
   sessionStates: Record<string, SessionStateInfo>;
   stateFilter: StateFilter;
   prefs: {
@@ -574,6 +580,7 @@ const state = reactive<ChatState>({
   lastError: '',
   sessionErrors: {},
   drafts: loadDrafts(),
+  draftModelChoice: {},
   sessionStates: {},
   stateFilter: loadStateFilter(),
   prefs: loadPrefs(),
@@ -1211,6 +1218,10 @@ function rekeySessionId(oldId: string, newId: string): void {
   if (state.drafts[oldId] !== undefined) {
     state.drafts[newId] = state.drafts[oldId];
     delete state.drafts[oldId];
+  }
+  if (state.draftModelChoice[oldId]) {
+    state.draftModelChoice[newId] = state.draftModelChoice[oldId];
+    delete state.draftModelChoice[oldId];
   }
   if (windowUi[oldId]) {
     windowUi[newId] = windowUi[oldId];
@@ -2097,6 +2108,29 @@ export function endExternalDrag() {
   ws?.endDrag();
 }
 
+async function applyDraftModelChoice(sessionId: string): Promise<string | null> {
+  const choice = state.draftModelChoice[sessionId];
+  if (!choice) return null;
+  const s = findSession(sessionId);
+  if (!s?.file) return null;
+  try {
+    await api('/api/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        file: s.file,
+        model: `${choice.model.provider}/${choice.model.id}`,
+        thinkLevel: choice.level,
+      }),
+    });
+    delete state.draftModelChoice[sessionId];
+    return null;
+  } catch (e) {
+    if (e instanceof TypeError) state.backend = 'offline';
+    return e instanceof Error ? e.message : String(e);
+  }
+}
+
 export async function sendMessage(
   sessionId: string,
   text: string,
@@ -2128,6 +2162,11 @@ export async function sendMessage(
   }
 
   const live = findSession(s.id) ?? s;
+  const choiceError = await applyDraftModelChoice(live.id);
+  if (choiceError) {
+    setSessionError(live.id, choiceError);
+    return;
+  }
   const mid = `pending-${Date.now()}`;
   const reqId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   pendingSends.set(reqId, { sessionId: live.id, mid, acked: false });
@@ -2648,6 +2687,7 @@ function forgetSessionUi(s: ChatSession) {
   forgetVisit(s.file);
   state.pinnedIds.delete(s.id);
   delete state.drafts[s.id];
+  delete state.draftModelChoice[s.id];
   delete windowUi[s.id];
   delete state.sessionErrors[s.id];
   delete sessionAttachments[s.id];
@@ -2887,6 +2927,12 @@ export const store = {
   setDraft(sessionId: string, text: string) {
     state.drafts[sessionId] = text;
     saveDrafts();
+  },
+  draftModelChoiceOf(sessionId: string): DraftModelChoice | null {
+    return state.draftModelChoice[sessionId] ?? null;
+  },
+  setDraftModelChoice(sessionId: string, model: ModelInfo, level: string) {
+    state.draftModelChoice[sessionId] = { model, level };
   },
   windowUiOf,
   setComposerHeight,

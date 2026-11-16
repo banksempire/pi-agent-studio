@@ -4,11 +4,13 @@ const path = require('node:path');
 const STUB_TEMPLATE = `
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
+import path from 'node:path';
 
 const CONTROL = process.env.STUB_CONTROL_FILE;
 const bus = new EventEmitter();
 let liveStates = [];
 let offset = 0;
+let realizedSeq = 0;
 try {
   offset = fs.statSync(CONTROL).size;
 } catch {}
@@ -52,7 +54,12 @@ export async function createClient() {
       return { ok: true };
     },
     async createSession() {
-      return { file: '/unused' };
+      const file = path.join(
+        path.dirname(CONTROL),
+        'stub-realized-' + Date.now() + '-' + ++realizedSeq + '.jsonl',
+      );
+      fs.writeFileSync(file, '');
+      return { file };
     },
     async openAgent() {
       return { ok: true, state: null };

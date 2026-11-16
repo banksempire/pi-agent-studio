@@ -15,6 +15,7 @@ import { fmtTime as fmtJobTime, fmtRelative } from '../jobText';
 import type { ModelCatalogView, ModelInfo } from '../modelInfo';
 import {
   cachedModelMatches,
+  loadModelCatalog,
   loadSessionModels,
   modelMenuItems,
   setCachedModel,
@@ -191,11 +192,27 @@ const activeSession = computed<ChatSession | null>(() =>
 
 async function loadSessionModelCatalog(force = false) {
   const s = activeSession.value;
-  if (!s?.file) {
+  if (!s) {
     sessionModel.catalog = null;
     return;
   }
   sessionModel.error = '';
+  if (!s.file) {
+    try {
+      const data = await loadModelCatalog();
+      sessionModel.catalog = {
+        ...data,
+        current: data.default,
+        currentThinkingLevel: data.defaultThinkingLevel ?? data.currentThinkingLevel,
+      };
+    } catch (e) {
+      if (!(e instanceof TypeError)) {
+        sessionModel.error = String((e as Error)?.message ?? e);
+      }
+      sessionModel.catalog = null;
+    }
+    return;
+  }
   try {
     sessionModel.catalog = await loadSessionModels(s.file, force);
   } catch (e) {
@@ -220,7 +237,12 @@ void loadSessionModelCatalog();
 
 async function commitSessionModel(m: ModelInfo, thinkLevel: string) {
   const s = activeSession.value;
-  if (!s?.file || sessionModel.busy) return;
+  if (!s) return;
+  if (!s.file) {
+    store.setDraftModelChoice(s.id, m, thinkLevel);
+    return;
+  }
+  if (sessionModel.busy) return;
   if (s.status === 'running') {
     await enqueueModelChange(s.id, `${m.provider}/${m.id}`, thinkLevel);
     return;
@@ -241,12 +263,18 @@ async function commitSessionModel(m: ModelInfo, thinkLevel: string) {
 }
 
 registerPanelData('model-picker-rows', () => {
+  const s = activeSession.value;
   const c = sessionModel.catalog;
-  const thinking = c?.currentThinkingLevel;
+  const choice = s && !s.file ? store.draftModelChoiceOf(s.id) : null;
+  const current = choice?.model ?? c?.current ?? null;
+  const level = choice ? choice.level : c?.currentThinkingLevel;
+  const modelTip = choice
+    ? 'Model for this new chat — applies when you send the first message'
+    : 'Default model for new chats';
   return [
-    { key: 'Provider', value: c?.current?.provider ?? '—' },
-    { key: 'Model', value: c?.current?.name || c?.current?.id || '—' },
-    { key: 'Thinking', value: thinking && thinking !== 'off' ? thinking : '(None)' },
+    { key: 'Provider', value: current?.provider ?? '—', title: modelTip },
+    { key: 'Model', value: current?.name || current?.id || '—', title: modelTip },
+    { key: 'Thinking', value: level && level !== 'off' ? level : '(None)', title: modelTip },
   ];
 });
 

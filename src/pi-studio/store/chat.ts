@@ -13,13 +13,18 @@ export interface ToolCallView {
   args: string;
   result?: string;
   isError?: boolean;
+  partial?: string;
 }
+
+type MsgBlock = { t: 'text'; text: string } | { t: 'think'; i: number } | { t: 'tool'; i: number };
 
 export interface DisplayMessage {
   id: string;
   role: 'user' | 'assistant' | 'summary' | 'bash' | 'custom' | 'toolResult' | 'system';
   text: string;
   thinking?: string;
+  thinkings?: string[];
+  blocks?: MsgBlock[];
   toolCalls?: ToolCallView[];
   images?: { data: string; mimeType: string }[];
   model?: string | null;
@@ -1302,6 +1307,18 @@ function mergeToolResult(s: ChatSession, toolCallId: string, text: string, isErr
     if (tc) {
       tc.result = text;
       tc.isError = isError;
+      delete tc.partial;
+      return;
+    }
+  }
+}
+
+function mergeToolPartial(s: ChatSession, toolCallId: string, text: string) {
+  for (let i = s.messages.length - 1; i >= 0; i--) {
+    const tc = s.messages[i].toolCalls?.find((t) => t.id === toolCallId);
+    if (tc) {
+      if (tc.result !== undefined) return;
+      tc.partial = text;
       return;
     }
   }
@@ -1417,7 +1434,11 @@ function handleEvent(ev: any) {
       }
       break;
     }
-    case 'tool_partial':
+    case 'tool_partial': {
+      const s = byFile(ev.file);
+      if (s) mergeToolPartial(s, ev.toolCallId, ev.text ?? '');
+      break;
+    }
     case 'tool_result': {
       const s = byFile(ev.file);
       if (s) mergeToolResult(s, ev.toolCallId, ev.text ?? '', !!ev.isError);

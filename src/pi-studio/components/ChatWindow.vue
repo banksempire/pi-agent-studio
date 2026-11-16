@@ -84,11 +84,12 @@ function toggle(id: string) {
 }
 
 const mdCache = new WeakMap<DisplayMessage, { text: string; html: string }>();
-function md(m: DisplayMessage): string {
+function md(m: DisplayMessage, override?: string): string {
+  const text = override ?? m.text;
   const hit = mdCache.get(m);
-  if (hit && hit.text === m.text) return hit.html;
-  const html = m.text ? DOMPurify.sanitize(marked.parse(m.text) as string) : '';
-  mdCache.set(m, { text: m.text, html });
+  if (hit && hit.text === text) return hit.html;
+  const html = text ? DOMPurify.sanitize(marked.parse(text) as string) : '';
+  mdCache.set(m, { text, html });
   return html;
 }
 
@@ -349,7 +350,7 @@ watch(() => {
     ? tcs
         .map(
           (t) =>
-            `${t.id}:${t.name}:${(t.args ?? '').length}:${(t.result ?? '').length}${t.isError ? ':e' : ''}`,
+            `${t.id}:${t.name}:${(t.args ?? '').length}:${(t.result ?? '').length}:${(t.partial ?? '').length}${t.isError ? ':e' : ''}`,
         )
         .join('|')
     : '';
@@ -379,7 +380,9 @@ function roleLabel(m: DisplayMessage): string {
   return ROLE_LABELS[m.role] ?? 'custom';
 }
 
-export type AgentPart = { kind: 'group'; group: ActionGroup } | { kind: 'reply'; msg: DisplayMessage };
+export type AgentPart =
+  | { kind: 'group'; group: ActionGroup }
+  | { kind: 'reply'; msg: DisplayMessage; text?: string; pid: string };
 
 export type ChatItem =
   | { kind: 'user' | 'system' | 'summary' | 'custom'; msg: DisplayMessage }
@@ -398,7 +401,60 @@ interface PendingMove {
   args?: string;
   result?: string;
   isError?: boolean;
+  partial?: string;
   text?: string;
+}
+
+type AssistantSegment = { kind: 'text'; text: string } | { kind: 'group'; moves: PendingMove[] };
+
+function assistantSegments(m: DisplayMessage): AssistantSegment[] {
+  const segs: AssistantSegment[] = [];
+  if (m.blocks?.length) {
+    for (const blk of m.blocks) {
+      if (blk.t === 'text') {
+        const last = segs[segs.length - 1];
+        if (last?.kind === 'text') last.text = `${last.text}\n${blk.text}`;
+        else segs.push({ kind: 'text', text: blk.text });
+        continue;
+      }
+      let mv: PendingMove | null = null;
+      if (blk.t === 'think') {
+        mv = { kind: 'thinking', name: 'Thinking', thinking: m.thinkings?.[blk.i] ?? '' };
+      } else {
+        const tc = m.toolCalls?.[blk.i];
+        if (tc) {
+          mv = {
+            kind: 'tool',
+            name: tc.name,
+            args: tc.args,
+            result: tc.result,
+            isError: tc.isError,
+            partial: tc.partial,
+          };
+        }
+      }
+      if (!mv) continue;
+      const last = segs[segs.length - 1];
+      if (last?.kind === 'group') last.moves.push(mv);
+      else segs.push({ kind: 'group', moves: [mv] });
+    }
+    return segs;
+  }
+  const moves: PendingMove[] = [];
+  if (m.thinking) moves.push({ kind: 'thinking', name: 'Thinking', thinking: m.thinking });
+  for (const tc of m.toolCalls ?? []) {
+    moves.push({
+      kind: 'tool',
+      name: tc.name,
+      args: tc.args,
+      result: tc.result,
+      isError: tc.isError,
+      partial: tc.partial,
+    });
+  }
+  if (moves.length) segs.push({ kind: 'group', moves });
+  if (m.text.trim()) segs.push({ kind: 'text', text: m.text });
+  return segs;
 }
 
 function groupDoneLabel(g: ActionGroup): string {
@@ -524,26 +580,35 @@ const items = computed<ChatItem[]>(() => {
     const startTs = msgs[work[0].src].ts;
     const end = endTs ?? msgs[work[work.length - 1].src].ts;
     const group = new ActionGroup(workId, startTs);
-    group.wip = wip;
     group.durMs = Math.max(0, end - startTs);
-    work.forEach(({ src, mv }, i) => {
-      const live = wip && i === work.length - 1;
-      const b = new ActionBubble(mv.kind, `${workId}:${i}`, mv.name, msgs[src].ts);
-      b.live = live;
+    work.forEach(({ src, mv }, wi) => {
+      const b = new ActionBubble(mv.kind, `${workId}:${wi}`, mv.name, msgs[src].ts);
       b.durMs = Math.max(0, (msgs[src + 1]?.ts ?? end) - msgs[src].ts);
       if (mv.kind === 'thinking') {
         b.detail = mv.thinking ?? '';
-        b.status = live ? 'pending' : 'ok';
+        b.status = 'ok';
       } else if (mv.kind === 'bash') {
         b.detail = mv.text ?? '';
         b.status = mv.text ? 'ok' : 'pending';
       } else {
         b.args = mv.args;
-        b.detail = mv.result ?? '';
+        b.detail = mv.result ?? mv.partial ?? '';
         b.isError = !!mv.isError;
         b.status = mv.isError ? 'fail' : mv.result !== undefined ? 'ok' : 'pending';
       }
       group.bubbles.push(b);
+    });
+    const pendingTool = group.bubbles.find((b) => b.kind === 'tool' && b.status === 'pending');
+    const lastBubble = group.bubbles[group.bubbles.length - 1];
+    group.wip = !!pendingTool || (!!wip && lastBubble?.kind === 'thinking');
+    const liveIdx = pendingTool
+      ? group.bubbles.indexOf(pendingTool)
+      : group.wip
+        ? group.bubbles.length - 1
+        : -1;
+    group.bubbles.forEach((b, bi) => {
+      b.live = bi === liveIdx;
+      if (b.kind === 'thinking' && b.live) b.status = 'pending';
     });
     parts.push({ kind: 'group', group });
     work.length = 0;
@@ -575,18 +640,30 @@ const items = computed<ChatItem[]>(() => {
     }
     if (m.role === 'assistant') {
       let added = false;
-      if (m.thinking) {
-        addMove(i, m.id, 'thinking', { thinking: m.thinking });
-        added = true;
+      const endTs = msgs[i + 1]?.ts ?? m.ts;
+      const hasReplyFlag = !!(m.error || m.stopReason === 'error' || m.stopReason === 'aborted');
+      let replied = false;
+      const segs = assistantSegments(m);
+      for (let si = 0; si < segs.length; si++) {
+        const seg = segs[si];
+        if (seg.kind === 'group') {
+          for (const mv of seg.moves) {
+            addMove(i, m.id, mv.kind, mv);
+            added = true;
+          }
+          const nextText = segs.slice(si + 1).find((x) => x.kind === 'text' && x.text.trim());
+          if (nextText) flush(endTs, false);
+        } else if (seg.text.trim()) {
+          flush(added ? endTs : m.ts, false);
+          ensureHeader(header, m);
+          parts.push({ kind: 'reply', msg: m, text: seg.text, pid: `${m.id}:${si}` });
+          replied = true;
+        }
       }
-      for (const tc of m.toolCalls ?? []) {
-        addMove(i, m.id, 'tool', { name: tc.name, args: tc.args, result: tc.result, isError: tc.isError });
-        added = true;
-      }
-      if (m.text.trim() || m.error || m.stopReason === 'error' || m.stopReason === 'aborted') {
-        flush(added ? (msgs[i + 1]?.ts ?? m.ts) : m.ts, false);
+      if (!replied && hasReplyFlag) {
+        flush(added ? endTs : m.ts, false);
         ensureHeader(header, m);
-        parts.push({ kind: 'reply', msg: m });
+        parts.push({ kind: 'reply', msg: m, pid: `${m.id}:e` });
       }
       continue;
     }
@@ -1241,8 +1318,8 @@ watch(
           <template v-if="item.kind === 'agent'">
             <div
               v-for="part in item.parts"
-              :key="part.kind === 'group' ? part.group.id : part.msg.id"
-              :data-part-id="part.kind === 'group' ? part.group.id : part.msg.id"
+              :key="part.kind === 'group' ? part.group.id : part.pid"
+              :data-part-id="part.kind === 'group' ? part.group.id : part.pid"
               class="chat-agent-part"
             >
               <div
@@ -1285,7 +1362,7 @@ watch(
                       <pre v-if="b.kind === 'thinking'" class="chat-ab-code">{{ b.detail }}</pre>
                       <template v-else-if="b.kind === 'tool' || b.kind === 'compaction'">
                         <pre v-if="b.args" class="chat-ab-code">{{ b.args }}</pre>
-                        <div v-if="b.status !== 'pending'" class="chat-ab-result" :class="{ 'chat-ab-result--error': b.isError }">
+                        <div v-if="b.status !== 'pending' || b.detail" class="chat-ab-result" :class="{ 'chat-ab-result--error': b.isError }">
                           <pre class="chat-ab-code chat-ab-result-body">{{ b.detail }}</pre>
                         </div>
                       </template>
@@ -1296,8 +1373,8 @@ watch(
               </div>
 
               <template v-else>
-                <div v-if="renderMd" class="chat-msg-md" v-html="md(part.msg)" />
-                <template v-else>{{ part.msg.text }}</template>
+                <div v-if="renderMd" class="chat-msg-md" v-html="md(part.msg, part.text)" />
+                <template v-else>{{ part.text ?? part.msg.text }}</template>
                 <div v-if="part.msg.error" class="chat-aborted chat-aborted--error"><SvgIcon name="⚠" /> {{ part.msg.error }}</div>
               </template>
             </div>

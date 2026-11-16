@@ -370,10 +370,22 @@ function toDisplayMessage(message) {
     d.stopReason = message.stopReason ?? null;
     d.error = message.errorMessage ?? null;
     const thinking = [];
+    const thinkings = [];
     const toolCalls = [];
+    const blocks = [];
+    let textRun = null;
+    const flushTextRun = () => {
+      if (textRun?.trim()) blocks.push({ t: 'text', text: textRun });
+      textRun = null;
+    };
     for (const block of Array.isArray(message.content) ? message.content : []) {
-      if (block.type === 'thinking') thinking.push(block.thinking);
-      else if (block.type === 'toolCall') {
+      if (block.type === 'thinking') {
+        flushTextRun();
+        thinking.push(block.thinking);
+        thinkings.push(block.thinking ?? '');
+        blocks.push({ t: 'think', i: thinkings.length - 1 });
+      } else if (block.type === 'toolCall') {
+        flushTextRun();
         toolCalls.push({
           id: block.id,
           name: block.name,
@@ -381,10 +393,16 @@ function toDisplayMessage(message) {
           result: undefined,
           isError: undefined,
         });
+        blocks.push({ t: 'tool', i: toolCalls.length - 1 });
+      } else if (block.type === 'text') {
+        textRun = textRun === null ? (block.text ?? '') : `${textRun}\n${block.text ?? ''}`;
       }
     }
+    flushTextRun();
     d.thinking = thinking.length ? thinking.join('\n') : undefined;
+    d.thinkings = thinkings.length ? thinkings : undefined;
     d.toolCalls = toolCalls.length ? toolCalls : undefined;
+    d.blocks = blocks.length ? blocks : undefined;
   } else if (message.role === 'user') {
     d.text = plainTextOf(message.content);
     const imgs = imagesOf(message.content);

@@ -147,6 +147,57 @@ function writeFixtureSession() {
   return file;
 }
 
+function writeToolOrderFixture() {
+  const dir = path.join(SESSIONS_ROOT, '--tmp-transcript--');
+  fs.mkdirSync(dir, { recursive: true });
+  const id = '01a0test-0000-75c6-af26-f6ec5ae4544b';
+  const entry = (n, extra) =>
+    JSON.stringify({ id: `o${n}`, parentId: n > 1 ? `o${n - 1}` : null, timestamp: ts(n), ...extra });
+  const lines = [
+    JSON.stringify({ type: 'session', version: 3, id, timestamp: ts(0), cwd: RUN_ROOT }),
+    entry(1, {
+      type: 'message',
+      message: { role: 'user', content: [{ type: 'text', text: 'spawn it' }], timestamp: T0 + 1000 },
+    }),
+    entry(2, {
+      type: 'message',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Spawning the builder now.' },
+          { type: 'thinking', thinking: 'full design contract ready' },
+          { type: 'toolCall', id: 'call-9', name: 'subagent', arguments: { task: 'build it' } },
+        ],
+        timestamp: T0 + 2000,
+        stopReason: 'toolUse',
+      },
+    }),
+    entry(3, {
+      type: 'message',
+      message: {
+        role: 'toolResult',
+        toolCallId: 'call-9',
+        toolName: 'subagent',
+        isError: false,
+        content: [{ type: 'text', text: 'sub-agent finished the build' }],
+        timestamp: T0 + 3000,
+      },
+    }),
+    entry(4, {
+      type: 'message',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Build complete.' }],
+        timestamp: T0 + 4000,
+        stopReason: 'stop',
+      },
+    }),
+  ];
+  const file = path.join(dir, 'tool-order.jsonl');
+  fs.writeFileSync(file, `${lines.join('\n')}\n`);
+  return file;
+}
+
 async function unitAssertions(report) {
   const { toDisplayMessage } = await import(
     pathToFileURL(path.join(PRODUCT_ROOT, 'src', 'pi-nest', 'src', 'sdk-bridge.mjs'))
@@ -170,6 +221,72 @@ async function unitAssertions(report) {
   );
   const user = toDisplayMessage({ role: 'user', content: [{ type: 'text', text: 'hi' }], timestamp: T0 });
   report('unit: user messages unaffected', !!user && user.text === 'hi', JSON.stringify(user));
+
+  const textFirst = toDisplayMessage({
+    role: 'assistant',
+    content: [
+      { type: 'text', text: 'Retrying now.' },
+      { type: 'thinking', thinking: 'plan the call' },
+      { type: 'toolCall', id: 'call-1', name: 'subagent', arguments: { task: 'build' } },
+    ],
+    timestamp: T0,
+    stopReason: 'toolUse',
+  });
+  report(
+    'regression: text-first assistant keeps stream order (text before think/tool)',
+    !!textFirst &&
+      JSON.stringify(textFirst.blocks) ===
+        JSON.stringify([
+          { t: 'text', text: 'Retrying now.' },
+          { t: 'think', i: 0 },
+          { t: 'tool', i: 0 },
+        ]),
+    JSON.stringify(textFirst?.blocks),
+  );
+  report(
+    'regression: thinkings split per thinking block',
+    !!textFirst && JSON.stringify(textFirst.thinkings) === JSON.stringify(['plan the call']),
+    JSON.stringify(textFirst?.thinkings),
+  );
+  const thinkFirst = toDisplayMessage({
+    role: 'assistant',
+    content: [
+      { type: 'thinking', thinking: 'ponder first' },
+      { type: 'text', text: 'then reply' },
+      { type: 'toolCall', id: 'call-2', name: 'read', arguments: { path: '/x' } },
+    ],
+    timestamp: T0,
+    stopReason: 'toolUse',
+  });
+  report(
+    'regression: thinking-first assistant keeps stream order (think, text, tool)',
+    !!thinkFirst &&
+      JSON.stringify(thinkFirst.blocks) ===
+        JSON.stringify([
+          { t: 'think', i: 0 },
+          { t: 'text', text: 'then reply' },
+          { t: 'tool', i: 0 },
+        ]),
+    JSON.stringify(thinkFirst?.blocks),
+  );
+  const mergedText = toDisplayMessage({
+    role: 'assistant',
+    content: [
+      { type: 'text', text: 'one' },
+      { type: 'text', text: 'two' },
+      { type: 'text', text: '  ' },
+      { type: 'text', text: 'three' },
+    ],
+    timestamp: T0,
+    stopReason: 'stop',
+  });
+  report(
+    'regression: consecutive text blocks collapse to one non-empty text entry',
+    !!mergedText &&
+      JSON.stringify(mergedText.blocks) === JSON.stringify([{ t: 'text', text: 'one\ntwo\n  \nthree' }]) &&
+      mergedText.text === 'one\ntwo\n  \nthree',
+    JSON.stringify(mergedText?.blocks),
+  );
 }
 
 (async () => {
@@ -241,6 +358,36 @@ async function unitAssertions(report) {
       'shape: compaction still maps to the summary row',
       !!summaryRow && summaryRow.text.startsWith('## Goal'),
       JSON.stringify(summaryRow),
+    );
+
+    const orderFixture = writeToolOrderFixture();
+    const orderRes = await getJson(
+      `http://127.0.0.1:${backendPort}/api/sessions/messages?file=${encodeURIComponent(orderFixture)}`,
+    );
+    report('order: tool-order fixture loads', orderRes.status === 200, `status=${orderRes.status}`);
+    const asst = (orderRes.json.messages ?? []).find((m) => m.toolCalls?.length);
+    report(
+      'regression: persisted text-first assistant ships stream-ordered blocks',
+      !!asst &&
+        JSON.stringify(asst.blocks) ===
+          JSON.stringify([
+            { t: 'text', text: 'Spawning the builder now.' },
+            { t: 'think', i: 0 },
+            { t: 'tool', i: 0 },
+          ]),
+      JSON.stringify(asst?.blocks),
+    );
+    report(
+      'regression: persisted toolCall keeps its merged toolResult',
+      !!asst &&
+        asst.toolCalls?.[0]?.result === 'sub-agent finished the build' &&
+        asst.toolCalls?.[0]?.isError === false,
+      JSON.stringify(asst?.toolCalls),
+    );
+    report(
+      'regression: persisted thinkings array carries the thinking text',
+      !!asst && JSON.stringify(asst.thinkings) === JSON.stringify(['full design contract ready']),
+      JSON.stringify(asst?.thinkings),
     );
   } catch (e) {
     report('suite completed', false, e instanceof Error ? e.message : String(e));

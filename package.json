@@ -46,6 +46,7 @@
     "check:peakhours": "node scripts/check-peak-hours.cjs",
     "check:scheduler": "node scripts/check-scheduler.cjs",
     "check:subagents": "node scripts/check-subagents.cjs",
+    "check:subagent-card": "node scripts/check-subagent-card.cjs",
     "check:transcript": "node scripts/check-transcript.cjs"
   },
   "dependencies": {

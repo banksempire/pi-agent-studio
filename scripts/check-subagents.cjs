@@ -318,6 +318,26 @@ async function managerTests() {
   const tools = manager.toolsFor(parentId);
   report('tools: subagent + workflow registered', tools.map((t) => t.name).join(',') === 'subagent,workflow');
 
+  const subDef = tools.find((t) => t.name === 'subagent');
+  const wfDef = tools.find((t) => t.name === 'workflow');
+  report(
+    'subagent description states blocking semantics',
+    /synchronous and blocking/.test(subDef.description) && /never with you/.test(subDef.description),
+  );
+  report(
+    'subagent guidelines forbid working while the call runs',
+    subDef.promptGuidelines.some((g) => /blocks until every task settles/.test(g)) &&
+      subDef.promptGuidelines.some((g) => /Never plan to keep working while a subagent call runs/.test(g)),
+  );
+  report(
+    'workflow description states blocking semantics',
+    /synchronous and blocking/.test(wfDef.description),
+  );
+  report(
+    'workflow guidelines forbid working while the call runs',
+    wfDef.promptGuidelines.some((g) => /blocks until the whole DAG finishes/.test(g)),
+  );
+
   appendChildRule({ match: 'list the routes', reply: 'src/a.ts\nsrc/b.ts' });
   const runs = await manager.runTasks(parentId, [
     { prompt: 'list the routes' },
@@ -363,6 +383,138 @@ async function managerTests() {
   report(
     'failing child surfaces error',
     failRun.status === 'failed' && failRun.error === 'stub child failure',
+  );
+
+  console.log('write mode (hands)');
+  const childSessionRecords = () => {
+    const file = path.join(STUB_STATE_DIR, 'subagent-sessions.jsonl');
+    if (!fs.existsSync(file)) return [];
+    return fs
+      .readFileSync(file, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+  };
+  appendChildRule({ match: 'implement the widget', behavior: 'reply', reply: 'done: src/w.ts' });
+  const [writeRun] = await manager.runTasks(parentId, [
+    { prompt: 'implement the widget', mode: 'write', branch: 'feat-x/task-1' },
+  ]);
+  report('write task completes', writeRun.status === 'completed', `${writeRun.status}:${writeRun.error}`);
+  const writeRec = childSessionRecords().at(-1);
+  report(
+    'write child receives hands tools',
+    Array.isArray(writeRec?.tools) && writeRec.tools.join(',') === 'read,grep,find,ls,edit,write,bash',
+    JSON.stringify(writeRec?.tools),
+  );
+  report(
+    'write child gets hands-on contract (no commits)',
+    typeof writeRec?.contract === 'string' &&
+      writeRec.contract.includes('hands-on') &&
+      writeRec.contract.includes('Never git commit'),
+  );
+  report(
+    'read child contract stays read-only',
+    childSessionRecords().some(
+      (s) => typeof s.contract === 'string' && s.contract.includes('You are read-only'),
+    ),
+  );
+  const writeMeta = readChildResults('parent-1').find((r) => r.prompt === 'implement the widget');
+  report(
+    'result.json records mode + branch',
+    writeMeta?.mode === 'write' && writeMeta?.branch === 'feat-x/task-1',
+    JSON.stringify([writeMeta?.mode, writeMeta?.branch]),
+  );
+  const preBad = childSessionRecords().length;
+  const [badMode] = await manager.runTasks(parentId, [{ prompt: 'nope', mode: 'portal' }]);
+  report(
+    'invalid mode fails fast without child',
+    badMode.status === 'failed' &&
+      /invalid mode/.test(badMode.error) &&
+      childSessionRecords().length === preBad,
+    badMode.error,
+  );
+  report(
+    'subagent description offers write mode',
+    /mode "write" children get edit\/write\/bash/.test(subDef.description ?? ''),
+  );
+  report(
+    'subagent schema exposes mode + branch',
+    ['mode', 'branch'].every((k) => JSON.stringify(subDef.parameters).includes(k)),
+  );
+
+  console.log('write lane (per-cwd serialization)');
+  const { SlotGovernor } = await import(pathToFileURL(path.join(NEST, 'governor.mjs')).href);
+  const gov = new SlotGovernor({ globalMax: 4, providerMax: 4, modelMax: 4, writePerCwd: 1 });
+  const govKey = { provider: 'stub', model: 'stub/pro' };
+  const govSlot1 = await gov.waitForSlot(govKey, '/wt-a');
+  report('governor blocks second writer in same lane', gov.tryAcquire(govKey, '/wt-a') === null);
+  report('governor allows writer in another lane', gov.tryAcquire(govKey, '/wt-b') !== null);
+  report('governor allows readers alongside writers', gov.tryAcquire(govKey, null) !== null);
+  gov.release(govSlot1);
+  report('governor frees lane on release', gov.tryAcquire(govKey, '/wt-a') !== null);
+  report('limits expose writePerCwd', gov.limits.writePerCwd === 1, JSON.stringify(gov.limits));
+
+  appendChildRule({ match: 'slow write', behavior: 'slow', ms: 200, reply: 'slow done' });
+  const slowStart = Date.now();
+  const sameCwd = await manager.runTasks(parentId, [
+    { prompt: 'slow write a', mode: 'write', cwd: TMP },
+    { prompt: 'slow write b', mode: 'write', cwd: TMP },
+  ]);
+  const sameCwdMs = Date.now() - slowStart;
+  report(
+    'same-cwd write tasks serialize',
+    sameCwd.every((r) => r.status === 'completed') && sameCwdMs >= 380,
+    `${sameCwdMs}ms`,
+  );
+  const parStart = Date.now();
+  const diffCwd = await manager.runTasks(parentId, [
+    { prompt: 'slow write c', mode: 'write', cwd: path.join(TMP, 'wt-a') },
+    { prompt: 'slow write d', mode: 'write', cwd: path.join(TMP, 'wt-b') },
+  ]);
+  const diffCwdMs = Date.now() - parStart;
+  report(
+    'different-cwd write tasks run in parallel',
+    diffCwd.every((r) => r.status === 'completed') && diffCwdMs < 380,
+    `${diffCwdMs}ms`,
+  );
+
+  let badSpecErr = '';
+  try {
+    await manager.runWorkflow(parentId, {
+      name: 'badmode',
+      nodes: [{ id: 'a', prompt: 'p', model: 'stub-pro', thinking: 'off', mode: 'portal' }],
+    });
+  } catch (e) {
+    badSpecErr = String(e?.message ?? e);
+  }
+  report('workflow rejects invalid node mode', /mode must be/.test(badSpecErr), badSpecErr);
+
+  appendChildRule({ match: 'wf write task', behavior: 'reply', reply: 'wrote things' });
+  const wfWrite = await manager.runWorkflow(parentId, {
+    name: 'hands',
+    nodes: [
+      {
+        id: 'imp',
+        prompt: 'wf write task',
+        model: 'stub-pro',
+        thinking: 'off',
+        mode: 'write',
+        branch: 'feat-x/task-2',
+      },
+    ],
+  });
+  report('workflow write node runs', wfWrite.ok, wfWrite.error);
+  const wfRec = childSessionRecords().at(-1);
+  report(
+    'workflow write node gets hands tools',
+    Array.isArray(wfRec?.tools) && wfRec.tools.includes('write'),
+    JSON.stringify(wfRec?.tools),
+  );
+  const wfMeta = readChildResults('parent-1').find((r) => r.prompt === 'wf write task');
+  report(
+    'workflow write node records mode + branch',
+    wfMeta?.mode === 'write' && wfMeta?.branch === 'feat-x/task-2',
+    JSON.stringify([wfMeta?.mode, wfMeta?.branch]),
   );
 
   console.log('tool result disk paths');

@@ -216,6 +216,80 @@ export async function cmdWorktreeAdd(out, opts = {}) {
   await cmdInit(out, { ...opts, pairRoot: root, id, force: false });
 }
 
+export async function cmdWorktreeAddTask(out, opts = {}) {
+  const parent = opts.parent;
+  const task = opts.task;
+  if (!parent || !validId(parent)) throw new CliError('worktree add-task requires a parent branch id', 2);
+  if (!task || !validId(task)) throw new CliError('worktree add-task requires a task id', 2);
+  const parentRef = opts.from ?? parent;
+  if (opts.from) {
+    if (!git(['rev-parse', '--verify', '--quiet', parentRef], PRODUCT_ROOT, { allowFail: true })) {
+      throw new CliError(`ref '${parentRef}' not found in the pi-agent-studio repo`, 2);
+    }
+  } else if (!branchExists(PRODUCT_ROOT, parentRef)) {
+    throw new CliError(`branch '${parentRef}' not found in the pi-agent-studio repo`, 2);
+  }
+  const parentPair = path.join(worktreesRoot(), parent);
+  if (!fs.existsSync(path.join(parentPair, 'pi-agent-studio'))) {
+    throw new CliError(`parent pair worktree missing: ${parentPair} (run 'worktree add ${parent}' first)`, 2);
+  }
+  const branch = `${parent}-task-${task}`;
+  if (branchExists(PRODUCT_ROOT, branch)) throw new CliError(`branch '${branch}' already exists`, 2);
+  const taskRoot = path.join(parentPair, 'tasks', task);
+  const taskRepo = path.join(taskRoot, 'pi-agent-studio');
+  if (fs.existsSync(taskRoot)) throw new CliError(`${taskRoot} already exists`, 2);
+  fs.mkdirSync(taskRoot, { recursive: true });
+  try {
+    git(['worktree', 'add', '-b', branch, taskRepo, parentRef], PRODUCT_ROOT);
+  } catch (e) {
+    fs.rmSync(taskRoot, { recursive: true, force: true });
+    git(['worktree', 'prune'], PRODUCT_ROOT, { allowFail: true });
+    throw e;
+  }
+  try {
+    fs.symlinkSync(path.join('..', '..', 'StudioFramework'), path.join(taskRoot, 'StudioFramework'), 'dir');
+  } catch (e) {
+    git(['worktree', 'remove', '--force', taskRepo], PRODUCT_ROOT, { allowFail: true });
+    git(['worktree', 'prune'], PRODUCT_ROOT, { allowFail: true });
+    fs.rmSync(taskRoot, { recursive: true, force: true });
+    throw e;
+  }
+  copyModulesFrom(path.join(parentPair, 'pi-agent-studio'), taskRepo, out);
+  out.line(`${okSym} task worktree ${taskRepo}`);
+  out.line(`    branch ${branch} (off ${parentRef}) · StudioFramework sibling symlinked · no instance`);
+  out.line(`    merge back yourself: git -C ${path.join(parentPair, 'pi-agent-studio')} merge ${branch}`);
+}
+
+export async function cmdWorktreeRmTask(out, opts = {}) {
+  const parent = opts.parent;
+  const task = opts.task;
+  if (!parent || !validId(parent)) throw new CliError('worktree rm-task requires a parent branch id', 2);
+  if (!task || !validId(task)) throw new CliError('worktree rm-task requires a task id', 2);
+  const branch = `${parent}-task-${task}`;
+  const taskRoot = path.join(worktreesRoot(), parent, 'tasks', task);
+  const taskRepo = path.join(taskRoot, 'pi-agent-studio');
+  if (!fs.existsSync(taskRepo)) throw new CliError(`task worktree not found: ${taskRepo}`, 2);
+  const dirty = git(['status', '--porcelain', '--untracked-files=no'], taskRepo, { allowFail: true });
+  if (dirty && !opts.force) {
+    throw new CliError(
+      `task worktree has uncommitted tracked changes — hand them to the coordinator or pass --force`,
+      2,
+    );
+  }
+  git(['worktree', 'remove', '--force', taskRepo], PRODUCT_ROOT);
+  git(['worktree', 'prune'], PRODUCT_ROOT, { allowFail: true });
+  fs.rmSync(taskRoot, { recursive: true, force: true });
+  try {
+    fs.rmdirSync(path.dirname(taskRoot));
+  } catch {}
+  if (opts.branch && branchExists(PRODUCT_ROOT, branch)) {
+    git(['branch', '-D', branch], PRODUCT_ROOT);
+  }
+  out.line(
+    `${okSym} task worktree removed ${taskRoot}${opts.branch ? ` · branch ${branch} deleted` : ` · branch ${branch} kept`}`,
+  );
+}
+
 export async function cmdWorktreeRm(out, opts = {}) {
   const id = opts.id;
   const inst = loadInstance(id);
@@ -228,10 +302,13 @@ export async function cmdWorktreeRm(out, opts = {}) {
   git(['worktree', 'prune'], PRODUCT_ROOT, { allowFail: true });
   git(['worktree', 'prune'], SF_ROOT, { allowFail: true });
   fs.rmSync(instanceStateDir(id), { recursive: true, force: true });
-  if (opts.purge) fs.rmSync(path.join(inst.pairRoot, '.studio'), { recursive: true, force: true });
-  try {
-    fs.rmdirSync(inst.pairRoot);
-  } catch {}
+  if (opts.purge) {
+    fs.rmSync(inst.pairRoot, { recursive: true, force: true });
+  } else {
+    try {
+      fs.rmdirSync(inst.pairRoot);
+    } catch {}
+  }
   out.line(`${okSym} removed worktree pair + instance ${id}${opts.purge ? ' (sessions purged)' : ''}`);
 }
 

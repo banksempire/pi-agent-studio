@@ -15,7 +15,10 @@ import {
 
 export const SUBAGENTS_DIRNAME = '_subagents';
 const CHILD_TOOLS = ['read', 'grep', 'find', 'ls'];
+const CHILD_TOOLS_WRITE = [...CHILD_TOOLS, 'edit', 'write', 'bash'];
+const CHILD_MODES = ['read', 'write'];
 const CHILD_TIMEOUT_MS = Number(process.env.PI_STUDIO_SUBAGENT_TIMEOUT_MS ?? 15 * 60_000);
+const CHILD_WRITE_TIMEOUT_MS = Number(process.env.PI_STUDIO_SUBAGENT_WRITE_TIMEOUT_MS ?? 30 * 60_000);
 const REPAIR_PROMPT =
   'You used tools but never produced a final answer. Respond now with a concise, self-contained summary of your findings. Do not use tools.';
 const RESULT_PREVIEW_CHARS = 400;
@@ -29,6 +32,16 @@ const SUBAGENT_CONTRACT = [
   'You are a focused sub-agent spawned by a coordinator.',
   'Your final message is the only thing the coordinator receives - end with a concise, self-contained answer.',
   'You are read-only: gather and report; do not attempt changes.',
+  'Do not spawn further agents. Do not prefix shell paths with cd - work from your current directory.',
+].join(' ');
+
+const SUBAGENT_CONTRACT_WRITE = [
+  'You are a hands-on sub-agent spawned by a coordinator to do coding work.',
+  'Work only inside your current directory.',
+  'Never git commit, git push, or create branches or worktrees - the coordinator owns version control.',
+  'Run the checks relevant to your change before finishing.',
+  'Your final message is the only thing the coordinator receives - end with a structured summary:',
+  'files changed, what and why, checks run with results, anything deferred.',
   'Do not spawn further agents. Do not prefix shell paths with cd - work from your current directory.',
 ].join(' ');
 
@@ -179,13 +192,18 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
     return path.join(sessionsRoot, SUBAGENTS_DIRNAME, parentFolderId(parentAgentId));
   }
 
+  function resolveRunCwd(run, parentSession) {
+    const parent = parentSession ?? getSession(run.parent);
+    return run.cwd ?? parent?.sessionManager?.getCwd() ?? process.cwd();
+  }
+
   function resultPathFor(run) {
     return path.join(baseDir(run.parent), run.id, 'result.json');
   }
 
   function childSession(run, parentSession, modelRuntime, model, thinkingLevel) {
     const parent = parentSession ?? getSession(run.parent);
-    const cwd = run.cwd ?? parent?.sessionManager?.getCwd() ?? process.cwd();
+    const cwd = resolveRunCwd(run, parent);
     const dir = path.join(baseDir(run.parent), run.id);
     mkdirSync(dir, { recursive: true });
     const sm = new sdk.SessionManager(cwd, dir, path.join(dir, 'transcript.jsonl'), true);
@@ -194,7 +212,9 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
       agentDir: sdk.getAgentDir(),
       appendSystemPromptOverride: (base) => [
         ...base,
-        [SUBAGENT_CONTRACT, run.role].filter(Boolean).join(' '),
+        [run.mode === 'write' ? SUBAGENT_CONTRACT_WRITE : SUBAGENT_CONTRACT, run.role]
+          .filter(Boolean)
+          .join(' '),
       ],
     });
     return sdk.createAgentSession({
@@ -204,7 +224,7 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
       modelRuntime: modelRuntime ?? parent?.modelRuntime,
       model: model ?? parent?.model ?? undefined,
       thinkingLevel: thinkingLevel ?? undefined,
-      tools: CHILD_TOOLS,
+      tools: run.mode === 'write' ? CHILD_TOOLS_WRITE : CHILD_TOOLS,
       customTools: [],
     });
   }
@@ -237,7 +257,8 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
     const feed = createFeed(run.label, onUpdate);
     run.status = 'queued';
     feed.status(run.status);
-    const slot = await governor.waitForSlot(modelKeyOf(model));
+    const writeLane = run.mode === 'write' ? resolveRunCwd(run, parentSession) : null;
+    const slot = await governor.waitForSlot(modelKeyOf(model), writeLane);
     if (run.status === 'aborted') {
       run.error = run.error || 'parent aborted while queued';
       governor.release(slot);
@@ -257,10 +278,11 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
       const collected = createAnswerCollector();
       subscribeChild(child.session, collected, feed);
       let timedOut = false;
+      const timeoutMs = run.mode === 'write' ? CHILD_WRITE_TIMEOUT_MS : CHILD_TIMEOUT_MS;
       const timer = setTimeout(() => {
         timedOut = true;
         child.session.abort().catch(() => {});
-      }, CHILD_TIMEOUT_MS);
+      }, timeoutMs);
       timer.unref?.();
       try {
         await child.session.prompt(run.prompt);
@@ -326,6 +348,8 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
             model: run.model ?? null,
             thinking: run.thinking ?? null,
             cwd: run.cwd ?? null,
+            mode: run.mode ?? 'read',
+            branch: run.branch ?? null,
             result: run.result ?? '',
             error: run.error ?? '',
             startedAt: run.startedAt ?? null,
@@ -354,6 +378,8 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
       model: t.model ?? null,
       thinking: t.thinking ?? null,
       cwd: t.cwd ?? null,
+      mode: t.mode ?? 'read',
+      branch: typeof t.branch === 'string' && t.branch.trim() ? t.branch : null,
       status: 'queued',
       result: '',
       error: '',
@@ -362,6 +388,11 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
     }));
     await Promise.all(
       built.map((run) => {
+        if (!CHILD_MODES.includes(run.mode)) {
+          run.status = 'failed';
+          run.error = `invalid mode '${run.mode}' (use read|write)`;
+          return Promise.resolve();
+        }
         const model = resolveModel(parent, run.model);
         if (run.model && model === undefined) {
           run.status = 'failed';
@@ -426,6 +457,8 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
             model: node.model ?? null,
             thinking: node.thinking ?? null,
             cwd: node.cwd ?? null,
+            mode: node.mode ?? 'read',
+            branch: node.branch ?? null,
             nodeId,
             status: 'queued',
             result: '',
@@ -518,15 +551,24 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
       name: 'subagent',
       label: 'Subagent',
       description: [
-        'Spawn one or more read-only sub-agents that work in isolated sessions and wait for their results.',
+        'Spawn one or more sub-agents that work in isolated sessions and wait for their results.',
+        'Children are read-only researchers by default; mode "write" children get edit/write/bash for coding work.',
         'Each task gets a fresh sub-agent with its own context; only its final message is returned.',
-        'Use for independent research, review, or exploration that would flood this conversation.',
-        'Tasks run in parallel (bounded by the studio concurrency caps).',
+        'Use read children for independent research, review, or exploration that would flood this conversation.',
+        'Tasks run in parallel with each other (bounded by the studio concurrency caps) - never with you.',
+        'This call is synchronous and blocking: you cannot think, act, or reply until every task completes or fails.',
+        'To overlap other work with sub-agents, emit those tool calls in the same assistant message.',
+        'Write children must each get their own task-worktree cwd (one writer per worktree, enforced by a per-cwd lane);',
+        'they never commit or merge - you own version control.',
       ].join(' '),
       promptSnippet:
-        'subagent: delegate read-only tasks to isolated sub-agents and receive their final answers',
+        'subagent: delegate tasks to isolated sub-agents and receive their final answers (blocking call; read-only unless mode write)',
       promptGuidelines: [
-        'Delegate broad or multi-file exploration and independent reviews to the subagent tool instead of doing them inline.',
+        'Delegate broad or multi-file exploration and independent reviews to read children instead of doing them inline.',
+        'The subagent call blocks until every task settles - your next thought happens only after all sub-agents finish.',
+        'Never plan to keep working while a subagent call runs; batch work you want overlapped into the same message.',
+        'For heavy coding work: create a dev branch plus task worktrees first (worktree add / worktree add-task), then run mode-write children, each pointed at its own task-worktree cwd.',
+        'After write children finish, merge their task branches back into your dev branch yourself - sequentially, verifying after each merge - then remove the task worktrees and branches.',
         'Write self-contained task prompts: a sub-agent sees none of this conversation.',
       ],
       parameters: typebox.Type.Object({
@@ -549,6 +591,18 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
             cwd: typebox.Type.Optional(
               typebox.Type.String({
                 description: 'Working directory for the sub-agent. Default: this session cwd',
+              }),
+            ),
+            mode: typebox.Type.Optional(
+              typebox.Type.String({
+                description:
+                  "Hands tier: 'read' (default; read/grep/find/ls) or 'write' (adds edit/write/bash for coding work in its own worktree)",
+              }),
+            ),
+            branch: typebox.Type.Optional(
+              typebox.Type.String({
+                description:
+                  'Informational branch name for write tasks, recorded in results; you manage the branch yourself',
               }),
             ),
           }),
@@ -579,16 +633,20 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
       name: 'workflow',
       label: 'Workflow',
       description: [
-        'Run a deterministic multi-step workflow of read-only sub-agents from a JSON spec.',
+        'Run a deterministic multi-step workflow of sub-agents from a JSON spec (read-only unless a node sets mode write).',
         'Every node MUST specify model and thinking explicitly - the call fails otherwise; no defaults are applied.',
         'Nodes run in dependency order (needs edges); nodes sharing a dependency wave run in parallel.',
         'A node prompt can reference upstream results with {{nodeId}}; a node with forEach splits an upstream result',
         'into entries and runs once per entry with {{item}}. Deterministic: the engine executes the plan, no runtime replanning.',
+        'Like subagent, this call is synchronous and blocking: you cannot think, act, or reply while nodes run.',
+        'Write nodes must each get their own task-worktree cwd (one writer per worktree); they never commit or merge.',
       ].join(' '),
       promptSnippet:
         'workflow: run a JSON-defined DAG of sub-agents (parallel waves, result references, forEach fan-out)',
       promptGuidelines: [
         'For multi-step plans with dependencies, prefer the workflow tool over ad-hoc subagent calls - it is deterministic and each node result is saved for review.',
+        'The workflow call blocks until the whole DAG finishes or fails - never plan to keep working while it runs.',
+        'For build pipelines: plan (read) -> implement (write, one task-worktree cwd per node) -> verify (write, run checks) -> review (read); merge task branches into your dev branch yourself afterwards.',
         'Validate the plan shape before calling: node ids unique, needs acyclic, references existing nodes, model and thinking present on every node.',
       ],
       parameters: typebox.Type.Object({
@@ -596,7 +654,7 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
           {},
           {
             description:
-              'Workflow spec: { name?, output?, nodes: [{ id, prompt, model (required), thinking (required), needs?: string[], forEach?: nodeId, cwd?, role?, onFailure?: "fail"|"continue" }] }',
+              'Workflow spec: { name?, output?, nodes: [{ id, prompt, model (required), thinking (required), needs?: string[], forEach?: nodeId, cwd?, role?, mode?: "read"|"write", branch?, onFailure?: "fail"|"continue" }] }',
             additionalProperties: true,
           },
         ),

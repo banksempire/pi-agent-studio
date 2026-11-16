@@ -179,6 +179,33 @@ branch folders under `<workdir>/.branch/`. Legacy `~/.config/…` and
 (one-time; `PI_STUDIO_CONFIG_DIR` / `PI_STUDIO_STATE_DIR` still override,
 e.g. for the hermetic check suite).
 
+### 4a. Task worktrees — write sub-agents (`worktree add-task <parent> <task>`)
+
+A write-mode sub-agent must never share a working tree with another writer. Task
+worktrees give each one its own tree, stacked on the coordinator's dev branch:
+
+```
+<workdir>/.branch/<parent>/tasks/<task>/
+├── pi-agent-studio/      worktree of pi-agent-studio, new branch <parent>-task-<task>
+└── StudioFramework -> ../../StudioFramework   symlink to the parent pair's checkout
+```
+
+- The ref name is **flat** (`<parent>-task-<task>`): git forbids nesting a branch
+  under an existing leaf name (`refs/heads/foo` vs `refs/heads/foo/bar`). The
+  stacking relationship lives in the merge-base, not the ref path.
+- Created from the parent pair worktree's `node_modules` (real copy, never
+  hardlinks — §4). **No instance is registered**: the task worktree has no stack;
+  children run in-process in the parent instance's backend, and check suites boot
+  their own private stub stacks.
+- Tasks live under `.branch/…` so the shared pre-commit guard allows commits
+  there. The child contract still forbids `git commit` — the coordinator owns
+  version control, merges `<parent>-task-<task>` back into `<parent>`
+  sequentially (verifying after each merge), then cleans up with
+  `worktree rm-task <parent> <task> [--branch]`.
+- `rm-task` refuses a worktree with uncommitted tracked changes unless `--force`
+  (untracked `node_modules` is ignored by the dirty check); `--branch` also
+  deletes the task ref.
+
 ## 5. Sessions isolation
 
 **Rule: one sessions dir per instance, never shared across instances.**

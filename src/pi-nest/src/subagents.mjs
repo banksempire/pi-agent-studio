@@ -401,7 +401,9 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
         }
         if (run.thinking && !supportedThinkingLevels(model).includes(run.thinking)) {
           run.status = 'failed';
-          run.error = `unsupported thinking level '${run.thinking}' for model ${model?.id ?? 'unknown'}`;
+          run.error = `unsupported thinking level '${run.thinking}' for model ${
+            model?.id ?? 'unknown'
+          } (supported: ${supportedThinkingLevels(model).join(', ')})`;
           return Promise.resolve();
         }
         return runOne(run, {
@@ -441,7 +443,9 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
           results.set(nodeId, {
             status: 'failed',
             text: '',
-            error: `unsupported thinking level '${node.thinking}' for model ${model?.id ?? 'unknown'}`,
+            error: `unsupported thinking level '${node.thinking}' for model ${
+              model?.id ?? 'unknown'
+            } (supported: ${supportedThinkingLevels(model).join(', ')})`,
           });
           continue;
         }
@@ -569,6 +573,7 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
         'Never plan to keep working while a subagent call runs; batch work you want overlapped into the same message.',
         'For heavy coding work: create a dev branch plus task worktrees first (worktree add / worktree add-task), then run mode-write children, each pointed at its own task-worktree cwd.',
         'After write children finish, merge their task branches back into your dev branch yourself - sequentially, verifying after each merge - then remove the task worktrees and branches.',
+        'Do not copy your own thinking level into tasks: omit thinking (default off) unless the task needs it and the target model supports it - non-reasoning models accept only off.',
         'Write self-contained task prompts: a sub-agent sees none of this conversation.',
       ],
       parameters: typebox.Type.Object({
@@ -647,6 +652,7 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
         'For multi-step plans with dependencies, prefer the workflow tool over ad-hoc subagent calls - it is deterministic and each node result is saved for review.',
         'The workflow call blocks until the whole DAG finishes or fails - never plan to keep working while it runs.',
         'For build pipelines: plan (read) -> implement (write, one task-worktree cwd per node) -> verify (write, run checks) -> review (read); merge task branches into your dev branch yourself afterwards.',
+        'Set thinking per node deliberately - do not mirror your own level; non-reasoning models accept only off.',
         'Validate the plan shape before calling: node ids unique, needs acyclic, references existing nodes, model and thinking present on every node.',
       ],
       parameters: typebox.Type.Object({

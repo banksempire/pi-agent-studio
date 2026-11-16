@@ -318,6 +318,26 @@ async function managerTests() {
   const tools = manager.toolsFor(parentId);
   report('tools: subagent + workflow registered', tools.map((t) => t.name).join(',') === 'subagent,workflow');
 
+  const subDef = tools.find((t) => t.name === 'subagent');
+  const wfDef = tools.find((t) => t.name === 'workflow');
+  report(
+    'subagent description states blocking semantics',
+    /synchronous and blocking/.test(subDef.description) && /never with you/.test(subDef.description),
+  );
+  report(
+    'subagent guidelines forbid working while the call runs',
+    subDef.promptGuidelines.some((g) => /blocks until every task settles/.test(g)) &&
+      subDef.promptGuidelines.some((g) => /Never plan to keep working while a subagent call runs/.test(g)),
+  );
+  report(
+    'workflow description states blocking semantics',
+    /synchronous and blocking/.test(wfDef.description),
+  );
+  report(
+    'workflow guidelines forbid working while the call runs',
+    wfDef.promptGuidelines.some((g) => /blocks until the whole DAG finishes/.test(g)),
+  );
+
   appendChildRule({ match: 'list the routes', reply: 'src/a.ts\nsrc/b.ts' });
   const runs = await manager.runTasks(parentId, [
     { prompt: 'list the routes' },

@@ -521,12 +521,16 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
         'Spawn one or more read-only sub-agents that work in isolated sessions and wait for their results.',
         'Each task gets a fresh sub-agent with its own context; only its final message is returned.',
         'Use for independent research, review, or exploration that would flood this conversation.',
-        'Tasks run in parallel (bounded by the studio concurrency caps).',
+        'Tasks run in parallel with each other (bounded by the studio concurrency caps) - never with you.',
+        'This call is synchronous and blocking: you cannot think, act, or reply until every task completes or fails.',
+        'To overlap other work with sub-agents, emit those tool calls in the same assistant message.',
       ].join(' '),
       promptSnippet:
-        'subagent: delegate read-only tasks to isolated sub-agents and receive their final answers',
+        'subagent: delegate read-only tasks to isolated sub-agents and receive their final answers (blocking call)',
       promptGuidelines: [
         'Delegate broad or multi-file exploration and independent reviews to the subagent tool instead of doing them inline.',
+        'The subagent call blocks until every task settles - your next thought happens only after all sub-agents finish.',
+        'Never plan to keep working while a subagent call runs; batch work you want overlapped into the same message.',
         'Write self-contained task prompts: a sub-agent sees none of this conversation.',
       ],
       parameters: typebox.Type.Object({
@@ -584,11 +588,13 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
         'Nodes run in dependency order (needs edges); nodes sharing a dependency wave run in parallel.',
         'A node prompt can reference upstream results with {{nodeId}}; a node with forEach splits an upstream result',
         'into entries and runs once per entry with {{item}}. Deterministic: the engine executes the plan, no runtime replanning.',
+        'Like subagent, this call is synchronous and blocking: you cannot think, act, or reply while nodes run.',
       ].join(' '),
       promptSnippet:
         'workflow: run a JSON-defined DAG of sub-agents (parallel waves, result references, forEach fan-out)',
       promptGuidelines: [
         'For multi-step plans with dependencies, prefer the workflow tool over ad-hoc subagent calls - it is deterministic and each node result is saved for review.',
+        'The workflow call blocks until the whole DAG finishes or fails - never plan to keep working while it runs.',
         'Validate the plan shape before calling: node ids unique, needs acyclic, references existing nodes, model and thinking present on every node.',
       ],
       parameters: typebox.Type.Object({

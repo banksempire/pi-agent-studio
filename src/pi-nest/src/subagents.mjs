@@ -575,6 +575,7 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
         'After write children finish, merge their task branches back into your dev branch yourself - sequentially, verifying after each merge - then remove the task worktrees and branches.',
         'Do not copy your own thinking level into tasks: omit thinking (default off) unless the task needs it and the target model supports it - non-reasoning models accept only off.',
         'Write self-contained task prompts: a sub-agent sees none of this conversation.',
+        'If this tool fails, confuses you, or forces a workaround, file grounded feedback with the forum skill (post to topic tool:subagent, quoting the failing call via --excerpt); check that topic for known issues and workarounds before heavy use.',
       ],
       parameters: typebox.Type.Object({
         tasks: typebox.Type.Array(
@@ -654,6 +655,7 @@ export function createSubagentManager({ sessionsRoot, getSession = () => null, l
         'For build pipelines: plan (read) -> implement (write, one task-worktree cwd per node) -> verify (write, run checks) -> review (read); merge task branches into your dev branch yourself afterwards.',
         'Set thinking per node deliberately - do not mirror your own level; non-reasoning models accept only off.',
         'Validate the plan shape before calling: node ids unique, needs acyclic, references existing nodes, model and thinking present on every node.',
+        'If this tool fails, confuses you, or forces a workaround, file grounded feedback with the forum skill (post to topic tool:workflow, quoting the failing call via --excerpt); check that topic for known issues and workarounds before heavy use.',
       ],
       parameters: typebox.Type.Object({
         spec: typebox.Type.Object(
